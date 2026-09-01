@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Manufactory Idle — UI prototype</title>
+<style>
+:root {
+  --bg: #14181d;
+  --s1: #1a1f26;
+  --s2: #212832;
+  --s3: #2a323d;
+  --line: #2c343f;
+  --line2: #3a444f;
+  --t1: #e4e9ef;
+  --t2: #98a3b0;
+  --t3: #69737f;
+  --accent: #f59042;
+  --accent-bg: #f590421f;
+  --accent-line: #f5904266;
+  --ok: #57b96a;
+  --ok-bg: #57b96a1a;
+  --warn: #dda12e;
+  --warn-bg: #dda12e1f;
+  --warn-line: #dda12e88;
+  --bad: #e0594a;
+  --bad-bg: #e0594a1f;
+  --bad-line: #e0594a99;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --pulse: 2.6s;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--t1);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+}
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ---- shell ---- */
+#app { max-width: 1200px; margin: 0 auto; padding: 10px 12px 78px; }
+.panes { display: block; }
+@media (min-width: 900px) {
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  .pane-b { display: block !important; }
+  #tabbar .wide-hide { display: none; }
+}
+
+header { display: flex; align-items: center; gap: 8px; padding: 6px 2px 12px; }
+header h1 { font-size: 15px; font-weight: 600; letter-spacing: .14em; margin: 0; flex: 1; }
+header h1 span { color: var(--accent); }
+.iconbtn {
+  background: none; border: 0; color: var(--t3); font-size: 19px;
+  padding: 4px 6px; cursor: pointer; line-height: 1;
+}
+.iconbtn:hover { color: var(--t1); }
+
+/* ---- tabs ---- */
+.lanetabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.lanetab {
+  font-size: 13px; padding: 6px 13px; border-radius: 7px; cursor: pointer;
+  background: none; border: 0; color: var(--t2); font-family: inherit;
+}
+.lanetab.on { background: var(--accent); color: #14181d; font-weight: 600; }
+
+/* ---- cards & rows ---- */
+.card {
+  background: var(--s1); border: 0.5px solid var(--line);
+  border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+}
+.cap { font-size: 13px; color: var(--t3); margin: 0 0 10px; }
+.row { padding: 9px 0; border-bottom: 0.5px solid var(--line); cursor: pointer; }
+.row:last-child { border-bottom: 0; }
+.rowtop { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.nm { font-size: 15px; font-weight: 500; }
+.rt { font-size: 13px; color: var(--t2); white-space: nowrap; }
+
+.bar { position: relative; height: 4px; border-radius: 2px; background: var(--s3); margin-top: 7px; overflow: hidden; }
+.fill { height: 100%; border-radius: 2px; }
+.sweep { position: absolute; inset: 0 auto 0 0; width: 44px; background: #fff; opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .sweep { animation: sweep var(--sd, 3s) ease-in-out infinite; }
+}
+@keyframes sweep {
+  0% { transform: translateX(-60px); opacity: 0; }
+  22% { opacity: .30; }
+  100% { transform: translateX(var(--sw, 340px)); opacity: 0; }
+}
+
+/* split bar */
+.split { display: flex; height: 8px; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+.splitlab { display: flex; justify-content: space-between; margin-top: 5px; font-size: 12px; color: var(--t2); }
+
+/* bottleneck / warning frames */
+.flag {
+  padding: 11px 12px; margin: 8px -6px; border-radius: 9px; border: 2px solid;
+}
+.flag.bad { border-color: var(--bad-line); background: var(--bad-bg); }
+.flag.warn { border-color: var(--warn-line); background: var(--warn-bg); }
+@media (prefers-reduced-motion: no-preference) {
+  .flag { animation: pulse var(--pulse) ease-in-out infinite; }
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .48; } }
+.flagmsg { font-size: 13px; margin: 10px 0; }
+
+/* buttons */
+button.b {
+  font: 500 13px/1 inherit; padding: 8px 13px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: #14181d;
+}
+button.b.sec { background: none; color: var(--t1); border-color: var(--line2); }
+button.b.gho { background: none; color: var(--t2); border-color: transparent; }
+button.b:disabled { opacity: .4; cursor: default; }
+.btnrow { display: flex; gap: 7px; flex-wrap: wrap; }
+
+/* buy drawer */
+.drawer { padding: 10px 12px; margin: 6px -6px 0; background: var(--s2); border-radius: 9px; }
+.kv { display: flex; justify-content: space-between; font-size: 13px; color: var(--t2); padding: 2px 0; }
+
+/* power dock */
+#dock {
+  position: fixed; left: 0; right: 0; bottom: 52px; z-index: 20;
+  background: #14181dee; backdrop-filter: blur(8px); border-top: 0.5px solid var(--line);
+  padding: 9px 14px;
+}
+#dock .in { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+.tap {
+  width: 58px; height: 58px; border-radius: 50%; flex: none; cursor: pointer;
+  border: 2px solid var(--accent-line); background: var(--accent-bg); color: var(--accent);
+  font: 600 11px/1 inherit; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 3px; user-select: none;
+}
+.tap:active { background: var(--accent); color: #14181d; }
+.tap .z { font-size: 20px; }
+
+/* tab bar */
+#tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 21; display: flex;
+  background: var(--s1); border-top: 0.5px solid var(--line);
+}
+#tabbar button {
+  flex: 1; background: none; border: 0; color: var(--t3); font: 12px inherit;
+  padding: 8px 2px calc(8px + env(safe-area-inset-bottom)); cursor: pointer;
+}
+#tabbar button.on { color: var(--accent); }
+#tabbar .ic { display: block; font-size: 17px; margin-bottom: 2px; }
+
+/* priority list */
+.pri { display: flex; align-items: center; gap: 9px; padding: 11px 0; border-bottom: 0.5px solid var(--line); }
+.pri:last-child { border-bottom: 0; }
+.pri .grab { display: flex; flex-direction: column; gap: 2px; }
+.pri .grab button { background: none; border: 0; color: var(--t3); cursor: pointer; font-size: 10px; padding: 1px 3px; line-height: 1; }
+.pri .grab button:hover { color: var(--t1); }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 7px; white-space: nowrap; }
+.chip.ok { background: var(--ok-bg); color: var(--ok); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
+.chip.off { background: var(--s3); color: var(--t2); }
+.chip.acc { background: var(--accent-bg); color: var(--accent); }
+.chip.line { border: 0.5px solid var(--line2); color: var(--t2); }
+.chiprow { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 0 30px; }
+
+/* settings */
+label.set { display: block; font-size: 13px; color: var(--t2); margin: 14px 0 6px; }
+select, input[type=range] { width: 100%; font: inherit; }
+select {
+  background: var(--s2); color: var(--t1); border: 1px solid var(--line2);
+  border-radius: 7px; padding: 9px 10px; font-size: 14px;
+}
+input[type=range] { accent-color: var(--accent); }
+
+.stat { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 0.5px solid var(--line); font-size: 14px; }
+.stat:last-child { border-bottom: 0; }
+.stat span:last-child { font-family: var(--mono); }
+.hide { display: none; }
+.note { font-size: 12px; color: var(--t3); margin: 8px 0 0; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <h1>MANU<span>FACTORY</span> IDLE</h1>
+    <button class="iconbtn" id="helpbtn" title="Handbook">?</button>
+  </header>
+
+  <div class="panes">
+    <div class="pane-a">
+      <div id="view-factory">
+        <div class="lanetabs" id="lanetabs"></div>
+        <div class="card" id="lane"></div>
+      </div>
+      <div id="view-stats" class="hide"></div>
+      <div id="view-settings" class="hide"></div>
+      <div id="view-help" class="hide"></div>
+    </div>
+    <div class="pane-b hide" id="view-priority"></div>
+  </div>
+</div>
+
+<div id="dock">
+  <div class="in">
+    <div style="flex:1">
+      <div class="rowtop">
+        <span style="font-size:13px;color:var(--t2)">Grid</span>
+        <span class="rt num" id="pwrtxt">0 / 0 MW</span>
+      </div>
+      <div class="bar" style="height:5px"><div class="fill" id="pwrfill" style="background:var(--accent)"></div></div>
+      <div class="rowtop" style="margin-top:6px">
+        <span style="font-size:12px;color:var(--t3)" id="kicktxt">Hold to keep generating</span>
+        <span style="font-size:12px;color:var(--t3)" class="num" id="polltxt"></span>
+      </div>
+    </div>
+    <button class="tap" id="tap"><span class="z">⚡</span>tap</button>
+  </div>
+</div>
+
+<nav id="tabbar">
+  <button data-v="factory" class="on"><span class="ic">▤</span>Factory</button>
+  <button data-v="priority" class="wide-hide"><span class="ic">☰</span>Priority</button>
+  <button data-v="stats"><span class="ic">◔</span>Stats</button>
+  <button data-v="settings"><span class="ic">⚙</span>Settings</button>
+</nav>
+
+<script>
+"use strict";
+
+/* ============================================================
+   CONTENT — in the real game this is a seed file, not code
+   ============================================================ */
+const ITEMS = {
+  iron_ore:{n:"Iron ore",lane:"iron",cap:6e4}, iron_ingot:{n:"Iron ingot",lane:"iron",cap:4e4},
+  iron_rod:{n:"Iron rods",lane:"iron",cap:2.5e4}, screw:{n:"Screws",lane:"iron",cap:4e4},
+  iron_plate:{n:"Iron plate",lane:"iron",cap:2.5e4}, rein_plate:{n:"Reinforced plate",lane:"iron",cap:8e3},
+  rotor:{n:"Rotor",lane:"iron",cap:8e3},
+  copper_ore:{n:"Copper ore",lane:"copper",cap:6e4}, copper_ingot:{n:"Copper ingot",lane:"copper",cap:4e4},
+  wire:{n:"Wire",lane:"copper",cap:5e4},
+  crude:{n:"Crude oil",lane:"oil",cap:9e3,fluid:1}, plastic:{n:"Plastic",lane:"oil",cap:1.2e4},
+  residue:{n:"Heavy oil residue",lane:"oil",cap:2200,fluid:1,byproduct:1}
+};
+// rate = crafts/sec per machine. cost is paid from storage.
+const RECIPES = {
+  miner:      {n:"Miner",           lane:"iron",  out:{iron_ore:1},   in:{}, rate:1, pw:5,  cost:{iron_plate:12}, cr:1.09},
+  smelter:    {n:"Smelter",         lane:"iron",  out:{iron_ingot:1}, in:{iron_ore:1}, rate:1, pw:4, cost:{iron_plate:16}, cr:1.09},
+  rodmaker:   {n:"Rod constructor", lane:"iron",  out:{iron_rod:1},   in:{iron_ingot:1}, rate:1, pw:4, cost:{iron_plate:20}, cr:1.10},
+  screwmaker: {n:"Screw constructor",lane:"iron", out:{screw:4},      in:{iron_rod:1}, rate:1, pw:4, cost:{iron_plate:24}, cr:1.10},
+  platemaker: {n:"Plate constructor",lane:"iron", out:{iron_plate:1}, in:{iron_ingot:1.5}, rate:1, pw:4, cost:{iron_rod:30}, cr:1.10},
+  rp_asm:     {n:"Plate assembler", lane:"iron",  out:{rein_plate:1}, in:{iron_plate:3,screw:6}, rate:1, pw:15, cost:{iron_plate:90}, cr:1.12},
+  rotor_asm:  {n:"Rotor assembler", lane:"iron",  out:{rotor:1},      in:{iron_rod:5,screw:25}, rate:1, pw:15, cost:{iron_plate:120}, cr:1.12},
+  cu_miner:   {n:"Copper miner",    lane:"copper",out:{copper_ore:1}, in:{}, rate:1, pw:5, cost:{iron_plate:14}, cr:1.09},
+  cu_smelter: {n:"Copper smelter",  lane:"copper",out:{copper_ingot:1},in:{copper_ore:1}, rate:1, pw:4, cost:{iron_plate:18}, cr:1.09},
+  wiremaker:  {n:"Wire constructor",lane:"copper",out:{wire:2},       in:{copper_ingot:1}, rate:1, pw:4, cost:{iron_plate:22}, cr:1.10},
+  extractor:  {n:"Oil extractor",   lane:"oil",   out:{crude:1},      in:{}, rate:1, pw:8, cost:{iron_plate:40}, cr:1.11},
+  refinery:   {n:"Refinery",        lane:"oil",   out:{plastic:2,residue:1}, in:{crude:3}, rate:1, pw:30, cost:{rein_plate:8}, cr:1.13},
+  fuelgen:    {n:"Fuel generator",  lane:"oil",   out:{},             in:{residue:2}, rate:1, pw:-60, cost:{rein_plate:14}, cr:1.14},
+  coalgen:    {n:"Coal generator",  lane:"iron",  out:{},             in:{}, rate:1, pw:-75, cost:{iron_plate:60}, cr:1.11}
+};
+const LANES = [{id:"iron",n:"Iron"},{id:"copper",n:"Copper"},{id:"oil",n:"Oil"}];
+
+/* ============================================================
+   STATE
+   ============================================================ */
+const S = {
+  count: {miner:14, smelter:12, rodmaker:9, screwmaker:5, platemaker:9, rp_asm:2, rotor_asm:1,
+          cu_miner:4, cu_smelter:3, wiremaker:2, extractor:2, refinery:1, fuelgen:0, coalgen:3},
+  store: {}, lifetime: {},
+  priority: [
+    {item:"rein_plate", mode:"g", share:60, paused:false},
+    {item:"rotor",      mode:"s", share:60, paused:false},
+    {item:"plastic",    mode:"s", share:40, paused:false},
+    {item:"wire",       mode:"g", share:50, paused:true}
+  ],
+  lane:"iron", view:"factory", open:null, helpItem:"screw",
+  battery:0, kick:0, pollution:0, dumps:0, taps:0, playedFrom:Date.now(),
+  fmt:"hybrid", advanced:true, reinject:false
+};
+Object.keys(ITEMS).forEach(k => { S.store[k]=0; S.lifetime[k]=0; });
+
+/* ============================================================
+   NUMBER FORMATTING — player-selectable, one pure function
+   ============================================================ */
+const SHORT=["","K","M","B","T"], NAMES=["","thousand","million","billion","trillion","quadrillion"];
+function letters(t){ // aa, ab ... az, ba ...
+  let s=""; t--; do { s = String.fromCharCode(97 + (t%26)) + s; t = Math.floor(t/26)-1; } while(t>=0);
+  return s;
+}
+function fmt(v, mode) {
+  mode = mode || S.fmt;
+  if (!isFinite(v)) return "∞";
+  if (v === 0) return "0";
+  const neg = v < 0; v = Math.abs(v);
+  let out;
+  if (v < 1000) out = v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : v.toFixed(0);
+  else {
+    const e = Math.floor(Math.log10(v)), t = Math.floor(e/3), m = v / Math.pow(10, t*3);
+    switch (mode) {
+      case "sci":  out = v.toExponential(2).replace("e+","e"); break;
+      case "eng":  out = m.toFixed(2)+"e"+(t*3); break;
+      case "names":out = t<NAMES.length ? m.toFixed(2)+" "+NAMES[t] : m.toFixed(2)+"e"+(t*3); break;
+      case "dbl":  out = m.toFixed(2)+" "+(t<SHORT.length ? SHORT[t] : letters(t-4).toUpperCase().repeat(2)); break;
+      case "short":out = m.toFixed(2)+" "+(t<SHORT.length ? SHORT[t] : letters(t-4)); break;
+      default:     out = t<NAMES.length ? m.toFixed(2)+" "+SHORT[t] : v.toExponential(2).replace("e+","e");
+    }
+  }
+  return (neg?"-":"")+out;
+}
+
+/* ============================================================
+   SOLVER — waterfall over the priority list
+   ============================================================ */
+const producerOf = {};
+for (const [id,r] of Object.entries(RECIPES)) for (const it of Object.keys(r.out)) if(!producerOf[it]) producerOf[it]=id;
+
+function requirements(recipeId, memo, seen) { // crafts of each recipe per 1 craft of recipeId
+  memo = memo || {}; seen = seen || {};
+  if (memo[recipeId]) return memo[recipeId];
+  if (seen[recipeId]) return {};                       // cycle guard
+  seen[recipeId] = 1;
+  const req = { [recipeId]: 1 }, r = RECIPES[recipeId];
+  for (const [item, qty] of Object.entries(r.in)) {
+    const p = producerOf[item]; if (!p) continue;
+    const per = qty / RECIPES[p].out[item];
+    const sub = requirements(p, memo, seen);
+    for (const [k,v] of Object.entries(sub)) req[k] = (req[k]||0) + v*per;
+  }
+  memo[recipeId] = req; return req;
+}
+
+function solve(powerRatio) {
+  const cap = {}, remain = {}, used = {}, alloc = {};
+  for (const id of Object.keys(RECIPES)) {
+    cap[id] = S.count[id] * RECIPES[id].rate * powerRatio * (1 + S.kick);
+    remain[id] = cap[id]; used[id] = 0; alloc[id] = {};
+  }
+  // residue backpressure: refinery throttles when its byproduct tank is full
+  const residueRoom = ITEMS.residue.cap - S.store.residue;
+  const residueDrain = S.count.fuelgen * RECIPES.fuelgen.in.residue + (S.reinject ? 4 : 0);
+  if (residueRoom <= 0) {
+    const maxRefine = residueDrain / RECIPES.refinery.out.residue;
+    remain.refinery = Math.min(remain.refinery, maxRefine);
+  }
+
+  const bottleneck = {};
+  for (const p of S.priority) {
+    if (p.paused) continue;
+    const rid = producerOf[p.item]; if (!rid) continue;
+    const req = requirements(rid);
+    let max = Infinity, lim = null;
+    for (const [k, per] of Object.entries(req)) {
+      const can = remain[k] / per;
+      if (can < max) { max = can; lim = k; }
+    }
+    let take = Math.max(0, max);
+    if (p.mode === "s") take *= (p.share / 100);
+    for (const [k, per] of Object.entries(req)) {
+      const u = take * per;
+      remain[k] = Math.max(0, remain[k] - u);
+      used[k] += u; alloc[k][p.item] = (alloc[k][p.item] || 0) + u;
+    }
+    bottleneck[p.item] = { recipe: lim, rate: take };
+  }
+  // generators always run
+  used.fuelgen = Math.min(cap.fuelgen, S.store.residue > 0 || used.refinery > 0 ? cap.fuelgen : 0);
+  used.coalgen = cap.coalgen;
+
+  const prod = {}, cons = {};
+  for (const [id, u] of Object.entries(used)) {
+    for (const [it,q] of Object.entries(RECIPES[id].out)) prod[it] = (prod[it]||0) + u*q;
+    for (const [it,q] of Object.entries(RECIPES[id].in))  cons[it] = (cons[it]||0) + u*q;
+  }
+  let demand = 0, supply = 0;
+  for (const [id,u] of Object.entries(used)) {
+    const clock = cap[id] > 0 ? u/cap[id] : 0, p = RECIPES[id].pw * S.count[id] * clock;
+    if (p > 0) demand += p; else supply -= p;
+  }
+  return { cap, used, alloc, prod, cons, demand, supply, bottleneck };
+}
+
+function fullSolve() {
+  let r = solve(1);
+  const supply = r.supply + S.battery * 4;
+  let ratio = r.demand > supply && r.demand > 0 ? supply / r.demand : 1;
+  if (ratio < 1) { r = solve(ratio); r.ratio = ratio; } else r.ratio = 1;
+  r.supplyTotal = r.supply;
+  return r;
+}
+
+/* ============================================================
+   TICK
+   ============================================================ */
+let last = performance.now(), sim = fullSolve();
+function tick(now) {
+  const dt = Math.min(0.5, (now - last) / 1000); last = now;
+  sim = fullSolve();
+  for (const it of Object.keys(ITEMS)) {
+    const net = (sim.prod[it]||0) - (sim.cons[it]||0);
+    S.store[it] = Math.max(0, Math.min(ITEMS[it].cap, S.store[it] + net*dt));
+    if (net > 0) S.lifetime[it] += net*dt;
+  }
+  if (S.kick > 0) S.kick = Math.max(0, S.kick - dt*0.12);
+  S.battery = Math.max(0, S.battery - dt*3);
+  S.pollution = Math.max(0, S.pollution - dt*0.35);
+  render();
+  requestAnimationFrame(tick);
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+const $ = s => document.querySelector(s);
+function bar(pct, color, rate) {
+  const sd = rate > 0 ? Math.max(0.8, Math.min(6, 3.2 / Math.log10(10 + rate))) : 0;
+  return `<div class="bar"><div class="fill" style="width:${(pct*100).toFixed(1)}%;background:${color}"></div>`
+    + (sd ? `<div class="sweep" style="--sd:${sd.toFixed(2)}s"></div>` : "") + `</div>`;
+}
+
+function renderLane() {
+  const lane = S.lane;
+  const items = Object.entries(ITEMS).filter(([,i]) => i.lane === lane);
+  // the single binding constraint, from the highest-priority unsatisfied target
+  let flagRecipe = null, flagTarget = null;
+  for (const p of S.priority) {
+    if (p.paused) continue;
+    const b = sim.bottleneck[p.item]; if (!b || !b.recipe) continue;
+    if (RECIPES[b.recipe].lane !== lane) continue;
+    if (b.recipe === producerOf[p.item]) continue;
+    flagRecipe = b.recipe; flagTarget = p.item; break;
+  }
+  const flagItem = flagRecipe ? Object.keys(RECIPES[flagRecipe].out)[0] : null;
+
+  let h = `<p class="cap">${LANES.find(l=>l.id===lane).n} lane</p>`;
+  for (const [id, it] of items) {
+    const prod = sim.prod[id]||0, cons = sim.cons[id]||0;
+    const full = S.store[id] >= ITEMS[id].cap - 1;
+    const sat = cons > 0 ? Math.min(1, prod/cons) : (prod > 0 ? 1 : 0);
+    const isFlag = id === flagItem;
+    const isByp = it.byproduct && full;
+
+    if (isByp) {
+      h += `<div class="flag warn">
+        <div class="rowtop"><span class="nm" style="color:var(--warn)">${it.n}</span>
+        <span class="rt num" style="color:var(--warn)">tank ${(S.store[id]/it.cap*100).toFixed(0)}%</span></div>
+        ${bar(S.store[id]/it.cap, "var(--warn)", 0)}
+        <p class="flagmsg" style="color:var(--warn)">No consumer. Refinery is throttling — plastic stops with it.</p>
+        <div class="btnrow">
+          <button class="b" data-buy="fuelgen">Build fuel generator</button>
+          <button class="b sec" data-act="reinject">${S.reinject?"Reinjecting · 4/s":"Reinject · 18 MW"}</button>
+          <button class="b gho" data-act="dump">Dump</button>
+        </div></div>`;
+      continue;
+    }
+    if (isFlag) {
+      h += `<div class="flag bad" data-row="${id}">
+        <div class="rowtop"><span class="nm" style="color:var(--bad)">${it.n}</span>
+        <span class="rt" style="color:var(--bad)">bottleneck</span></div>`;
+      h += splitOrBar(id, prod, sat, "var(--bad)");
+      const need = Math.max(1, Math.ceil(S.count[flagRecipe] * 0.4));
+      h += `<p class="flagmsg" style="color:var(--bad)">Limiting ${ITEMS[flagTarget].n.toLowerCase()}. ${need} more ${RECIPES[flagRecipe].n.toLowerCase()}s clears it.</p>
+        <div class="btnrow"><button class="b" data-buy="${flagRecipe}" data-n="${need}">Buy ${need} ${RECIPES[flagRecipe].n.toLowerCase()}s</button></div></div>`;
+      continue;
+    }
+    h += `<div class="row" data-row="${id}">
+      <div class="rowtop"><span class="nm">${it.n}</span>
+      <span class="rt ${full?"":"num"}" style="${full?"color:var(--warn)":""}">${full ? "storage full" : fmt(prod)+"/s"}</span></div>`;
+    h += splitOrBar(id, prod, sat, full ? "var(--warn)" : sat > .98 ? "var(--ok)" : "var(--warn)");
+    if (S.open === id) h += drawer(id);
+    h += `</div>`;
+  }
+  return h;
+}
+
+function splitOrBar(id, prod, sat, color) {
+  const rid = producerOf[id];
+  const a = rid ? sim.alloc[rid] : null;
+  const keys = a ? Object.keys(a).filter(k => a[k] > 0.01) : [];
+  if (keys.length > 1) {
+    const tot = keys.reduce((s,k)=>s+a[k],0);
+    let h = `<div class="split">`;
+    const cols = ["var(--accent)","var(--t3)","var(--line2)"];
+    keys.forEach((k,i)=> h += `<div style="width:${(a[k]/tot*100).toFixed(1)}%;background:${cols[i%3]}"></div>`);
+    h += `</div><div class="splitlab">`;
+    keys.forEach(k => h += `<span>${(a[k]/tot*100).toFixed(0)}% ${ITEMS[k].n.toLowerCase()}</span>`);
+    return h + `</div>`;
+  }
+  return bar(sat, color, prod);
+}
+
+function drawer(itemId) {
+  const rid = producerOf[itemId]; if (!rid) return "";
+  const r = RECIPES[rid], n = S.count[rid];
+  const cost = Object.entries(r.cost).map(([it,base]) => [it, base * Math.pow(r.cr, n)]);
+  const afford = cost.every(([it,amt]) => S.store[it] >= amt);
+  let h = `<div class="drawer"><div class="kv"><span>${r.n}</span><span class="num">${n} owned</span></div>`;
+  h += `<div class="kv"><span>Power draw</span><span class="num">${(r.pw*n).toFixed(0)} MW</span></div>`;
+  cost.forEach(([it,amt]) => h += `<div class="kv"><span>${ITEMS[it].n}</span><span class="num" style="color:${S.store[it]>=amt?"var(--t2)":"var(--bad)"}">${fmt(amt)}</span></div>`);
+  h += `<div class="btnrow" style="margin-top:9px">
+    <button class="b" data-buy="${rid}" ${afford?"":"disabled"}>Buy 1</button>
+    <button class="b sec" data-buy="${rid}" data-n="10" ${afford?"":"disabled"}>Buy 10</button>
+    <button class="b gho" data-help="${itemId}">Handbook</button></div></div>`;
+  return h;
+}
+
+function renderPriority() {
+  let h = `<div class="card"><div class="rowtop" style="margin-bottom:8px">
+    <span class="cap" style="margin:0">Output priority</span>
+    <span><button class="b ${S.advanced?"sec":""}" data-act="simple" style="padding:5px 10px">Simple</button>
+    <button class="b ${S.advanced?"":"sec"}" data-act="advanced" style="padding:5px 10px">Advanced</button></span></div>`;
+  S.priority.forEach((p,i) => {
+    const b = sim.bottleneck[p.item];
+    const target = producerOf[p.item] ? sim.cap[producerOf[p.item]] : 0;
+    const pct = p.paused ? 0 : (target > 0 ? Math.min(100, (sim.used[producerOf[p.item]]/target)*100) : 0);
+    const cls = p.paused ? "off" : pct > 97 ? "ok" : pct > 5 ? "warn" : "off";
+    h += `<div class="pri">
+      <span class="grab"><button data-mv="${i}:-1">▲</button><button data-mv="${i}:1">▼</button></span>
+      <span style="flex:1;${p.paused?"color:var(--t3)":""}">${ITEMS[p.item].n}</span>
+      <span class="chip ${cls}">${p.paused?"paused":pct.toFixed(0)+"%"}</span>
+      <button class="iconbtn" data-act="pause:${i}" style="font-size:14px">${p.paused?"▶":"❚❚"}</button></div>`;
+    if (S.advanced && !p.paused) {
+      h += `<div class="chiprow">
+        <button class="chip ${p.mode==="g"?"acc":"line"}" data-act="mode:${i}">${p.mode==="g"?"guaranteed":"share "+p.share+"%"}</button>`;
+      if (p.mode==="s") h += `<button class="chip line" data-act="share:${i}">adjust share</button>`;
+      if (b && b.recipe && b.recipe !== producerOf[p.item])
+        h += `<span class="chip line">limited by ${RECIPES[b.recipe].n.toLowerCase()}</span>`;
+      h += `</div>`;
+    }
+  });
+  h += `<p class="note">Reorder with the arrows. Contested intermediates re-split automatically.</p></div>`;
+  return h;
+}
+
+function renderStats() {
+  const mins = (Date.now()-S.playedFrom)/60000;
+  const rows = [
+    ["Lifetime iron ore", fmt(S.lifetime.iron_ore)],
+    ["Lifetime screws", fmt(S.lifetime.screw)],
+    ["Lifetime plastic", fmt(S.lifetime.plastic)],
+    ["Session length", mins.toFixed(1)+" min"],
+    ["Taps", S.taps],
+    ["Fluid dumps", S.dumps],
+    ["Pollution", S.pollution.toFixed(0)+"%"],
+    ["Grid capacity", sim.supplyTotal.toFixed(0)+" MW"],
+    ["Grid demand", sim.demand.toFixed(0)+" MW"]
+  ];
+  return `<div class="card"><p class="cap">This session</p>`
+    + rows.map(([k,v])=>`<div class="stat"><span>${k}</span><span>${v}</span></div>`).join("")
+    + `<p class="note">The real build tracks every item, recipe and lane permanently, plus a 24h activity clock.</p></div>`;
+}
+
+function renderSettings() {
+  const opts = [["hybrid","Hybrid — 1.23 K then scientific"],["short","Letters — 1.23 K, aa, ab"],
+    ["dbl","Doubled letters — AdComm style"],["names","Names — 1.23 million"],
+    ["sci","Scientific — 1.23e6"],["eng","Engineering — 123.4e3"]];
+  return `<div class="card"><p class="cap">Display</p>
+    <label class="set" for="fm">Number format</label>
+    <select id="fm">${opts.map(([v,l])=>`<option value="${v}" ${S.fmt===v?"selected":""}>${l}</option>`).join("")}</select>
+    <label class="set" for="ps">Bottleneck pulse — <span class="num" id="psv">${getComputedStyle(document.documentElement).getPropertyValue('--pulse')}</span></label>
+    <input type="range" id="ps" min="1" max="5" step="0.2" value="2.6" />
+    <p class="note">Rotate the phone or widen the window to see the two-pane layout.</p></div>`;
+}
+
+function renderHelp() {
+  const id = S.helpItem, it = ITEMS[id], rid = producerOf[id], r = rid?RECIPES[rid]:null;
+  const uses = Object.entries(RECIPES).filter(([,x]) => x.in[id]);
+  let h = `<div class="card"><div style="font-size:18px;font-weight:500">${it.n}</div>
+    <p class="cap" style="margin:4px 0 14px">${it.lane} lane · storage ${fmt(it.cap)}${it.fluid?" · fluid":""}</p>`;
+  if (r) {
+    h += `<p class="cap">Made from</p><div style="border:0.5px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+      <div class="rowtop"><span style="font-size:14px">${Object.entries(r.in).map(([k,v])=>v+" "+ITEMS[k].n.toLowerCase()).join(" + ")||"nothing"}</span>
+      <span style="color:var(--t3)">→</span>
+      <span style="font-size:14px;font-weight:500">${r.out[id]} ${it.n.toLowerCase()}</span></div>
+      <p class="note">${r.n} · ${Math.abs(r.pw)} MW${Object.keys(r.out).length>1?" · emits "+Object.keys(r.out).filter(x=>x!==id).map(x=>ITEMS[x].n.toLowerCase()).join(", "):""}</p></div>`;
+  }
+  h += `<p class="cap">Used in</p><div class="btnrow">`;
+  h += uses.length ? uses.map(([,x])=>`<span class="chip line">${Object.keys(x.out).map(o=>ITEMS[o]?ITEMS[o].n:x.n).join("/")}</span>`).join("")
+                   : `<span class="chip line">nothing yet</span>`;
+  h += `</div><p class="cap" style="margin-top:16px">Jump to</p><div class="btnrow">`
+    + Object.keys(ITEMS).map(k=>`<button class="chip ${k===id?"acc":"line"}" data-help="${k}">${ITEMS[k].n}</button>`).join("")
+    + `</div></div>`;
+  return h;
+}
+
+function render() {
+  $("#lanetabs").innerHTML = LANES.map(l =>
+    `<button class="lanetab ${S.lane===l.id?"on":""}" data-lane="${l.id}">${l.n}</button>`).join("");
+  if (S.view === "factory") $("#lane").innerHTML = renderLane();
+  const wide = window.innerWidth >= 900;
+  $("#view-priority").innerHTML = renderPriority();
+  $("#view-priority").classList.toggle("hide", !(wide || S.view === "priority"));
+  $("#view-factory").classList.toggle("hide", S.view !== "factory");
+  $("#view-stats").classList.toggle("hide", S.view !== "stats");
+  $("#view-settings").classList.toggle("hide", S.view !== "settings");
+  $("#view-help").classList.toggle("hide", S.view !== "help");
+  if (S.view === "stats") $("#view-stats").innerHTML = renderStats();
+  if (S.view === "settings" && !$("#fm")) $("#view-settings").innerHTML = renderSettings();
+  if (S.view === "help") $("#view-help").innerHTML = renderHelp();
+
+  const supply = sim.supplyTotal, dem = sim.demand;
+  $("#pwrtxt").textContent = `${dem.toFixed(0)} / ${supply.toFixed(0)} MW`;
+  $("#pwrfill").style.width = Math.min(100, supply>0 ? dem/supply*100 : 100) + "%";
+  $("#pwrfill").style.background = sim.ratio < 0.999 ? "var(--bad)" : "var(--accent)";
+  $("#kicktxt").textContent = S.kick > 0.005 ? `Boost +${(S.kick*100).toFixed(0)}%`
+    : sim.ratio < 0.999 ? `Brownout — running at ${(sim.ratio*100).toFixed(0)}%` : "Hold to keep generating";
+  $("#polltxt").textContent = S.pollution > 0.5 ? `pollution ${S.pollution.toFixed(0)}%` : "";
+  $("#polltxt").style.color = S.pollution > 40 ? "var(--bad)" : "var(--t3)";
+  document.querySelectorAll("#tabbar button").forEach(b =>
+    b.classList.toggle("on", b.dataset.v === S.view));
+}
+
+/* ============================================================
+   INPUT
+   ============================================================ */
+function buy(rid, n) {
+  n = n || 1;
+  for (let i = 0; i < n; i++) {
+    const r = RECIPES[rid], c = S.count[rid];
+    const cost = Object.entries(r.cost).map(([it,b]) => [it, b*Math.pow(r.cr,c)]);
+    if (!cost.every(([it,a]) => S.store[it] >= a)) break;
+    cost.forEach(([it,a]) => S.store[it] -= a);
+    S.count[rid]++;
+  }
+}
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-lane],[data-buy],[data-row],[data-act],[data-mv],[data-help],[data-v]");
+  if (!t) return;
+  const d = t.dataset;
+  if (d.lane) { S.lane = d.lane; S.open = null; }
+  else if (d.buy) { buy(d.buy, +(d.n||1)); }
+  else if (d.help) { S.helpItem = d.help; S.view = "help"; }
+  else if (d.v) { S.view = d.v; }
+  else if (d.mv) { const [i,dir]=d.mv.split(":").map(Number); const j=i+dir;
+    if (j>=0 && j<S.priority.length) { const a=S.priority; [a[i],a[j]]=[a[j],a[i]]; } }
+  else if (d.act) {
+    const [k,i] = d.act.split(":");
+    if (k==="dump") { S.store.residue = 0; S.pollution = Math.min(100, S.pollution+9); S.dumps++; }
+    else if (k==="reinject") S.reinject = !S.reinject;
+    else if (k==="simple") S.advanced = false;
+    else if (k==="advanced") S.advanced = true;
+    else if (k==="pause") S.priority[+i].paused = !S.priority[+i].paused;
+    else if (k==="mode") S.priority[+i].mode = S.priority[+i].mode==="g" ? "s" : "g";
+    else if (k==="share") { const p=S.priority[+i]; p.share = p.share>=90?20:p.share+20; }
+  }
+  else if (d.row) { S.open = S.open === d.row ? null : d.row; }
+  render();
+});
+$("#helpbtn").onclick = () => { S.view = "help"; render(); };
+
+// tap + hold
+let hold = null;
+function doTap(mult) { S.battery += 14; S.kick = Math.min(0.5, S.kick + 0.10*mult); S.taps++; }
+const tapEl = $("#tap");
+["mousedown","touchstart"].forEach(ev => tapEl.addEventListener(ev, e => {
+  e.preventDefault(); doTap(1);
+  hold = setInterval(() => doTap(0.8), 320);
+}, {passive:false}));
+["mouseup","mouseleave","touchend","touchcancel"].forEach(ev =>
+  tapEl.addEventListener(ev, () => { clearInterval(hold); hold = null; }));
+
+document.addEventListener("change", e => {
+  if (e.target.id === "fm") { S.fmt = e.target.value; render(); }
+});
+document.addEventListener("input", e => {
+  if (e.target.id === "ps") {
+    document.documentElement.style.setProperty("--pulse", e.target.value + "s");
+    $("#psv").textContent = e.target.value + "s";
+  }
+});
+window.addEventListener("resize", render);
+
+// seed a little starting stock so the first purchases are possible
+S.store.iron_plate = 900; S.store.iron_rod = 600; S.store.rein_plate = 40;
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

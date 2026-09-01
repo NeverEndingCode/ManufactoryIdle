@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+.turbo/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
