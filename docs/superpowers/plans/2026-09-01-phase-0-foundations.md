@@ -542,10 +542,14 @@ describe("format", () => {
     expect(format(D(-1234), "short")).toBe("-1.23 K");
   });
 
+  // exponent 45 -> tier 15, scaled 1.23. short/doubled land 10 places past "T",
+  // and letterSuffix(10) is "ak". hybrid deliberately stops at "T", so it falls
+  // back to scientific here.
   it.each([
     ["sci", "1.23e45"],
-    ["eng", "12.30e44"],
-    ["short", "12.30 od"],
+    ["eng", "1.23e45"],
+    ["short", "1.23 ak"],
+    ["doubled", "1.23 AK"],
     ["hybrid", "1.23e45"],
   ] as const)("renders 1.23e45 in %s mode", (mode, expected) => {
     expect(format(D("1.23e45"), mode)).toBe(expected);
@@ -700,9 +704,9 @@ export { format, letterSuffix, type NotationMode } from "./numbers/format.js";
 Run: `pnpm --filter @manufactory/engine test`
 Expected: PASS.
 
-Two expectations worth understanding rather than "fixing" if they surprise you:
-- `format(D("1.23e45"), "short")` is `"12.30 od"` because tier 15 lands 10 places past `T`, and `letterSuffix(10)` is `"ok"`... verify against the implementation and correct the literal in the test to whatever `letterSuffix(15 - 5)` actually returns. The *rule* under test is the threshold and rollover, not the specific pair.
-- `format(D("1e15"), "hybrid")` is scientific, not `"1.00 aa"` — hybrid deliberately stops at `T`.
+Two results are worth understanding rather than "fixing" if they surprise you:
+- `format(D("1e15"), "hybrid")` is scientific, not `"1.00 aa"`. Hybrid deliberately stops at `T`; that is the whole difference between it and `short`.
+- `eng` and `sci` agree on `1.23e45` because 45 is divisible by 3. They diverge when it is not: `format(D("1e46"), "eng")` is `"10.00e45"` while `sci` gives `"1.00e46"`.
 
 - [ ] **Step 6: Commit**
 
@@ -740,8 +744,7 @@ Spec A.2 makes engine purity structural rather than a convention. This task is w
 
 ```ts
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -750,7 +753,7 @@ const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 function lint(file: string): { code: number; output: string } {
   try {
-    const output = execFileSync("npx", ["eslint", "--no-warn-ignored", file], {
+    const output = execFileSync("pnpm", ["exec", "eslint", "--no-warn-ignored", file], {
       cwd: repoRoot,
       encoding: "utf8",
     });
@@ -788,8 +791,6 @@ describe("engine import boundary", () => {
   });
 
   it("does not restrict packages outside the engine", () => {
-    const dir = mkdtempSync(join(tmpdir(), "boundary-"));
-    rmSync(dir, { recursive: true, force: true });
     const file = join(repoRoot, "packages/content/src/__boundary_probe.ts");
     writeFileSync(file, 'import { readFileSync } from "node:fs";\nexport const x = readFileSync;\n');
     try {
@@ -816,7 +817,7 @@ Append this block to `eslint.config.js`, immediately before the trailing `pretti
   {
     files: ["packages/engine/**/*.ts"],
     rules: {
-      "no-restricted-imports": [
+      "@typescript-eslint/no-restricted-imports": [
         "error",
         {
           patterns: [
@@ -824,7 +825,11 @@ Append this block to `eslint.config.js`, immediately before the trailing `pretti
               // Spec A.2: the engine is pure. It may import its two numeric
               // dependencies and its own relative modules, nothing else — no
               // clock, no randomness, no I/O, no framework.
-              group: ["*", "!@manufactory/rational", "!break_infinity.js", "!./**", "!../**"],
+              //
+              // The glob must be "**", not "*": minimatch's "*" never matches a
+              // "/", so it would silently leave every scoped package and every
+              // "node:x/y" specifier unrestricted.
+              group: ["**", "!@manufactory/rational", "!break_infinity.js", "!./**", "!../**"],
               message:
                 "packages/engine is pure (spec A.2): only @manufactory/rational, break_infinity.js, and relative imports are allowed.",
             },
@@ -2567,3 +2572,36 @@ and CI reproduces the first four on every push.
 - **Any solver, storage, power, or resolve code** — Phase 1
 - **The real vertical slice content** — Phase 2; the fixture is a pipeline test, not a game
 - **The API, migrations, or auth wiring** — Phase 3. This task stands the containers up; nothing connects to them yet
+
+## Spec coverage
+
+Every Phase 0 requirement in spec F.2, and where it is implemented:
+
+| Spec requirement | Task |
+|---|---|
+| Monorepo (pnpm + Turborepo, TS strict) | 1 |
+| `@manufactory/rational` reuse under GPL-3.0 with attribution (A.3, D2) | 1 |
+| CI pipeline | 1, and 9 step 11 |
+| Engine skeleton, pure (A.2) | 2, 4 |
+| Decimal zone and canonical string persistence (A.4, A.5) | 2 |
+| Display notation, one pure function taking mode (spec section 9) | 3 |
+| Engine import boundary enforced, not conventional (A.2) | 4 |
+| Content schema, authored-vs-derived split (B.1, B.2, B.3, B.4) | 5 |
+| Validator checks 1–2 (B.6) | 6 |
+| Validator check 6, cycle detection (B.6, spec section 4.3) | 7 |
+| Validator checks 3, 4, 5, 7 (B.6, spec section 3.4) | 8 |
+| Validator check 11, checksum (B.6, spec section 12.7) | 9 |
+| Postgres + SuperTokens, one instance two databases (spec section 15, D.4) | 10 |
+
+Deliberately absent, with the phase that owns them: validator checks 8–10 (Phase 2, needs calibration); the `float64` clock zone and integer exponentiation / piecewise softcaps (Phase 1, needs the economy module); `players.timezone` and the `sessions` table (Phase 3, with the rest of the schema).
+
+## Next
+
+Phases 1–4 each need their own plan, written against the same spec:
+
+| Phase | Plan to write |
+|---|---|
+| 1 | Engine + simulator — the solver, item states, storage and Quantum Storage, power, resolve, marks, milestones, `sim run`, `sim play` |
+| 2 | Calibrated content — the B.5 vertical slice, the calibration script, validator checks 8–10, CI pacing gates |
+| 3 | Server + authority — action API, schema, SuperTokens, guests, idempotency, rate limits |
+| 4 | Web client |
