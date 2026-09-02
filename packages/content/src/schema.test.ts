@@ -76,6 +76,16 @@ describe("RecipeSchema", () => {
     const base = minimalBundle.recipes[0]!;
     expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "fast" }] })).toThrow();
   });
+
+  it("rejects a hybrid rate with both decimal and fraction", () => {
+    const base = minimalBundle.recipes[0]!;
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "11.25/4" }] })).toThrow();
+  });
+
+  it("allows empty outputs array for generators", () => {
+    const base = minimalBundle.recipes[0]!;
+    expect(() => RecipeSchema.parse({ ...base, outputs: [] })).not.toThrow();
+  });
 });
 
 describe("MarkSchema", () => {
@@ -87,6 +97,11 @@ describe("MarkSchema", () => {
   it("rejects a non-positive rate multiplier", () => {
     const base = minimalBundle.machineClasses[0]!.marks[0]!;
     expect(() => MarkSchema.parse({ ...base, rateMultiplier: 0 })).toThrow();
+  });
+
+  it("rejects a non-positive build cost multiplier", () => {
+    const base = minimalBundle.machineClasses[0]!.marks[0]!;
+    expect(() => MarkSchema.parse({ ...base, buildCostMultiplier: 0 })).toThrow();
   });
 });
 

@@ -10,7 +10,9 @@ const Tier = z.number().int().min(0);
 // Rates are exact rationals (spec A.4 zone 1), authored as either a decimal
 // ("11.25") or a fraction ("45/4"), and parsed with @manufactory/rational at
 // load time. They are never floats.
-const Rate = z.string().regex(/^\d+(\.\d+)?(\/\d+)?$/, "rate must be a decimal or a fraction");
+const Rate = z
+  .string()
+  .regex(/^\d+\/\d+$|^\d+(\.\d+)?$/, "rate must be a decimal or a fraction, not both");
 
 export const LaneSchema = z.object({
   id: Id,
