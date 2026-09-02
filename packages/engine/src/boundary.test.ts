@@ -45,6 +45,21 @@ describe("engine import boundary", () => {
     }
   });
 
+  it("rejects a bare '.' import, not just './something'", () => {
+    // Regression case: an earlier gitignore-style allow-list negated "./**"
+    // but not the bare "." segment itself, so `import x from "."` slipped
+    // through unrestricted. The regex-based rule must reject it too.
+    const file = join(repoRoot, "packages/engine/src/__boundary_probe.ts");
+    writeFileSync(file, 'import { x } from ".";\nexport const y = x;\n');
+    try {
+      const result = lint(file);
+      expect(result.code).not.toBe(0);
+      expect(result.output).toContain("no-restricted-imports");
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
   it("does not restrict packages outside the engine", () => {
     // packages/content does not exist yet (it arrives in Task 5); this points
     // at packages/rational instead so the case can run today. Once Task 5

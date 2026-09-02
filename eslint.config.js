@@ -32,28 +32,27 @@ export default tseslint.config(
               // dependencies and its own relative modules, nothing else — no
               // clock, no randomness, no I/O, no framework.
               //
-              // The glob must be "**", not "*": minimatch's "*" never matches a
-              // "/", so it would silently leave every scoped package and every
-              // "node:x/y" specifier unrestricted.
+              // A gitignore-style `group` allow-list was tried first and
+              // rejected: ESLint matches `group` patterns via the `ignore`
+              // package's gitignore semantics, where "**" excludes every path
+              // *segment*, including "." and "@manufactory" themselves.
+              // Re-including a leaf ("!./**", "!@manufactory/rational")
+              // without also re-including its parent segment ("!.",
+              // "!@manufactory") is silently ineffective — and even once
+              // patched to do that, bare "." / ".." / "@manufactory" (no
+              // subpath) still slipped through, because those negations
+              // unignore the literal strings outright rather than only as
+              // path prefixes. That imprecision cannot be read off the
+              // config, which makes a `group` array a maintenance hazard here
+              // regardless of whether a given revision happens to be correct.
               //
-              // This "group" array is matched with gitignore semantics (via the
-              // `ignore` package), not raw minimatch: "**" excludes everything,
-              // including the "." and "@manufactory" path segments themselves.
-              // Gitignore's "cannot re-include a file whose parent directory is
-              // excluded" rule then means a negation of only the leaf ("!./**",
-              // "!@manufactory/rational") is not enough — the parent segment
-              // ("!.", "!..", "!@manufactory") must be unignored too, or the
-              // leaf negation is silently ineffective.
-              group: [
-                "**",
-                "!@manufactory",
-                "!@manufactory/rational",
-                "!break_infinity.js",
-                "!.",
-                "!./**",
-                "!..",
-                "!../**",
-              ],
+              // A `regex` states the allow-list exactly instead: restrict
+              // everything EXCEPT a relative import (a "." or ".." segment
+              // followed by "/", so bare "." / ".." are still restricted) or
+              // one of the two exact permitted specifiers. The trailing "."
+              // requires at least one character, so an empty specifier can't
+              // match vacuously.
+              regex: "^(?!\\.{1,2}\\/|@manufactory\\/rational$|break_infinity\\.js$).",
               message:
                 "packages/engine is pure (spec A.2): only @manufactory/rational, break_infinity.js, and relative imports are allowed.",
             },
