@@ -89,6 +89,19 @@ export function checkByproductOutlets(bundle: Bundle): ValidationIssue[] {
   return issues;
 }
 
+// What this does and does not model (spec B.6 check 7), same style of note
+// as checks 8/9/10 below: this only checks tier ordering — that a machine's
+// build-cost item is produced by *some* recipe at or before the mark's own
+// unlock tier. It does NOT check the spec's stated failure mode, "a machine
+// whose build cost needs an item only that machine can make" — i.e. a
+// genuine circularity where the sole producer of the cost item is gated
+// behind owning one of the very machines being bought. `iron_plate`'s only
+// producer runs on a `constructor`, so a constructor mk1 costing iron_plate
+// would pass this check (constructor unlocks at tier 0, iron_plate is first
+// produced at tier 0) while being unbuildable in practice. Real reachability
+// analysis — start from zero, or from the world's authored starting
+// machines, and prove every build cost is reachable without begging the
+// question — is deferred to Phase 2.
 export function checkBuildCostsSatisfiable(bundle: Bundle): ValidationIssue[] {
   const produced = earliestProduction(bundle);
   const issues: ValidationIssue[] = [];
