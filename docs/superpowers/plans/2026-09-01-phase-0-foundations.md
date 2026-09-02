@@ -860,3 +860,798 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 )"
 ```
+
+---
+
+### Task 5: The content bundle schema
+
+**Files:**
+- Create: `packages/content/package.json`, `packages/content/tsconfig.json`, `packages/content/src/index.ts`
+- Create: `packages/content/src/schema.ts`
+- Test: `packages/content/src/schema.test.ts`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks
+- Produces: from `@manufactory/content`, Zod schemas and their inferred types:
+  - `BundleSchema`, `type Bundle`
+  - `LaneSchema`, `type Lane` — `{ id, name, order, unlockTier }`
+  - `ItemSchema`, `type Item` — `{ id, lane, tier, name, fluid, terminal, baseStorageCap, baseQuantumCap, icon? }`
+  - `MachineClassSchema`, `type MachineClass` — `{ id, name, ladder, marks }`
+  - `MarkSchema`, `type Mark` — `{ mark, name, rateMultiplier, buildCostMultiplier, powerDraw, buildCost, unlockTier }`
+  - `RecipeSchema`, `type Recipe` — `{ id, name, lane, machineClass, inputs, outputs, powerOutput, isAlternate, unlockTier }`
+  - `RecipePartSchema`, `type RecipePart` — `{ item, rate, byproduct }`
+  - `CostEntrySchema`, `type CostEntry` — `{ item, amount }`
+  - `LadderSchema`, `type Ladder` — `{ step, interval }`
+  - `PacingSchema`, `type Pacing`
+
+- [ ] **Step 1: Create the package manifest and tsconfig**
+
+`packages/content/package.json`:
+
+```json
+{
+  "name": "@manufactory/content",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "content:check": "node --experimental-strip-types src/cli.ts bundles/fixture"
+  },
+  "dependencies": {
+    "@manufactory/rational": "workspace:*",
+    "yaml": "^2.5.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}
+```
+
+`packages/content/tsconfig.json`:
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "noEmit": true, "types": ["node"] },
+  "include": ["src/**/*.ts"]
+}
+```
+
+- [ ] **Step 2: Write the failing test**
+
+`packages/content/src/schema.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { BundleSchema, ItemSchema, MarkSchema, RecipeSchema } from "./schema.js";
+
+const minimalBundle = {
+  version: "fixture.v1",
+  lanes: [{ id: "iron", name: "Iron", order: 0, unlockTier: 0 }],
+  items: [
+    { id: "iron_ore", lane: "iron", tier: 0, name: "Iron Ore", baseStorageCap: 600, baseQuantumCap: 2400 },
+  ],
+  machineClasses: [
+    {
+      id: "miner",
+      name: "Miner",
+      ladder: { step: 1.5, interval: 10 },
+      marks: [
+        {
+          mark: 1,
+          name: "Miner Mk.1",
+          rateMultiplier: 1,
+          buildCostMultiplier: 1,
+          powerDraw: 5,
+          buildCost: [{ item: "iron_ore", amount: 10 }],
+          unlockTier: 0,
+        },
+      ],
+    },
+  ],
+  recipes: [
+    {
+      id: "mine_iron",
+      name: "Iron Ore",
+      lane: "iron",
+      machineClass: "miner",
+      inputs: [],
+      outputs: [{ item: "iron_ore", rate: "60" }],
+      unlockTier: 0,
+    },
+  ],
+  pacing: {
+    targetCollectionsToTier: [2, 5],
+    activeHoursPerDay: 2.5,
+    offlineCollectionsPerDay: 3,
+    purchaseIntervalEarlySeconds: 120,
+    purchaseIntervalLateSeconds: 1800,
+    storageBindingCadence: 12,
+  },
+};
+
+describe("BundleSchema", () => {
+  it("accepts a minimal valid bundle", () => {
+    expect(() => BundleSchema.parse(minimalBundle)).not.toThrow();
+  });
+
+  it("applies defaults for optional flags", () => {
+    const parsed = BundleSchema.parse(minimalBundle);
+    expect(parsed.items[0]!.fluid).toBe(false);
+    expect(parsed.items[0]!.terminal).toBe(false);
+    expect(parsed.recipes[0]!.isAlternate).toBe(false);
+    expect(parsed.recipes[0]!.powerOutput).toBe(0);
+    expect(parsed.recipes[0]!.outputs[0]!.byproduct).toBe(false);
+  });
+
+  it("rejects a bundle with no lanes", () => {
+    expect(() => BundleSchema.parse({ ...minimalBundle, lanes: [] })).toThrow();
+  });
+});
+
+describe("RecipeSchema", () => {
+  it("accepts exact rational rates as decimals and fractions", () => {
+    const base = minimalBundle.recipes[0]!;
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "11.25" }] })).not.toThrow();
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "45/4" }] })).not.toThrow();
+  });
+
+  it("rejects a rate that is not a number or fraction", () => {
+    const base = minimalBundle.recipes[0]!;
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "fast" }] })).toThrow();
+  });
+});
+
+describe("MarkSchema", () => {
+  it("requires at least one build cost entry", () => {
+    const base = minimalBundle.machineClasses[0]!.marks[0]!;
+    expect(() => MarkSchema.parse({ ...base, buildCost: [] })).toThrow();
+  });
+
+  it("rejects a non-positive rate multiplier", () => {
+    const base = minimalBundle.machineClasses[0]!.marks[0]!;
+    expect(() => MarkSchema.parse({ ...base, rateMultiplier: 0 })).toThrow();
+  });
+});
+
+describe("ItemSchema", () => {
+  it("rejects a negative storage cap", () => {
+    expect(() =>
+      ItemSchema.parse({ id: "x", lane: "iron", tier: 0, name: "X", baseStorageCap: -1, baseQuantumCap: 1 }),
+    ).toThrow();
+  });
+});
+```
+
+- [ ] **Step 3: Run the test to verify it fails**
+
+Run: `pnpm --filter @manufactory/content test`
+Expected: FAIL — `Cannot find module './schema.js'`.
+
+- [ ] **Step 4: Write the implementation**
+
+`packages/content/src/schema.ts`:
+
+```ts
+// The authored shape of a content bundle. Spec B.1: the graph and the pacing
+// intent are hand-authored; cost ratios, storage curves, and milestone
+// requirements are derived by the calibration script in Phase 2 and land in a
+// separate `derived` block, so they are deliberately absent here.
+import { z } from "zod";
+
+const Id = z.string().min(1);
+const Tier = z.number().int().min(0);
+
+// Rates are exact rationals (spec A.4 zone 1), authored as either a decimal
+// ("11.25") or a fraction ("45/4"), and parsed with @manufactory/rational at
+// load time. They are never floats.
+const Rate = z.string().regex(/^\d+(\.\d+)?(\/\d+)?$/, "rate must be a decimal or a fraction");
+
+export const LaneSchema = z.object({
+  id: Id,
+  name: z.string().min(1),
+  order: z.number().int(),
+  unlockTier: Tier,
+});
+
+export const ItemSchema = z.object({
+  id: Id,
+  lane: Id,
+  tier: Tier,
+  name: z.string().min(1),
+  fluid: z.boolean().default(false),
+  // `terminal` marks an item that legitimately has no consumer recipe because
+  // it is delivered or sunk. Without it, validator check 4 would flag every
+  // end product as a dead end.
+  terminal: z.boolean().default(false),
+  baseStorageCap: z.number().positive(),
+  baseQuantumCap: z.number().positive(),
+  icon: z.string().optional(),
+});
+
+export const CostEntrySchema = z.object({ item: Id, amount: z.number().positive() });
+
+export const MarkSchema = z.object({
+  mark: z.number().int().min(1),
+  name: z.string().min(1),
+  // Spec C.0: when buildCostMultiplier equals rateMultiplier, a mark is exactly
+  // pace-neutral across a tier cycle. Set it lower to make the game accelerate.
+  rateMultiplier: z.number().positive(),
+  buildCostMultiplier: z.number().positive(),
+  powerDraw: z.number().nonnegative(),
+  buildCost: z.array(CostEntrySchema).min(1),
+  unlockTier: Tier,
+});
+
+// Spec B.3: authored, not derived, because it is a feel decision. Default is
+// x1.5 every 10 machines, which holds the pace sawtooth under 1.6x.
+export const LadderSchema = z.object({
+  step: z.number().gt(1),
+  interval: z.number().int().positive(),
+});
+
+export const MachineClassSchema = z.object({
+  id: Id,
+  name: z.string().min(1),
+  ladder: LadderSchema,
+  marks: z.array(MarkSchema).min(1),
+});
+
+export const RecipePartSchema = z.object({
+  item: Id,
+  rate: Rate,
+  byproduct: z.boolean().default(false),
+});
+
+export const RecipeSchema = z.object({
+  id: Id,
+  name: z.string().min(1),
+  lane: Id,
+  machineClass: Id,
+  inputs: z.array(RecipePartSchema),
+  outputs: z.array(RecipePartSchema),
+  // Generators are ordinary recipes that consume fuel items and emit power
+  // (spec section 6.3), so they carry powerOutput and usually no item outputs.
+  powerOutput: z.number().nonnegative().default(0),
+  isAlternate: z.boolean().default(false),
+  unlockTier: Tier,
+});
+
+export const PacingSchema = z.object({
+  targetCollectionsToTier: z.array(z.number().positive()).min(1),
+  activeHoursPerDay: z.number().positive(),
+  offlineCollectionsPerDay: z.number().positive(),
+  purchaseIntervalEarlySeconds: z.number().positive(),
+  purchaseIntervalLateSeconds: z.number().positive(),
+  storageBindingCadence: z.number().int().positive(),
+});
+
+export const BundleSchema = z.object({
+  version: z.string().min(1),
+  lanes: z.array(LaneSchema).min(1),
+  items: z.array(ItemSchema).min(1),
+  machineClasses: z.array(MachineClassSchema).min(1),
+  recipes: z.array(RecipeSchema).min(1),
+  pacing: PacingSchema,
+});
+
+export type Lane = z.infer<typeof LaneSchema>;
+export type Item = z.infer<typeof ItemSchema>;
+export type CostEntry = z.infer<typeof CostEntrySchema>;
+export type Mark = z.infer<typeof MarkSchema>;
+export type Ladder = z.infer<typeof LadderSchema>;
+export type MachineClass = z.infer<typeof MachineClassSchema>;
+export type RecipePart = z.infer<typeof RecipePartSchema>;
+export type Recipe = z.infer<typeof RecipeSchema>;
+export type Pacing = z.infer<typeof PacingSchema>;
+export type Bundle = z.infer<typeof BundleSchema>;
+```
+
+- [ ] **Step 5: Create the package entry point**
+
+`packages/content/src/index.ts`:
+
+```ts
+export * from "./schema.js";
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `pnpm --filter @manufactory/content test`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add the content bundle schema
+
+Zod schema for the authored half of a bundle, per spec B.1. Rates are
+exact rational strings, never floats. Derived values from calibration are
+deliberately absent; they arrive in Phase 2.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 6: Bundle loading and reference resolution (checks 1–2)
+
+**Files:**
+- Create: `packages/content/src/load.ts`
+- Modify: `packages/content/src/index.ts`
+- Test: `packages/content/src/load.test.ts`
+
+**Interfaces:**
+- Consumes: `BundleSchema`, `type Bundle` from Task 5
+- Produces:
+  - `type ValidationIssue = { check: number; severity: "error"; message: string }`
+  - `loadBundleDir(dir: string): Bundle` — reads and merges every `*.yaml` in a directory, then schema-parses. Throws on schema failure (check 1)
+  - `checkReferences(bundle: Bundle): ValidationIssue[]` — check 2, plus duplicate-id detection
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/content/src/load.test.ts`:
+
+```ts
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { checkReferences, loadBundleDir } from "./load.js";
+import type { Bundle } from "./schema.js";
+
+let dir: string | undefined;
+afterEach(() => {
+  if (dir) rmSync(dir, { recursive: true, force: true });
+  dir = undefined;
+});
+
+function writeBundle(files: Record<string, string>): string {
+  dir = mkdtempSync(join(tmpdir(), "bundle-"));
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+  return dir;
+}
+
+const LANES = `version: test.v1\nlanes:\n  - { id: iron, name: Iron, order: 0, unlockTier: 0 }\n`;
+const ITEMS = `items:\n  - { id: iron_ore, lane: iron, tier: 0, name: Iron Ore, baseStorageCap: 600, baseQuantumCap: 2400 }\n`;
+const MACHINES = `machineClasses:\n  - id: miner\n    name: Miner\n    ladder: { step: 1.5, interval: 10 }\n    marks:\n      - mark: 1\n        name: Miner Mk.1\n        rateMultiplier: 1\n        buildCostMultiplier: 1\n        powerDraw: 5\n        buildCost: [{ item: iron_ore, amount: 10 }]\n        unlockTier: 0\n`;
+const RECIPES = `recipes:\n  - id: mine_iron\n    name: Iron Ore\n    lane: iron\n    machineClass: miner\n    inputs: []\n    outputs: [{ item: iron_ore, rate: "60" }]\n    unlockTier: 0\n`;
+const PACING = `pacing:\n  targetCollectionsToTier: [2, 5]\n  activeHoursPerDay: 2.5\n  offlineCollectionsPerDay: 3\n  purchaseIntervalEarlySeconds: 120\n  purchaseIntervalLateSeconds: 1800\n  storageBindingCadence: 12\n`;
+
+const ALL = { "a.yaml": LANES, "b.yaml": ITEMS, "c.yaml": MACHINES, "d.yaml": RECIPES, "e.yaml": PACING };
+
+describe("loadBundleDir", () => {
+  it("merges every yaml file in the directory into one bundle", () => {
+    const bundle = loadBundleDir(writeBundle(ALL));
+    expect(bundle.version).toBe("test.v1");
+    expect(bundle.lanes).toHaveLength(1);
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.recipes).toHaveLength(1);
+  });
+
+  it("concatenates arrays that appear in more than one file", () => {
+    const extra = `items:\n  - { id: iron_ingot, lane: iron, tier: 0, name: Iron Ingot, baseStorageCap: 400, baseQuantumCap: 1600 }\n`;
+    const bundle = loadBundleDir(writeBundle({ ...ALL, "f.yaml": extra }));
+    expect(bundle.items.map((i) => i.id).sort()).toEqual(["iron_ingot", "iron_ore"]);
+  });
+
+  it("throws on a schema violation (check 1)", () => {
+    const broken = `items:\n  - { id: bad, lane: iron, tier: 0, name: Bad, baseStorageCap: -5, baseQuantumCap: 1 }\n`;
+    expect(() => loadBundleDir(writeBundle({ ...ALL, "f.yaml": broken }))).toThrow();
+  });
+});
+
+describe("checkReferences", () => {
+  const base = (): Bundle => loadBundleDir(writeBundle(ALL));
+
+  it("passes a self-consistent bundle", () => {
+    expect(checkReferences(base())).toEqual([]);
+  });
+
+  it("flags an item pointing at a missing lane", () => {
+    const bundle = base();
+    bundle.items[0]!.lane = "ghost";
+    const issues = checkReferences(bundle);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.check).toBe(2);
+    expect(issues[0]!.message).toContain("ghost");
+  });
+
+  it("flags a recipe pointing at a missing machine class", () => {
+    const bundle = base();
+    bundle.recipes[0]!.machineClass = "ghost";
+    expect(checkReferences(bundle).some((i) => i.message.includes("ghost"))).toBe(true);
+  });
+
+  it("flags a recipe output pointing at a missing item", () => {
+    const bundle = base();
+    bundle.recipes[0]!.outputs[0]!.item = "ghost";
+    expect(checkReferences(bundle).some((i) => i.message.includes("ghost"))).toBe(true);
+  });
+
+  it("flags a build cost pointing at a missing item", () => {
+    const bundle = base();
+    bundle.machineClasses[0]!.marks[0]!.buildCost[0]!.item = "ghost";
+    expect(checkReferences(bundle).some((i) => i.message.includes("ghost"))).toBe(true);
+  });
+
+  it("flags duplicate ids", () => {
+    const bundle = base();
+    bundle.items.push({ ...bundle.items[0]! });
+    expect(checkReferences(bundle).some((i) => i.message.includes("duplicate"))).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @manufactory/content test load`
+Expected: FAIL — `Cannot find module './load.js'`.
+
+- [ ] **Step 3: Write the implementation**
+
+`packages/content/src/load.ts`:
+
+```ts
+// Bundle loading and reference resolution. Spec B.6 checks 1 and 2.
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { BundleSchema, type Bundle } from "./schema.js";
+
+export interface ValidationIssue {
+  check: number;
+  severity: "error";
+  message: string;
+}
+
+// A bundle may be split across as many yaml files as the author likes. Top-level
+// arrays concatenate; scalars take the last writer. Files load in sorted order so
+// the result never depends on directory iteration order.
+function mergeInto(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(source)) {
+    const existing = target[key];
+    if (Array.isArray(existing) && Array.isArray(value)) {
+      target[key] = [...existing, ...value];
+    } else {
+      target[key] = value;
+    }
+  }
+}
+
+export function loadBundleDir(dir: string): Bundle {
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
+    .sort();
+
+  const merged: Record<string, unknown> = {};
+  for (const file of files) {
+    const parsed = parseYaml(readFileSync(join(dir, file), "utf8")) as unknown;
+    if (parsed && typeof parsed === "object") {
+      mergeInto(merged, parsed as Record<string, unknown>);
+    }
+  }
+
+  // Check 1: schema conformance. Throwing here is deliberate — nothing
+  // downstream can run against a bundle that is not even shaped right.
+  return BundleSchema.parse(merged);
+}
+
+function duplicates(ids: string[]): string[] {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) dupes.add(id);
+    seen.add(id);
+  }
+  return [...dupes];
+}
+
+export function checkReferences(bundle: Bundle): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const add = (message: string) => issues.push({ check: 2, severity: "error", message });
+
+  const laneIds = new Set(bundle.lanes.map((l) => l.id));
+  const itemIds = new Set(bundle.items.map((i) => i.id));
+  const classIds = new Set(bundle.machineClasses.map((m) => m.id));
+
+  for (const [kind, ids] of [
+    ["lane", bundle.lanes.map((l) => l.id)],
+    ["item", bundle.items.map((i) => i.id)],
+    ["machine class", bundle.machineClasses.map((m) => m.id)],
+    ["recipe", bundle.recipes.map((r) => r.id)],
+  ] as const) {
+    for (const id of duplicates(ids)) add(`duplicate ${kind} id "${id}"`);
+  }
+
+  for (const item of bundle.items) {
+    if (!laneIds.has(item.lane)) add(`item "${item.id}" references missing lane "${item.lane}"`);
+  }
+
+  for (const cls of bundle.machineClasses) {
+    for (const mark of cls.marks) {
+      for (const cost of mark.buildCost) {
+        if (!itemIds.has(cost.item)) {
+          add(`build cost for "${cls.id}" mk${mark.mark} references missing item "${cost.item}"`);
+        }
+      }
+    }
+  }
+
+  for (const recipe of bundle.recipes) {
+    if (!laneIds.has(recipe.lane)) add(`recipe "${recipe.id}" references missing lane "${recipe.lane}"`);
+    if (!classIds.has(recipe.machineClass)) {
+      add(`recipe "${recipe.id}" references missing machine class "${recipe.machineClass}"`);
+    }
+    for (const part of [...recipe.inputs, ...recipe.outputs]) {
+      if (!itemIds.has(part.item)) {
+        add(`recipe "${recipe.id}" references missing item "${part.item}"`);
+      }
+    }
+  }
+
+  return issues;
+}
+```
+
+- [ ] **Step 4: Export it**
+
+Add to `packages/content/src/index.ts`:
+
+```ts
+export * from "./schema.js";
+export { checkReferences, loadBundleDir, type ValidationIssue } from "./load.js";
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `pnpm --filter @manufactory/content test`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add bundle loading and reference resolution
+
+Validator checks 1 and 2 from spec B.6. A bundle may be split across any
+number of yaml files; top-level arrays concatenate and files load in
+sorted order so the result never depends on directory iteration order.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 7: Cycle detection (check 6)
+
+**Files:**
+- Create: `packages/content/src/validate/scc.ts`
+- Test: `packages/content/src/validate/scc.test.ts`
+
+**Interfaces:**
+- Consumes: `type Bundle` from Task 5
+- Produces:
+  - `findStronglyConnectedComponents(nodes: string[], edges: Map<string, string[]>): string[][]` — returns only components that represent a cycle: size > 1, or size 1 with a self-edge
+  - `checkCycles(bundle: Bundle): ValidationIssue[]` — check 6
+
+Spec §4.3 notes the Satisfactory graph contains real loops (residual fuels, recycled plastic/rubber), and spec B.5 deliberately includes one so this check has something to catch. Detecting them is required now; *solving* them is a Phase 1 decision.
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/content/src/validate/scc.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { findStronglyConnectedComponents } from "./scc.js";
+
+function graph(spec: Record<string, string[]>): {
+  nodes: string[];
+  edges: Map<string, string[]>;
+} {
+  return { nodes: Object.keys(spec), edges: new Map(Object.entries(spec)) };
+}
+
+describe("findStronglyConnectedComponents", () => {
+  it("returns nothing for an acyclic graph", () => {
+    const { nodes, edges } = graph({ a: ["b"], b: ["c"], c: [] });
+    expect(findStronglyConnectedComponents(nodes, edges)).toEqual([]);
+  });
+
+  it("finds a two-node cycle", () => {
+    const { nodes, edges } = graph({ a: ["b"], b: ["a"] });
+    const found = findStronglyConnectedComponents(nodes, edges);
+    expect(found).toHaveLength(1);
+    expect([...found[0]!].sort()).toEqual(["a", "b"]);
+  });
+
+  it("finds a three-node cycle and ignores the acyclic tail", () => {
+    const { nodes, edges } = graph({ a: ["b"], b: ["c"], c: ["a"], d: ["a"], e: [] });
+    const found = findStronglyConnectedComponents(nodes, edges);
+    expect(found).toHaveLength(1);
+    expect([...found[0]!].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("finds a self-loop", () => {
+    const { nodes, edges } = graph({ a: ["a"], b: [] });
+    expect(findStronglyConnectedComponents(nodes, edges)).toEqual([["a"]]);
+  });
+
+  it("finds two independent cycles", () => {
+    const { nodes, edges } = graph({ a: ["b"], b: ["a"], c: ["d"], d: ["c"] });
+    expect(findStronglyConnectedComponents(nodes, edges)).toHaveLength(2);
+  });
+
+  it("tolerates edges to nodes that are not in the node list", () => {
+    const { nodes, edges } = graph({ a: ["ghost"] });
+    expect(findStronglyConnectedComponents(nodes, edges)).toEqual([]);
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @manufactory/content test scc`
+Expected: FAIL — `Cannot find module './scc.js'`.
+
+- [ ] **Step 3: Write the implementation**
+
+`packages/content/src/validate/scc.ts`:
+
+```ts
+// Tarjan's strongly-connected-components algorithm over the recipe dependency
+// graph. Spec B.6 check 6 and spec section 4.3: parts of the Satisfactory graph
+// contain real loops (residual fuels, recycled plastic and rubber), and naive
+// recursive expansion would not terminate on them.
+//
+// Written iteratively rather than recursively: recipe counts reach a few hundred
+// and a blown call stack in a content validator is a miserable failure mode.
+import type { ValidationIssue } from "../load.js";
+import type { Bundle } from "../schema.js";
+
+export function findStronglyConnectedComponents(
+  nodes: string[],
+  edges: Map<string, string[]>,
+): string[][] {
+  const known = new Set(nodes);
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const result: string[][] = [];
+  let counter = 0;
+
+  const successors = (node: string): string[] =>
+    (edges.get(node) ?? []).filter((next) => known.has(next));
+
+  for (const root of nodes) {
+    if (index.has(root)) continue;
+
+    // Each frame tracks how far through its successor list we have walked.
+    const frames: { node: string; next: number }[] = [{ node: root, next: 0 }];
+    index.set(root, counter);
+    low.set(root, counter);
+    counter += 1;
+    stack.push(root);
+    onStack.add(root);
+
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1]!;
+      const children = successors(frame.node);
+
+      if (frame.next < children.length) {
+        const child = children[frame.next]!;
+        frame.next += 1;
+
+        if (!index.has(child)) {
+          index.set(child, counter);
+          low.set(child, counter);
+          counter += 1;
+          stack.push(child);
+          onStack.add(child);
+          frames.push({ node: child, next: 0 });
+        } else if (onStack.has(child)) {
+          low.set(frame.node, Math.min(low.get(frame.node)!, index.get(child)!));
+        }
+        continue;
+      }
+
+      frames.pop();
+      const parent = frames[frames.length - 1];
+      if (parent) {
+        low.set(parent.node, Math.min(low.get(parent.node)!, low.get(frame.node)!));
+      }
+
+      if (low.get(frame.node) === index.get(frame.node)) {
+        const component: string[] = [];
+        for (;;) {
+          const popped = stack.pop()!;
+          onStack.delete(popped);
+          component.push(popped);
+          if (popped === frame.node) break;
+        }
+        // A single node is only a cycle if it points at itself.
+        const isCycle =
+          component.length > 1 ||
+          (component.length === 1 && successors(component[0]!).includes(component[0]!));
+        if (isCycle) result.push(component);
+      }
+    }
+  }
+
+  return result;
+}
+
+// Recipe R depends on recipe S when R consumes an item S produces.
+export function buildRecipeDependencyGraph(bundle: Bundle): {
+  nodes: string[];
+  edges: Map<string, string[]>;
+} {
+  const producersOf = new Map<string, string[]>();
+  for (const recipe of bundle.recipes) {
+    for (const output of recipe.outputs) {
+      const list = producersOf.get(output.item) ?? [];
+      list.push(recipe.id);
+      producersOf.set(output.item, list);
+    }
+  }
+
+  const edges = new Map<string, string[]>();
+  for (const recipe of bundle.recipes) {
+    const deps = new Set<string>();
+    for (const input of recipe.inputs) {
+      for (const producer of producersOf.get(input.item) ?? []) deps.add(producer);
+    }
+    edges.set(recipe.id, [...deps]);
+  }
+
+  return { nodes: bundle.recipes.map((r) => r.id), edges };
+}
+
+export function checkCycles(bundle: Bundle): ValidationIssue[] {
+  const { nodes, edges } = buildRecipeDependencyGraph(bundle);
+  return findStronglyConnectedComponents(nodes, edges).map((component) => ({
+    check: 6,
+    severity: "error" as const,
+    message: `recipe cycle: ${[...component].sort().join(" -> ")}`,
+  }));
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm --filter @manufactory/content test scc`
+Expected: PASS, all six cases.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add recipe cycle detection
+
+Iterative Tarjan SCC over the recipe dependency graph, per spec B.6 check
+6. Iterative rather than recursive because a blown call stack in a content
+validator is a miserable failure mode. Detecting cycles is required now;
+deciding whether to solve or forbid them is a Phase 1 call.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
