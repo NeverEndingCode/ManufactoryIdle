@@ -44,6 +44,22 @@ describe("loadBundleDir", () => {
     const broken = `items:\n  - { id: bad, lane: iron, tier: 0, name: Bad, baseStorageCap: -5, baseQuantumCap: 1 }\n`;
     expect(() => loadBundleDir(writeBundle({ ...ALL, "f.yaml": broken }))).toThrow();
   });
+
+  it("throws on a file whose top level is a bare list, naming the file", () => {
+    const bareList = `- a\n- b\n`;
+    expect(() => loadBundleDir(writeBundle({ ...ALL, "f.yaml": bareList }))).toThrow(/f\.yaml/);
+  });
+
+  it("throws on a file whose top level is a bare scalar", () => {
+    const bareScalar = `just a string\n`;
+    expect(() => loadBundleDir(writeBundle({ ...ALL, "f.yaml": bareScalar }))).toThrow();
+  });
+
+  it("skips an empty file without error, still loading the rest of the bundle", () => {
+    const bundle = loadBundleDir(writeBundle({ ...ALL, "f.yaml": "" }));
+    expect(bundle.lanes).toHaveLength(1);
+    expect(bundle.items).toHaveLength(1);
+  });
 });
 
 describe("checkReferences", () => {
@@ -71,6 +87,12 @@ describe("checkReferences", () => {
   it("flags a recipe output pointing at a missing item", () => {
     const bundle = base();
     bundle.recipes[0]!.outputs[0]!.item = "ghost";
+    expect(checkReferences(bundle).some((i) => i.message.includes("ghost"))).toBe(true);
+  });
+
+  it("flags a recipe input pointing at a missing item", () => {
+    const bundle = base();
+    bundle.recipes[0]!.inputs.push({ item: "ghost", rate: "1", byproduct: false });
     expect(checkReferences(bundle).some((i) => i.message.includes("ghost"))).toBe(true);
   });
 

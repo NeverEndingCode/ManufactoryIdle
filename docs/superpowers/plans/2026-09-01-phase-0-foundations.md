@@ -1346,9 +1346,14 @@ export function loadBundleDir(dir: string): Bundle {
   const merged: Record<string, unknown> = {};
   for (const file of files) {
     const parsed = parseYaml(readFileSync(join(dir, file), "utf8")) as unknown;
-    if (parsed && typeof parsed === "object") {
-      mergeInto(merged, parsed as Record<string, unknown>);
+    if (parsed === null || parsed === undefined) continue; // empty file, legitimate
+    if (typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(
+        `${file}: a bundle file's top level must be a mapping, but this parsed to ` +
+          `${Array.isArray(parsed) ? "a list" : typeof parsed}. Check indentation.`,
+      );
     }
+    mergeInto(merged, parsed as Record<string, unknown>);
   }
 
   // Check 1: schema conformance. Throwing here is deliberate — nothing
