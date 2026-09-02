@@ -61,13 +61,67 @@ describe("engine import boundary", () => {
   });
 
   it("does not restrict packages outside the engine", () => {
-    // packages/content does not exist yet (it arrives in Task 5); this points
-    // at packages/rational instead so the case can run today. Once Task 5
-    // lands, this can be switched to packages/content/src/__boundary_probe.ts.
+    // packages/rational is a fine control here — it is a real, unrestricted
+    // package (no import-boundary or clock/RNG rules apply to it), same as
+    // packages/content. Either would do; this one predates and is unrelated
+    // to content, so it stays put rather than churning for churn's sake.
     const file = join(repoRoot, "packages/rational/src/__boundary_probe.ts");
     writeFileSync(file, 'import { readFileSync } from "node:fs";\nexport const x = readFileSync;\n');
     try {
       expect(lint(file).code).toBe(0);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+});
+
+describe("engine determinism guardrail (spec A.5)", () => {
+  it("rejects a dynamic import", () => {
+    const file = join(repoRoot, "packages/engine/src/__determinism_probe.ts");
+    writeFileSync(
+      file,
+      'export async function f() {\n  const fs = await import("node:fs");\n  return fs;\n}\n',
+    );
+    try {
+      const result = lint(file);
+      expect(result.code).not.toBe(0);
+      expect(result.output).toContain("no-restricted-syntax");
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it("rejects Date.now()", () => {
+    const file = join(repoRoot, "packages/engine/src/__determinism_probe.ts");
+    writeFileSync(file, "export const t = Date.now();\n");
+    try {
+      const result = lint(file);
+      expect(result.code).not.toBe(0);
+      expect(result.output).toContain("no-restricted-properties");
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it("rejects Math.random()", () => {
+    const file = join(repoRoot, "packages/engine/src/__determinism_probe.ts");
+    writeFileSync(file, "export const r = Math.random();\n");
+    try {
+      const result = lint(file);
+      expect(result.code).not.toBe(0);
+      expect(result.output).toContain("no-restricted-properties");
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it("still rejects Date.now() inside a *.test.ts file — only the import rule relaxes for tests", () => {
+    const file = join(repoRoot, "packages/engine/src/__determinism_probe.test.ts");
+    writeFileSync(file, "export const t = Date.now();\n");
+    try {
+      const result = lint(file);
+      expect(result.code).not.toBe(0);
+      expect(result.output).toContain("no-restricted-properties");
     } finally {
       rmSync(file, { force: true });
     }

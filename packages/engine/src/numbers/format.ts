@@ -56,10 +56,12 @@ export function format(value: Dec, mode: NotationMode): string {
   const exponent = value.exponent;
   const mantissa = Math.abs(value.mantissa);
 
+  // eslint-disable-next-line no-restricted-properties -- display-only (spec E.4 exemption); do not copy into economy/
   if (exponent < 3) return sign + plain(mantissa * Math.pow(10, exponent));
 
   // tier counts groups of three digits; scaled sits in [1, 1000).
   const tier = Math.floor(exponent / 3);
+  // eslint-disable-next-line no-restricted-properties -- display-only (spec E.4 exemption); do not copy into economy/
   const scaled = mantissa * Math.pow(10, exponent - tier * 3);
 
   const sci = () => `${sign}${mantissa.toFixed(2)}e${exponent}`;

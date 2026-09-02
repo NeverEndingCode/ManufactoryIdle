@@ -61,5 +61,52 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Spec A.5: no clock, no randomness, no transcendentals in state-affecting
+    // paths (E.4). Deliberately NOT relaxed for `*.test.ts` — unlike the
+    // import-boundary block above, engine tests get no exemption here. A
+    // test that reaches for `Date.now()` or `Math.random()` for convenience
+    // is itself nondeterministic, which is exactly the flakiness this whole
+    // design is trying to keep out of the engine's tests, not just its
+    // source.
+    files: ["packages/engine/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportExpression",
+          message: "Spec A.2: dynamic import bypasses the engine import boundary.",
+        },
+        {
+          selector: "NewExpression[callee.name='Date']",
+          message: "Spec A.5: time arrives as a parameter.",
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        { name: "performance", message: "Spec A.5: no clock in the engine." },
+        { name: "setTimeout", message: "Spec A.5: no clock in the engine." },
+        { name: "setInterval", message: "Spec A.5: no clock in the engine." },
+        { name: "process", message: "Spec A.2: the engine has no I/O." },
+        { name: "crypto", message: "Spec A.5: pass a seeded PRNG explicitly." },
+      ],
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "Math",
+          property: "random",
+          message: "Spec A.5: pass a seeded PRNG explicitly.",
+        },
+        { object: "Date", property: "now", message: "Spec A.5: time arrives as a parameter." },
+        {
+          object: "Math",
+          property: "pow",
+          message: "Spec E.4: libm-dependent. Integer exponentiation by squaring.",
+        },
+        { object: "Math", property: "exp", message: "Spec E.4: libm-dependent." },
+        { object: "Math", property: "log", message: "Spec E.4: libm-dependent." },
+      ],
+    },
+  },
   prettier,
 );
