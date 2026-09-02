@@ -618,7 +618,20 @@ start:
     mine_iron: 2
     smelt_iron: 2
     make_plate: 1
-  priority: [iron_plate, iron_ingot, iron_ore]
+  # The list carries an entry for EVERY item, because spec D.1's action set has no
+  # add-or-remove verb: REORDER_PRIORITY permutes, and spec 4.1 makes `paused` the
+  # remove verb ("Pause | Remove from allocation entirely"). A list that covered
+  # only some items would leave the rest permanently unprioritizable.
+  priority:
+    [
+      iron_plate,
+      iron_ingot,
+      iron_ore,
+      plastic,
+      fuel,
+      heavy_oil_residue,
+      crude_oil,
+    ]
 ```
 
 In `packages/content/bundles/fixture/machines.yaml`, add a `costRatio` line to each of the six classes, immediately after its `ladder` line. For example the miner becomes:
@@ -2019,8 +2032,19 @@ describe("initialWorld", () => {
       "iron_plate",
       "iron_ingot",
       "iron_ore",
+      "plastic",
+      "fuel",
+      "heavy_oil_residue",
+      "crude_oil",
     ]);
     expect(w.priority.every((e) => e.mode === "guaranteed" && !e.paused)).toBe(true);
+  });
+
+  it("covers every item, because there is no add-or-remove action (spec D.1)", () => {
+    const w = initialWorld(content, 42, 0);
+    expect(w.priority).toHaveLength(content.stockItemIds.length + 1);
+    const listed = new Set(w.priority.slice(1).map((e) => e.itemId));
+    for (const itemId of content.stockItemIds) expect(listed.has(itemId)).toBe(true);
   });
 
   it("zeroes every stockpile, level, and reserve", () => {
@@ -6515,3 +6539,4690 @@ EOF
 ```
 
 ---
+
+### Task 12: Action reducers — machines
+
+**Files:**
+- Create: `packages/engine/src/actions/types.ts`, `packages/engine/src/actions/machines.ts`
+- Test: `packages/engine/src/actions/machines.test.ts`
+
+**Interfaces:**
+- Consumes: `D`, `DECIMAL_ZERO`, `toCanonical`, `type Dec` (Phase 0 Task 2); `type IndexedContent`, `getMark`, `laneClassKey`, `isLiveRecipe`, `POWER_ITEM`, `type ItemId`, `type LaneId`, `type MachineClassId`, `type RecipeId` (Task 2); `type WorldState`, `type PriorityEntry`, `type PriorityMode`, `type PrngState`, `installedAt`, `installedMachines`, `withInstalled`, `assignedTotal` (Task 4); `machineCostRange` (Task 5); `bestUnlockedMark` (Task 6); `spendForBuild`, `depositRefund` (Task 7)
+- Produces, from `@manufactory/engine`:
+  - `const MAX_ACTION_COUNT = 1000`
+  - `type Action` — the full eleven-variant union (declared here in `types.ts`, all eleven, so Task 13 adds no new members)
+  - `type Effect` — the effect union
+  - `type ApplyResult = { rejected: false; state: WorldState; effects: Effect[] } | { rejected: true; reason: string }`
+  - `reject(reason: string): ApplyResult`
+  - `accept(state: WorldState, effects: Effect[]): ApplyResult`
+  - `costEffect(kind: "spent" | "refunded", costs: ReadonlyMap<ItemId, Dec>): Effect`
+  - `clampAssignments(content: IndexedContent, state: WorldState, lane: LaneId, machineClass: MachineClassId): WorldState`
+  - `applyBuyMachine(state, content, action & { type: "BUY_MACHINE" }): ApplyResult`
+  - `applyDismantle(state, content, action & { type: "DISMANTLE" }): ApplyResult`
+  - `applyUpgradeMark(state, content, action & { type: "UPGRADE_MARK" }): ApplyResult`
+  - `applyAssignMachines(state, content, action & { type: "ASSIGN_MACHINES" }): ApplyResult`
+  - `applySelectRecipe(state, content, action & { type: "SELECT_RECIPE" }): ApplyResult`
+
+Five of spec D.1's eleven actions. Three rulings shape them:
+
+**Ruling R5** makes machines pooled per `(lane, machineClass)`, so a purchase adds to the pool and an assignment distributes it. Requiring an explicit `ASSIGN_MACHINES` after every purchase would be exactly the management surface pillar 3 rules out, so **`BUY_MACHINE` auto-assigns the new machines to the recipe in that lane-class that already has the most assigned**, ties broken by authored recipe order, falling back to the first live recipe when nothing is assigned yet. `ASSIGN_MACHINES` then redistributes. Symmetrically, `DISMANTLE` and `UPGRADE_MARK` clamp assignments down when the pool shrinks, taking from the largest assignment first so the shape of the player's split is preserved.
+
+**Ruling R6** makes any recipe inside a non-trivial SCC unselectable: `SELECT_RECIPE` and `ASSIGN_MACHINES` both reject it by name, rather than silently accepting a recipe the solver will ignore.
+
+**Spec D4** makes refunds LIFO: dismantling the *n*th machine returns `cost(n)` exactly. Both directions call `machineCostRange(content, class, mark, from, count)` with identical arguments, so the two Decimals are bitwise equal — symmetric, no pump. Refunds land through `depositRefund`, which fills Quantum Storage to its cap and binds the excess.
+
+**Spec C.0** is what `UPGRADE_MARK` exists for: it dismantles every Mk*n* of a class in a lane and rebuilds the mark-equivalent count at Mk*n+1*, paying the difference. Without it, spec D4's dismantle verb turns a mark upgrade into forty-five taps of busywork. The equivalent count is `floor(k × rateMultiplier(from) / rateMultiplier(to))`, which keeps the mark-weighted ladder input intact — 45 Mk1 and 15 Mk2 both read as 45, so the upgrade never costs the player their multiplier (spec B.2).
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/engine/src/actions/machines.test.ts`:
+
+```ts
+import { fileURLToPath } from "node:url";
+import { loadBundleDir } from "@manufactory/content";
+import { describe, expect, it } from "vitest";
+import { D } from "../numbers/decimal.js";
+import { indexContent } from "../graph/index-content.js";
+import { ladderInput, machineCostRange } from "../economy/curves.js";
+import { liquid } from "../economy/storage.js";
+import { initialWorld, installedAt, withInstalled, type WorldState } from "../state/world.js";
+import {
+  applyAssignMachines,
+  applyBuyMachine,
+  applyDismantle,
+  applySelectRecipe,
+  applyUpgradeMark,
+} from "./machines.js";
+
+const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
+const content = indexContent(loadBundleDir(fixtureDir));
+
+function rich(plate = 100_000): WorldState {
+  const w = initialWorld(content, 1, 0);
+  return { ...w, stored: { ...w.stored, iron_plate: D(plate) } };
+}
+
+function expectAccepted(result: ReturnType<typeof applyBuyMachine>): WorldState {
+  if (result.rejected) throw new Error(`unexpectedly rejected: ${result.reason}`);
+  return result.state;
+}
+
+describe("BUY_MACHINE", () => {
+  it("charges the geometric run from the current count", () => {
+    // Constructor mk1 costs 20 iron_plate at r = 1.09, and one is already installed.
+    // Buying two: 20 * (1.09 + 1.09^2) = 20 * 2.2781 = 45.562
+    const start = rich(100);
+    const next = expectAccepted(
+      applyBuyMachine(start, content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "constructor",
+        mark: 1,
+        count: 2,
+      }),
+    );
+    expect(installedAt(next, "iron", "constructor", 1)).toBe(3);
+    expect(liquid(next, "iron_plate").toNumber()).toBeCloseTo(100 - 45.562, 6);
+  });
+
+  it("auto-assigns the new machines to the busiest recipe in the lane-class (R5)", () => {
+    const next = expectAccepted(
+      applyBuyMachine(rich(), content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "constructor",
+        mark: 1,
+        count: 4,
+      }),
+    );
+    // make_plate had 1 of 1; it now has 5 of 5, so no machine sits idle.
+    expect(next.assignment.make_plate).toBe(5);
+  });
+
+  it("rejects a purchase it cannot afford and changes nothing", () => {
+    const poor = initialWorld(content, 1, 0);
+    const result = applyBuyMachine(poor, content, {
+      type: "BUY_MACHINE",
+      lane: "iron",
+      machineClass: "constructor",
+      mark: 1,
+      count: 1,
+    });
+    expect(result.rejected).toBe(true);
+    if (!result.rejected) throw new Error("unreachable");
+    expect(result.reason).toMatch(/afford/i);
+  });
+
+  it("rejects a mark that has not unlocked yet", () => {
+    // Miner mk2 unlocks at tier 1; the world starts at tier 0.
+    const result = applyBuyMachine(rich(), content, {
+      type: "BUY_MACHINE",
+      lane: "iron",
+      machineClass: "miner",
+      mark: 2,
+      count: 1,
+    });
+    expect(result.rejected).toBe(true);
+    if (!result.rejected) throw new Error("unreachable");
+    expect(result.reason).toMatch(/unlock/i);
+  });
+
+  it("rejects a non-positive, non-integer, or oversized count", () => {
+    for (const count of [0, -1, 2.5, 100_000]) {
+      const result = applyBuyMachine(rich(), content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "constructor",
+        mark: 1,
+        count,
+      });
+      expect(result.rejected).toBe(true);
+    }
+  });
+
+  it("rejects an unknown lane or class", () => {
+    expect(
+      applyBuyMachine(rich(), content, {
+        type: "BUY_MACHINE",
+        lane: "ghost",
+        machineClass: "constructor",
+        mark: 1,
+        count: 1,
+      }).rejected,
+    ).toBe(true);
+    expect(
+      applyBuyMachine(rich(), content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "ghost",
+        mark: 1,
+        count: 1,
+      }).rejected,
+    ).toBe(true);
+  });
+
+  it("can be paid for entirely out of bound stock (spec C.5)", () => {
+    const w = initialWorld(content, 1, 0);
+    const bounded: WorldState = { ...w, bound: { ...w.bound, iron_plate: D(1_000) } };
+    const next = expectAccepted(
+      applyBuyMachine(bounded, content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "constructor",
+        mark: 1,
+        count: 1,
+      }),
+    );
+    expect(next.bound.iron_plate!.toNumber()).toBeCloseTo(1000 - 21.8, 6);
+  });
+});
+
+describe("DISMANTLE", () => {
+  it("refunds exactly what the same machines cost (spec D4, LIFO)", () => {
+    const bought = expectAccepted(
+      applyBuyMachine(rich(), content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "constructor",
+        mark: 1,
+        count: 5,
+      }),
+    );
+    // One constructor was already installed, so the purchase covered n = 1..5 and
+    // the dismantle refunds exactly that same range.
+    const paid = machineCostRange(content, "constructor", 1, 1, 5).get("iron_plate")!;
+    const refundResult = applyDismantle(bought, content, {
+      type: "DISMANTLE",
+      lane: "iron",
+      machineClass: "constructor",
+      mark: 1,
+      count: 5,
+    });
+    if (refundResult.rejected) throw new Error(refundResult.reason);
+    const refunded = refundResult.effects.find((e) => e.kind === "refunded");
+    expect(refunded).toBeDefined();
+    if (refunded?.kind !== "refunded") throw new Error("unreachable");
+    // Bitwise equal, because both directions evaluate the same closed form.
+    expect(refunded.items.iron_plate).toBe(paid.toString());
+    expect(installedAt(refundResult.state, "iron", "constructor", 1)).toBe(1);
+  });
+
+  it("returns the stock to Quantum Storage, not to storage (spec C.5)", () => {
+    const bought = expectAccepted(
+      applyBuyMachine(rich(), content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "constructor",
+        mark: 1,
+        count: 2,
+      }),
+    );
+    const before = bought.quantum.iron_plate!.toNumber();
+    const result = applyDismantle(bought, content, {
+      type: "DISMANTLE",
+      lane: "iron",
+      machineClass: "constructor",
+      mark: 1,
+      count: 2,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.quantum.iron_plate!.toNumber()).toBeGreaterThan(before);
+  });
+
+  it("clamps assignments down when the pool shrinks", () => {
+    const bought = expectAccepted(
+      applyBuyMachine(rich(), content, {
+        type: "BUY_MACHINE",
+        lane: "iron",
+        machineClass: "constructor",
+        mark: 1,
+        count: 4,
+      }),
+    );
+    expect(bought.assignment.make_plate).toBe(5);
+    const result = applyDismantle(bought, content, {
+      type: "DISMANTLE",
+      lane: "iron",
+      machineClass: "constructor",
+      mark: 1,
+      count: 3,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.assignment.make_plate).toBe(2);
+  });
+
+  it("rejects dismantling more than are installed", () => {
+    const result = applyDismantle(rich(), content, {
+      type: "DISMANTLE",
+      lane: "iron",
+      machineClass: "constructor",
+      mark: 1,
+      count: 9,
+    });
+    expect(result.rejected).toBe(true);
+  });
+});
+
+describe("UPGRADE_MARK", () => {
+  function fortyFiveMiners(): WorldState {
+    let w = rich();
+    w = { ...w, tier: 1 };
+    w = withInstalled(w, "iron", "miner", 1, 45);
+    return { ...w, assignment: { ...w.assignment, mine_iron: 45 } };
+  }
+
+  it("consolidates to the mark-equivalent count", () => {
+    // rateMultiplier: mk1 = 1, mk2 = 3. floor(45 * 1 / 3) = 15.
+    const result = applyUpgradeMark(fortyFiveMiners(), content, {
+      type: "UPGRADE_MARK",
+      lane: "iron",
+      machineClass: "miner",
+      fromMark: 1,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(installedAt(result.state, "iron", "miner", 1)).toBe(0);
+    expect(installedAt(result.state, "iron", "miner", 2)).toBe(15);
+  });
+
+  it("leaves the mark-weighted ladder input untouched (spec B.2, C.0)", () => {
+    const before = fortyFiveMiners();
+    expect(ladderInput(content, before, "iron", "miner")).toBe(45);
+    const result = applyUpgradeMark(before, content, {
+      type: "UPGRADE_MARK",
+      lane: "iron",
+      machineClass: "miner",
+      fromMark: 1,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(ladderInput(content, result.state, "iron", "miner")).toBe(45);
+  });
+
+  it("refunds the old stack and charges the new one", () => {
+    const result = applyUpgradeMark(fortyFiveMiners(), content, {
+      type: "UPGRADE_MARK",
+      lane: "iron",
+      machineClass: "miner",
+      fromMark: 1,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    const refunded = result.effects.find((e) => e.kind === "refunded");
+    const spent = result.effects.find((e) => e.kind === "spent");
+    expect(refunded?.kind).toBe("refunded");
+    expect(spent?.kind).toBe("spent");
+    if (refunded?.kind !== "refunded" || spent?.kind !== "spent") throw new Error("unreachable");
+    expect(refunded.items.iron_plate).toBe(
+      machineCostRange(content, "miner", 1, 0, 45).get("iron_plate")!.toString(),
+    );
+    expect(spent.items.iron_plate).toBe(
+      machineCostRange(content, "miner", 2, 0, 15).get("iron_plate")!.toString(),
+    );
+  });
+
+  it("rescales the assignment to the new pool", () => {
+    const result = applyUpgradeMark(fortyFiveMiners(), content, {
+      type: "UPGRADE_MARK",
+      lane: "iron",
+      machineClass: "miner",
+      fromMark: 1,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.assignment.mine_iron).toBe(15);
+  });
+
+  it("rejects when the next mark has not unlocked", () => {
+    let w = rich();
+    w = withInstalled(w, "iron", "miner", 1, 45);
+    const result = applyUpgradeMark(w, content, {
+      type: "UPGRADE_MARK",
+      lane: "iron",
+      machineClass: "miner",
+      fromMark: 1,
+    });
+    expect(result.rejected).toBe(true);
+  });
+
+  it("rejects when there is no next mark at all", () => {
+    let w = rich();
+    w = withInstalled(w, "iron", "smelter", 1, 10);
+    const result = applyUpgradeMark(w, content, {
+      type: "UPGRADE_MARK",
+      lane: "iron",
+      machineClass: "smelter",
+      fromMark: 1,
+    });
+    expect(result.rejected).toBe(true);
+  });
+
+  it("rejects when too few machines to make even one of the higher mark", () => {
+    let w = rich();
+    w = { ...w, tier: 1 };
+    w = withInstalled(w, "iron", "miner", 1, 2);
+    const result = applyUpgradeMark(w, content, {
+      type: "UPGRADE_MARK",
+      lane: "iron",
+      machineClass: "miner",
+      fromMark: 1,
+    });
+    expect(result.rejected).toBe(true);
+  });
+});
+
+describe("ASSIGN_MACHINES", () => {
+  it("sets the count and leaves the rest idle", () => {
+    const result = applyAssignMachines(rich(), content, {
+      type: "ASSIGN_MACHINES",
+      recipeId: "make_plate",
+      count: 0,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.assignment.make_plate).toBe(0);
+  });
+
+  it("rejects assigning more than the lane-class pool holds (ruling R5)", () => {
+    const result = applyAssignMachines(rich(), content, {
+      type: "ASSIGN_MACHINES",
+      recipeId: "make_plate",
+      count: 2,
+    });
+    expect(result.rejected).toBe(true);
+    if (!result.rejected) throw new Error("unreachable");
+    expect(result.reason).toMatch(/installed/i);
+  });
+
+  it("counts every recipe in the lane-class against the same pool", () => {
+    let w = rich();
+    w = withInstalled(w, "oil", "refinery", 1, 4);
+    w = { ...w, tier: 2, assignment: { ...w.assignment, refine_plastic: 3 } };
+    expect(
+      applyAssignMachines(w, content, {
+        type: "ASSIGN_MACHINES",
+        recipeId: "residual_fuel",
+        count: 1,
+      }).rejected,
+    ).toBe(false);
+    expect(
+      applyAssignMachines(w, content, {
+        type: "ASSIGN_MACHINES",
+        recipeId: "residual_fuel",
+        count: 2,
+      }).rejected,
+    ).toBe(true);
+  });
+
+  it("rejects a locked recipe and a negative or fractional count", () => {
+    expect(
+      applyAssignMachines(rich(), content, {
+        type: "ASSIGN_MACHINES",
+        recipeId: "refine_plastic",
+        count: 0,
+      }).rejected,
+    ).toBe(true);
+    for (const count of [-1, 1.5]) {
+      expect(
+        applyAssignMachines(rich(), content, {
+          type: "ASSIGN_MACHINES",
+          recipeId: "make_plate",
+          count,
+        }).rejected,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("SELECT_RECIPE", () => {
+  it("switches the active recipe for an item", () => {
+    const result = applySelectRecipe(rich(), content, {
+      type: "SELECT_RECIPE",
+      itemId: "iron_plate",
+      recipeId: "make_plate",
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.activeRecipe.iron_plate).toBe("make_plate");
+  });
+
+  it("rejects a recipe that does not produce that item as its primary output", () => {
+    const result = applySelectRecipe(rich(), content, {
+      type: "SELECT_RECIPE",
+      itemId: "iron_plate",
+      recipeId: "smelt_iron",
+    });
+    expect(result.rejected).toBe(true);
+  });
+
+  it("rejects a recipe that has not unlocked", () => {
+    const result = applySelectRecipe(rich(), content, {
+      type: "SELECT_RECIPE",
+      itemId: "plastic",
+      recipeId: "refine_plastic",
+    });
+    expect(result.rejected).toBe(true);
+  });
+
+  it("rejects a recipe inside a cycle by name (ruling R6)", () => {
+    const bundle = loadBundleDir(fixtureDir);
+    bundle.recipes.push({
+      id: "recycle_plastic",
+      name: "Recycled Plastic",
+      lane: "oil",
+      machineClass: "refinery",
+      inputs: [{ item: "heavy_oil_residue", rate: "30", byproduct: false }],
+      outputs: [{ item: "plastic", rate: "20", byproduct: false }],
+      powerOutput: 0,
+      isAlternate: true,
+      unlockTier: 0,
+    });
+    bundle.recipes.push({
+      id: "recycle_residue",
+      name: "Recycled Residue",
+      lane: "oil",
+      machineClass: "refinery",
+      inputs: [{ item: "plastic", rate: "20", byproduct: false }],
+      outputs: [{ item: "heavy_oil_residue", rate: "30", byproduct: false }],
+      powerOutput: 0,
+      isAlternate: true,
+      unlockTier: 0,
+    });
+    const cyclic = indexContent(bundle);
+    const w = initialWorld(cyclic, 1, 0);
+    const result = applySelectRecipe(w, cyclic, {
+      type: "SELECT_RECIPE",
+      itemId: "plastic",
+      recipeId: "recycle_plastic",
+    });
+    expect(result.rejected).toBe(true);
+    if (!result.rejected) throw new Error("unreachable");
+    expect(result.reason).toMatch(/cycle/i);
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `pnpm --filter @manufactory/engine test machines`
+Expected: FAIL — `Cannot find module './machines.js'`.
+
+- [ ] **Step 3: Write the action and effect types**
+
+`packages/engine/src/actions/types.ts`:
+
+```ts
+// Spec D.1's action set. Exactly eleven, and this union is the whole of it: the
+// engine's reducers are the game logic, and spec A.2 makes the API almost pure
+// transport around them. That is what buys spec 16.3's "full action parity in
+// sim play" structurally rather than as ongoing maintenance.
+import type { Dec } from "../numbers/decimal.js";
+import type { ItemId, LaneId, MachineClassId, RecipeId } from "../content/types.js";
+import type { PriorityMode, WorldState } from "../state/world.js";
+
+/** Ceiling on any single action's count, so one action cannot be a DoS vector. */
+export const MAX_ACTION_COUNT = 1000;
+
+export type Action =
+  | { type: "BUY_MACHINE"; lane: LaneId; machineClass: MachineClassId; mark: number; count: number }
+  | { type: "DISMANTLE"; lane: LaneId; machineClass: MachineClassId; mark: number; count: number }
+  | { type: "UPGRADE_MARK"; lane: LaneId; machineClass: MachineClassId; fromMark: number }
+  | { type: "ASSIGN_MACHINES"; recipeId: RecipeId; count: number }
+  | { type: "SELECT_RECIPE"; itemId: ItemId; recipeId: RecipeId }
+  | { type: "REORDER_PRIORITY"; entries: string[] }
+  | {
+      type: "SET_PRIORITY_MODE";
+      entryId: string;
+      mode: PriorityMode;
+      share?: number;
+      targetRate?: number | null;
+      paused?: boolean;
+    }
+  | { type: "SET_RESERVE"; itemId: ItemId; percent: number }
+  | { type: "BUY_STORAGE"; itemId: ItemId; levels: number }
+  | { type: "BUY_QS"; lane: LaneId; levels: number }
+  | { type: "TAP"; count: number; clientElapsedMs: number };
+
+export type Effect =
+  | { kind: "spent"; items: Record<ItemId, string> }
+  | { kind: "refunded"; items: Record<ItemId, string> }
+  | { kind: "installed"; lane: LaneId; machineClass: MachineClassId; mark: number; count: number }
+  | { kind: "removed"; lane: LaneId; machineClass: MachineClassId; mark: number; count: number }
+  | { kind: "assigned"; recipeId: RecipeId; count: number }
+  | { kind: "recipeSelected"; itemId: ItemId; recipeId: RecipeId }
+  | { kind: "priorityChanged"; order: string[] }
+  | {
+      kind: "entryModeChanged";
+      entryId: string;
+      mode: PriorityMode;
+      share: number;
+      targetRate: number | null;
+      paused: boolean;
+    }
+  | { kind: "reserveChanged"; itemId: ItemId; percent: number }
+  | { kind: "levelChanged"; scope: "storage" | "quantum"; id: string; level: number }
+  | { kind: "tapped"; stacks: number; discarded: number };
+
+export type ApplyResult =
+  | { rejected: false; state: WorldState; effects: Effect[] }
+  | { rejected: true; reason: string };
+
+export function reject(reason: string): ApplyResult {
+  return { rejected: true, reason };
+}
+
+export function accept(state: WorldState, effects: Effect[]): ApplyResult {
+  return { rejected: false, state, effects };
+}
+
+/** Costs travel as canonical Decimal strings so an effect log is replayable. */
+export function costEffect(
+  kind: "spent" | "refunded",
+  costs: ReadonlyMap<ItemId, Dec>,
+): Effect {
+  const items: Record<ItemId, string> = {};
+  for (const [itemId, amount] of costs) items[itemId] = amount.toString();
+  return kind === "spent" ? { kind: "spent", items } : { kind: "refunded", items };
+}
+```
+
+- [ ] **Step 4: Write the machine reducers**
+
+`packages/engine/src/actions/machines.ts`:
+
+```ts
+// Spec D.1, actions one through five.
+//
+// Ruling R5 pools machines per (lane, machineClass), so a purchase adds to the pool
+// and an assignment distributes it. Making the player assign after every purchase
+// would be exactly the management surface pillar 3 rules out, so BUY_MACHINE
+// auto-assigns into the busiest recipe of the lane-class and DISMANTLE clamps back
+// down from the largest assignment first.
+//
+// Spec D4 makes refunds LIFO: dismantling the nth machine returns cost(n), so
+// rebuilding costs exactly what was refunded. Both directions call
+// machineCostRange with the same arguments, which makes the two Decimals bitwise
+// equal rather than merely close.
+import type { LaneId, MachineClassId, RecipeId } from "../content/types.js";
+import {
+  getMark,
+  isLiveRecipe,
+  laneClassKey,
+  type IndexedContent,
+} from "../graph/index-content.js";
+import { machineCostRange } from "../economy/curves.js";
+import { depositRefund, spendForBuild } from "../economy/storage.js";
+import {
+  assignedTotal,
+  installedAt,
+  installedMachines,
+  withInstalled,
+  type WorldState,
+} from "../state/world.js";
+import { MAX_ACTION_COUNT, accept, costEffect, reject, type Action, type ApplyResult } from "./types.js";
+
+function validCount(count: number): boolean {
+  return Number.isInteger(count) && count > 0 && count <= MAX_ACTION_COUNT;
+}
+
+function recipesIn(
+  content: IndexedContent,
+  lane: LaneId,
+  machineClass: MachineClassId,
+): RecipeId[] {
+  return content.recipesByLaneClass.get(laneClassKey(lane, machineClass)) ?? [];
+}
+
+/**
+ * Keeps the assignments of a lane-class within its pool, shrinking the largest
+ * first so the shape of the player's split survives. Ties break by authored recipe
+ * order (spec A.5).
+ */
+export function clampAssignments(
+  content: IndexedContent,
+  state: WorldState,
+  lane: LaneId,
+  machineClass: MachineClassId,
+): WorldState {
+  const pool = installedMachines(state, lane, machineClass);
+  const recipeIds = recipesIn(content, lane, machineClass);
+  let total = 0;
+  for (const recipeId of recipeIds) total += state.assignment[recipeId] ?? 0;
+  if (total <= pool) return state;
+
+  const assignment = { ...state.assignment };
+  let excess = total - pool;
+  while (excess > 0) {
+    let biggest: RecipeId | null = null;
+    for (const recipeId of recipeIds) {
+      const count = assignment[recipeId] ?? 0;
+      if (count <= 0) continue;
+      if (biggest === null || count > (assignment[biggest] ?? 0)) biggest = recipeId;
+    }
+    if (biggest === null) break;
+    const take = Math.min(excess, assignment[biggest] ?? 0);
+    assignment[biggest] = (assignment[biggest] ?? 0) - take;
+    excess -= take;
+  }
+  return { ...state, assignment };
+}
+
+/** The recipe a fresh purchase should join: busiest first, else the first live one. */
+function autoAssignTarget(
+  content: IndexedContent,
+  state: WorldState,
+  lane: LaneId,
+  machineClass: MachineClassId,
+): RecipeId | null {
+  const recipeIds = recipesIn(content, lane, machineClass).filter((recipeId) =>
+    isLiveRecipe(content, recipeId, state.tier, state.activeRecipe),
+  );
+  if (recipeIds.length === 0) return null;
+  let best = recipeIds[0]!;
+  for (const recipeId of recipeIds) {
+    if ((state.assignment[recipeId] ?? 0) > (state.assignment[best] ?? 0)) best = recipeId;
+  }
+  return best;
+}
+
+export function applyBuyMachine(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "BUY_MACHINE" }>,
+): ApplyResult {
+  const { lane, machineClass, mark, count } = action;
+  if (!content.lanes.has(lane)) return reject(`unknown lane "${lane}"`);
+  if (!content.machineClasses.has(machineClass)) {
+    return reject(`unknown machine class "${machineClass}"`);
+  }
+  const markDef = getMark(content, machineClass, mark);
+  if (!markDef) return reject(`"${machineClass}" has no mk${mark}`);
+  if (markDef.unlockTier > state.tier) {
+    return reject(`"${machineClass}" mk${mark} unlocks at tier ${markDef.unlockTier}`);
+  }
+  if (!validCount(count)) return reject(`count must be an integer in 1..${MAX_ACTION_COUNT}`);
+
+  const owned = installedAt(state, lane, machineClass, mark);
+  const costs = machineCostRange(content, machineClass, mark, owned, count);
+  const paid = spendForBuild(content, state, costs);
+  if (paid === null) return reject("cannot afford this purchase");
+
+  let next = withInstalled(paid, lane, machineClass, mark, owned + count);
+
+  const target = autoAssignTarget(content, next, lane, machineClass);
+  const effects = [
+    costEffect("spent", costs),
+    { kind: "installed" as const, lane, machineClass, mark, count },
+  ];
+  if (target !== null) {
+    const assigned = (next.assignment[target] ?? 0) + count;
+    next = { ...next, assignment: { ...next.assignment, [target]: assigned } };
+    effects.push({ kind: "assigned" as const, recipeId: target, count: assigned });
+  }
+  return accept(next, effects);
+}
+
+export function applyDismantle(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "DISMANTLE" }>,
+): ApplyResult {
+  const { lane, machineClass, mark, count } = action;
+  if (!getMark(content, machineClass, mark)) return reject(`"${machineClass}" has no mk${mark}`);
+  if (!validCount(count)) return reject(`count must be an integer in 1..${MAX_ACTION_COUNT}`);
+
+  const owned = installedAt(state, lane, machineClass, mark);
+  if (count > owned) return reject(`only ${owned} installed`);
+
+  // LIFO: the last `count` machines bought are the ones refunded.
+  const refund = machineCostRange(content, machineClass, mark, owned - count, count);
+  let next = state;
+  for (const [itemId, amount] of refund) next = depositRefund(content, next, itemId, amount);
+  next = withInstalled(next, lane, machineClass, mark, owned - count);
+  next = clampAssignments(content, next, lane, machineClass);
+
+  return accept(next, [
+    costEffect("refunded", refund),
+    { kind: "removed", lane, machineClass, mark, count },
+  ]);
+}
+
+export function applyUpgradeMark(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "UPGRADE_MARK" }>,
+): ApplyResult {
+  const { lane, machineClass, fromMark } = action;
+  const from = getMark(content, machineClass, fromMark);
+  if (!from) return reject(`"${machineClass}" has no mk${fromMark}`);
+  const to = getMark(content, machineClass, fromMark + 1);
+  if (!to) return reject(`"${machineClass}" has no mk${fromMark + 1}`);
+  if (to.unlockTier > state.tier) {
+    return reject(`"${machineClass}" mk${to.mark} unlocks at tier ${to.unlockTier}`);
+  }
+
+  const owned = installedAt(state, lane, machineClass, fromMark);
+  if (owned <= 0) return reject(`no mk${fromMark} ${machineClass} installed in ${lane}`);
+
+  // Spec C.0: a Mk2 at rate xA needs only n/A machines for the same output. Keeping
+  // the mark-weighted ladder input intact is what stops the upgrade costing the
+  // player their multiplier (spec B.2).
+  const equivalent = Math.floor((owned * from.rateMultiplier) / to.rateMultiplier);
+  if (equivalent < 1) {
+    return reject(`need at least ${Math.ceil(to.rateMultiplier / from.rateMultiplier)} to upgrade`);
+  }
+
+  const refund = machineCostRange(content, machineClass, fromMark, 0, owned);
+  const ownedHigher = installedAt(state, lane, machineClass, to.mark);
+  const cost = machineCostRange(content, machineClass, to.mark, ownedHigher, equivalent);
+
+  let next = state;
+  for (const [itemId, amount] of refund) next = depositRefund(content, next, itemId, amount);
+  const paid = spendForBuild(content, next, cost);
+  if (paid === null) return reject("cannot afford the upgrade");
+  next = paid;
+
+  next = withInstalled(next, lane, machineClass, fromMark, 0);
+  next = withInstalled(next, lane, machineClass, to.mark, ownedHigher + equivalent);
+  next = clampAssignments(content, next, lane, machineClass);
+
+  return accept(next, [
+    costEffect("refunded", refund),
+    costEffect("spent", cost),
+    { kind: "removed", lane, machineClass, mark: fromMark, count: owned },
+    { kind: "installed", lane, machineClass, mark: to.mark, count: equivalent },
+  ]);
+}
+
+export function applyAssignMachines(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "ASSIGN_MACHINES" }>,
+): ApplyResult {
+  const { recipeId, count } = action;
+  const recipe = content.recipes.get(recipeId);
+  if (!recipe) return reject(`unknown recipe "${recipeId}"`);
+  // Ruling R6: cyclic recipes are unselectable in this version.
+  if (recipe.inCycle) return reject(`recipe "${recipeId}" is inside a recipe cycle`);
+  if (recipe.def.unlockTier > state.tier) {
+    return reject(`recipe "${recipeId}" unlocks at tier ${recipe.def.unlockTier}`);
+  }
+  if (!Number.isInteger(count) || count < 0 || count > MAX_ACTION_COUNT) {
+    return reject(`count must be an integer in 0..${MAX_ACTION_COUNT}`);
+  }
+
+  const { lane, machineClass } = recipe;
+  const pool = installedMachines(state, lane, machineClass);
+  const others = assignedTotal(content, state, lane, machineClass) - (state.assignment[recipeId] ?? 0);
+  if (others + count > pool) {
+    return reject(`only ${pool} ${machineClass} installed in ${lane}, ${others} already assigned`);
+  }
+
+  return accept({ ...state, assignment: { ...state.assignment, [recipeId]: count } }, [
+    { kind: "assigned", recipeId, count },
+  ]);
+}
+
+export function applySelectRecipe(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "SELECT_RECIPE" }>,
+): ApplyResult {
+  const { itemId, recipeId } = action;
+  const recipe = content.recipes.get(recipeId);
+  if (!recipe) return reject(`unknown recipe "${recipeId}"`);
+  if (recipe.primaryOutput !== itemId) {
+    return reject(`recipe "${recipeId}" does not produce "${itemId}" as its primary output`);
+  }
+  // Ruling R6: detected here rather than silently accepted, so the player is told.
+  if (recipe.inCycle) return reject(`recipe "${recipeId}" is inside a recipe cycle`);
+  if (recipe.def.unlockTier > state.tier) {
+    return reject(`recipe "${recipeId}" unlocks at tier ${recipe.def.unlockTier}`);
+  }
+
+  return accept({ ...state, activeRecipe: { ...state.activeRecipe, [itemId]: recipeId } }, [
+    { kind: "recipeSelected", itemId, recipeId },
+  ]);
+}
+```
+
+- [ ] **Step 5: Run the tests**
+
+Run:
+
+```bash
+pnpm --filter @manufactory/engine test machines
+pnpm lint && pnpm typecheck
+```
+
+Expected: PASS.
+
+The `DISMANTLE` LIFO test is written so it compares the refunded canonical string against the cost of the same range. If it fails, check that `applyDismantle` computes the range from `owned - count`, not from `owned`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add the machine action reducers
+
+BUY_MACHINE, DISMANTLE, UPGRADE_MARK, ASSIGN_MACHINES and SELECT_RECIPE
+from spec D.1. Ruling R5 pools machines per lane-class, so a purchase
+auto-assigns into the busiest recipe rather than making the player assign
+after every buy, which would be the management surface pillar 3 rules out.
+Refunds are LIFO and use the identical closed form as the purchase, so
+they are bitwise equal and cannot pump. UPGRADE_MARK consolidates to the
+mark-equivalent count, leaving the mark-weighted ladder input untouched
+per spec C.0. Cyclic recipes are rejected by name (ruling R6).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016rmcUbYFdRwjnpEmXWrbTB
+EOF
+)"
+```
+
+---
+
+### Task 13: Action reducers — economy, priority, and the `apply` dispatcher
+
+**Files:**
+- Create: `packages/engine/src/actions/economy.ts`, `packages/engine/src/actions/index.ts`
+- Modify: `packages/engine/src/index.ts`
+- Test: `packages/engine/src/actions/economy.test.ts`, `packages/engine/src/actions/apply.test.ts`
+
+**Interfaces:**
+- Consumes: `type IndexedContent` (Task 2); `type WorldState`, `type PriorityEntry`, `type Timer`, `type PrngState`, `makePrng`, `initialWorld`, `installedAt` (Task 4); `levelCostRange` (Task 5); `spendForBuild`, `storageCap`, `quantumCap` (Task 7); `MAX_ACTION_COUNT`, `accept`, `costEffect`, `reject`, `type Action`, `type ApplyResult`, `type Effect` (Task 12); `applyBuyMachine`, `applyDismantle`, `applyUpgradeMark`, `applyAssignMachines`, `applySelectRecipe` (Task 12)
+- Produces, from `@manufactory/engine`:
+  - `const MAX_RESERVE_PERCENT = 0.5`
+  - `const TAP_MIN_INTERVAL_MS = 50`
+  - `const TAP_TIMER_ID = "tap-expiry"`
+  - `applyReorderPriority(state: WorldState, content: IndexedContent, action: Extract<Action, { type: "REORDER_PRIORITY" }>): ApplyResult`
+  - `applySetPriorityMode(state: WorldState, content: IndexedContent, action: Extract<Action, { type: "SET_PRIORITY_MODE" }>): ApplyResult`
+  - `applySetReserve(state: WorldState, content: IndexedContent, action: Extract<Action, { type: "SET_RESERVE" }>): ApplyResult`
+  - `applyBuyStorage(state: WorldState, content: IndexedContent, action: Extract<Action, { type: "BUY_STORAGE" }>): ApplyResult`
+  - `applyBuyQs(state: WorldState, content: IndexedContent, action: Extract<Action, { type: "BUY_QS" }>): ApplyResult`
+  - `applyTap(state: WorldState, content: IndexedContent, action: Extract<Action, { type: "TAP" }>): ApplyResult`
+  - `apply(state: WorldState, content: IndexedContent, action: Action, seed: PrngState): ApplyResult`
+  - `type BatchResult = { rejected: false; state: WorldState; effects: Effect[] } | { rejected: true; reason: string; failedIndex: number }`
+  - `applyBatch(state: WorldState, content: IndexedContent, actions: readonly Action[], seed: PrngState): BatchResult`
+
+The remaining six of spec D.1's eleven, plus the dispatcher. Spec A.2's signature is `apply(state, content, action, seed) → { state, effects } | Rejection`, which is what makes `apps/api` almost pure transport in Phase 3 and gives spec 16.3's "full action parity in `sim play`" structurally rather than as maintenance.
+
+`seed` is threaded onto the returned state's `seed` field. None of Phase 1's reducers draws from it — disruptions and the MAM scan, which do, are Spec 2 — but the parameter exists now so the signature never changes, and callers pass `state.seed`.
+
+Spec D.1: **actions are batched, and a failed action aborts the whole batch.** `applyBatch` applies them in order and returns the index and reason of the first failure, which is what the Phase 3 endpoint returns as a 409 and what `sim replay` reports.
+
+Three details worth stating:
+
+**Ruling R8 clamps a reserve to 50%.** `reserve[i] = p` becomes a synthetic near-top-of-list priority entry in the solver, so an uncapped reserve could starve the whole list. `SET_RESERVE` rejects anything above `MAX_RESERVE_PERCENT` rather than silently clamping, so the player is told.
+
+**Spec D.5's tap ceiling.** `maxTaps = elapsedSinceLastFlush / 50ms`, clamped server-side, surplus discarded silently. `clientElapsedMs` is the only client-supplied number the engine reads, and this is the only thing it is trusted for. Stacks then clamp to `tap.maxStacks`; the `discarded` figure counts only the rate-limited surplus, not the stack-cap surplus, because those are different stories to tell the player.
+
+**Spec C.6's expiry is one shared timer.** Every stack expires together at `lastResolvedAt + tap.durationSeconds × 1000`, and each tap refreshes it. One timer rather than one per stack keeps rates piecewise-constant, which the whole event model depends on. `lastResolvedAt` is "now" here because spec D.2's request lifecycle resolves before it applies.
+
+Storage and Quantum Storage levels are **builds**, so they spend through `spendForBuild` and draw `bound` first. Re-instantiating bound matter into a bigger container is the same physical act as re-instantiating it into a machine; deliveries remain the only thing `bound` cannot pay for (spec D4).
+
+- [ ] **Step 1: Write the failing economy test**
+
+`packages/engine/src/actions/economy.test.ts`:
+
+```ts
+import { fileURLToPath } from "node:url";
+import { loadBundleDir } from "@manufactory/content";
+import { describe, expect, it } from "vitest";
+import { D } from "../numbers/decimal.js";
+import { indexContent } from "../graph/index-content.js";
+import { quantumCap, storageCap } from "../economy/storage.js";
+import { initialWorld, type WorldState } from "../state/world.js";
+import {
+  MAX_RESERVE_PERCENT,
+  TAP_TIMER_ID,
+  applyBuyQs,
+  applyBuyStorage,
+  applyReorderPriority,
+  applySetPriorityMode,
+  applySetReserve,
+  applyTap,
+} from "./economy.js";
+
+const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
+const content = indexContent(loadBundleDir(fixtureDir));
+const START = 1_700_000_000_000;
+
+function rich(plate = 100_000): WorldState {
+  const w = initialWorld(content, 1, START);
+  return { ...w, stored: { ...w.stored, iron_plate: D(plate) } };
+}
+
+describe("BUY_STORAGE", () => {
+  it("charges the geometric run of level costs and raises the cap", () => {
+    // storage curve: baseCostAmount 50, costGrowth 2, capGrowth 1.6.
+    // Levels 0, 1, 2 cost 50 * (1 + 2 + 4) = 350 iron_plate.
+    const result = applyBuyStorage(rich(), content, {
+      type: "BUY_STORAGE",
+      itemId: "iron_ore",
+      levels: 3,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.storageLevel.iron_ore).toBe(3);
+    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 350, 6);
+    // 600 * 1.6^3 = 600 * 4.096 = 2457.6
+    expect(storageCap(content, result.state, "iron_ore").toNumber()).toBeCloseTo(2457.6, 6);
+  });
+
+  it("charges from the current level, not from zero", () => {
+    const start = rich();
+    const atTwo: WorldState = { ...start, storageLevel: { ...start.storageLevel, iron_ore: 2 } };
+    // Levels 2 and 3 cost 50 * (4 + 8) = 600.
+    const result = applyBuyStorage(atTwo, content, {
+      type: "BUY_STORAGE",
+      itemId: "iron_ore",
+      levels: 2,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.storageLevel.iron_ore).toBe(4);
+    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 600, 6);
+  });
+
+  it("rejects going past the curve's maximum level", () => {
+    const result = applyBuyStorage(rich(), content, {
+      type: "BUY_STORAGE",
+      itemId: "iron_ore",
+      levels: 21,
+    });
+    expect(result.rejected).toBe(true);
+    if (!result.rejected) throw new Error("unreachable");
+    expect(result.reason).toMatch(/level/i);
+  });
+
+  it("rejects an unknown item, a non-positive level count, and an unaffordable buy", () => {
+    expect(
+      applyBuyStorage(rich(), content, { type: "BUY_STORAGE", itemId: "ghost", levels: 1 }).rejected,
+    ).toBe(true);
+    expect(
+      applyBuyStorage(rich(), content, { type: "BUY_STORAGE", itemId: "iron_ore", levels: 0 })
+        .rejected,
+    ).toBe(true);
+    expect(
+      applyBuyStorage(initialWorld(content, 1, START), content, {
+        type: "BUY_STORAGE",
+        itemId: "iron_ore",
+        levels: 1,
+      }).rejected,
+    ).toBe(true);
+  });
+
+  it("can be paid out of bound stock, because a container is a build (spec C.5)", () => {
+    const w = initialWorld(content, 1, START);
+    const bounded: WorldState = { ...w, bound: { ...w.bound, iron_plate: D(1_000) } };
+    const result = applyBuyStorage(bounded, content, {
+      type: "BUY_STORAGE",
+      itemId: "iron_ore",
+      levels: 1,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    // Level 0 costs 50 * 2^0 = 50.
+    expect(result.state.bound.iron_plate!.toNumber()).toBeCloseTo(950, 6);
+  });
+});
+
+describe("BUY_QS", () => {
+  it("raises every item in the lane at once (spec B.4)", () => {
+    // quantumStorage curve: baseCostAmount 500, costGrowth 2.5, capGrowth 1.6.
+    // Levels 0 and 1 cost 500 * (1 + 2.5) = 1750 iron_plate.
+    const result = applyBuyQs(rich(), content, { type: "BUY_QS", lane: "iron", levels: 2 });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.qsLevel.iron).toBe(2);
+    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 1750, 6);
+    // 2400 * 1.6^2 = 6144, and 1600 * 1.6^2 = 4096.
+    expect(quantumCap(content, result.state, "iron_ore").toNumber()).toBeCloseTo(6144, 6);
+    expect(quantumCap(content, result.state, "iron_ingot").toNumber()).toBeCloseTo(4096, 6);
+    // The oil lane is untouched.
+    expect(quantumCap(content, result.state, "crude_oil").toNumber()).toBe(1600);
+  });
+
+  it("rejects an unknown lane and going past the maximum level", () => {
+    expect(applyBuyQs(rich(), content, { type: "BUY_QS", lane: "ghost", levels: 1 }).rejected).toBe(
+      true,
+    );
+    expect(applyBuyQs(rich(), content, { type: "BUY_QS", lane: "iron", levels: 16 }).rejected).toBe(
+      true,
+    );
+  });
+});
+
+describe("REORDER_PRIORITY", () => {
+  it("reorders the list to the given permutation", () => {
+    const start = initialWorld(content, 1, START);
+    const ids = start.priority.map((e) => e.id);
+    expect(ids[0]).toBe("power");
+    expect(ids[1]).toBe("item:iron_plate");
+    // Move the last entry to position 2, leaving the rest in order.
+    const moved = [ids[0]!, ids[ids.length - 1]!, ...ids.slice(1, ids.length - 1)];
+    const result = applyReorderPriority(start, content, {
+      type: "REORDER_PRIORITY",
+      entries: moved,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.priority.map((e) => e.id)).toEqual(moved);
+  });
+
+  it("lets power be moved off position 1 (spec F.1: movable, with a warning)", () => {
+    const start = initialWorld(content, 1, START);
+    const ids = start.priority.map((e) => e.id);
+    const demoted = [...ids.slice(1), ids[0]!];
+    const result = applyReorderPriority(start, content, {
+      type: "REORDER_PRIORITY",
+      entries: demoted,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.priority[result.state.priority.length - 1]!.kind).toBe("power");
+  });
+
+  it("rejects anything that is not a permutation of the current ids", () => {
+    const start = initialWorld(content, 1, START);
+    const ids = start.priority.map((e) => e.id);
+    const bad = [
+      ids.slice(0, ids.length - 1), // too short
+      [...ids.slice(0, ids.length - 1), "item:ghost"], // unknown id
+      [ids[0]!, ...ids.slice(0, ids.length - 1)], // duplicate
+    ];
+    for (const entries of bad) {
+      expect(
+        applyReorderPriority(start, content, { type: "REORDER_PRIORITY", entries }).rejected,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("SET_PRIORITY_MODE", () => {
+  it("switches an entry to share mode with a weight", () => {
+    const result = applySetPriorityMode(initialWorld(content, 1, START), content, {
+      type: "SET_PRIORITY_MODE",
+      entryId: "item:iron_ingot",
+      mode: "share",
+      share: 3,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    const entry = result.state.priority.find((e) => e.id === "item:iron_ingot")!;
+    expect(entry.mode).toBe("share");
+    expect(entry.share).toBe(3);
+  });
+
+  it("sets and clears a target rate, and sets the paused flag", () => {
+    const start = initialWorld(content, 1, START);
+    const capped = applySetPriorityMode(start, content, {
+      type: "SET_PRIORITY_MODE",
+      entryId: "item:iron_ore",
+      mode: "guaranteed",
+      targetRate: 2.5,
+      paused: true,
+    });
+    if (capped.rejected) throw new Error(capped.reason);
+    const entry = capped.state.priority.find((e) => e.id === "item:iron_ore")!;
+    expect(entry.targetRate).toBe(2.5);
+    expect(entry.paused).toBe(true);
+
+    const cleared = applySetPriorityMode(capped.state, content, {
+      type: "SET_PRIORITY_MODE",
+      entryId: "item:iron_ore",
+      mode: "guaranteed",
+      targetRate: null,
+    });
+    if (cleared.rejected) throw new Error(cleared.reason);
+    expect(cleared.state.priority.find((e) => e.id === "item:iron_ore")!.targetRate).toBeNull();
+  });
+
+  it("leaves omitted fields alone", () => {
+    const start = initialWorld(content, 1, START);
+    const first = applySetPriorityMode(start, content, {
+      type: "SET_PRIORITY_MODE",
+      entryId: "item:iron_ore",
+      mode: "share",
+      share: 4,
+    });
+    if (first.rejected) throw new Error(first.reason);
+    const second = applySetPriorityMode(first.state, content, {
+      type: "SET_PRIORITY_MODE",
+      entryId: "item:iron_ore",
+      mode: "share",
+    });
+    if (second.rejected) throw new Error(second.reason);
+    expect(second.state.priority.find((e) => e.id === "item:iron_ore")!.share).toBe(4);
+  });
+
+  it("rejects an unknown entry, a non-positive share, and a negative target rate", () => {
+    const start = initialWorld(content, 1, START);
+    expect(
+      applySetPriorityMode(start, content, {
+        type: "SET_PRIORITY_MODE",
+        entryId: "ghost",
+        mode: "guaranteed",
+      }).rejected,
+    ).toBe(true);
+    expect(
+      applySetPriorityMode(start, content, {
+        type: "SET_PRIORITY_MODE",
+        entryId: "item:iron_ore",
+        mode: "share",
+        share: 0,
+      }).rejected,
+    ).toBe(true);
+    expect(
+      applySetPriorityMode(start, content, {
+        type: "SET_PRIORITY_MODE",
+        entryId: "item:iron_ore",
+        mode: "guaranteed",
+        targetRate: -1,
+      }).rejected,
+    ).toBe(true);
+  });
+});
+
+describe("SET_RESERVE", () => {
+  it("stores the fraction", () => {
+    const result = applySetReserve(initialWorld(content, 1, START), content, {
+      type: "SET_RESERVE",
+      itemId: "iron_ore",
+      percent: 0.25,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.reserve.iron_ore).toBe(0.25);
+  });
+
+  it("rejects above the 50% ceiling rather than clamping silently (ruling R8)", () => {
+    expect(MAX_RESERVE_PERCENT).toBe(0.5);
+    const result = applySetReserve(initialWorld(content, 1, START), content, {
+      type: "SET_RESERVE",
+      itemId: "iron_ore",
+      percent: 0.6,
+    });
+    expect(result.rejected).toBe(true);
+    if (!result.rejected) throw new Error("unreachable");
+    expect(result.reason).toMatch(/50/);
+  });
+
+  it("rejects a negative percent and an unknown item", () => {
+    const start = initialWorld(content, 1, START);
+    expect(
+      applySetReserve(start, content, { type: "SET_RESERVE", itemId: "iron_ore", percent: -0.1 })
+        .rejected,
+    ).toBe(true);
+    expect(
+      applySetReserve(start, content, { type: "SET_RESERVE", itemId: "ghost", percent: 0.1 })
+        .rejected,
+    ).toBe(true);
+  });
+});
+
+describe("TAP", () => {
+  it("adds stacks and arms one shared expiry timer (spec C.6)", () => {
+    const result = applyTap(initialWorld(content, 1, START), content, {
+      type: "TAP",
+      count: 4,
+      clientElapsedMs: 1_000,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.tapStacks).toBe(4);
+    // tap.durationSeconds is 30 in the fixture.
+    expect(result.state.timers).toEqual([
+      { id: TAP_TIMER_ID, kind: "tapExpiry", fireAt: START + 30_000 },
+    ]);
+  });
+
+  it("clamps to the tap ceiling and discards the surplus silently (spec D.5)", () => {
+    // 100ms of client time allows floor(100 / 50) = 2 taps.
+    const result = applyTap(initialWorld(content, 1, START), content, {
+      type: "TAP",
+      count: 50,
+      clientElapsedMs: 100,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.tapStacks).toBe(2);
+    const tapped = result.effects.find((e) => e.kind === "tapped");
+    if (tapped?.kind !== "tapped") throw new Error("unreachable");
+    expect(tapped.stacks).toBe(2);
+    expect(tapped.discarded).toBe(48);
+  });
+
+  it("clamps stacks to the content maximum", () => {
+    const result = applyTap(initialWorld(content, 1, START), content, {
+      type: "TAP",
+      count: 40,
+      clientElapsedMs: 10_000,
+    });
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.tapStacks).toBe(content.bundle.tap.maxStacks);
+  });
+
+  it("refreshes the single expiry rather than adding a second timer", () => {
+    const first = applyTap(initialWorld(content, 1, START), content, {
+      type: "TAP",
+      count: 1,
+      clientElapsedMs: 1_000,
+    });
+    if (first.rejected) throw new Error(first.reason);
+    const later: WorldState = { ...first.state, lastResolvedAt: START + 10_000 };
+    const second = applyTap(later, content, { type: "TAP", count: 1, clientElapsedMs: 1_000 });
+    if (second.rejected) throw new Error(second.reason);
+    expect(second.state.timers).toHaveLength(1);
+    expect(second.state.timers[0]!.fireAt).toBe(START + 40_000);
+    expect(second.state.tapStacks).toBe(2);
+  });
+
+  it("rejects a negative count or a negative client elapsed time", () => {
+    const start = initialWorld(content, 1, START);
+    expect(applyTap(start, content, { type: "TAP", count: -1, clientElapsedMs: 100 }).rejected).toBe(
+      true,
+    );
+    expect(applyTap(start, content, { type: "TAP", count: 1, clientElapsedMs: -1 }).rejected).toBe(
+      true,
+    );
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `pnpm --filter @manufactory/engine test actions/economy`
+Expected: FAIL — `Cannot find module './economy.js'` under `actions/`.
+
+There is also an `economy/storage.test.ts`, so use the path filter `actions/economy` rather than the bare word `economy`.
+
+- [ ] **Step 3: Write the reducers**
+
+`packages/engine/src/actions/economy.ts`:
+
+```ts
+// Spec D.1, actions six through eleven.
+import type { IndexedContent } from "../graph/index-content.js";
+import { levelCostRange } from "../economy/curves.js";
+import { spendForBuild } from "../economy/storage.js";
+import type { PriorityEntry, Timer, WorldState } from "../state/world.js";
+import { accept, costEffect, reject, type Action, type ApplyResult } from "./types.js";
+
+/**
+ * Ruling R8: a reserve becomes a synthetic near-top-of-list priority entry, so an
+ * uncapped one could starve the whole list. Rejected rather than silently clamped,
+ * so the player is told what happened.
+ */
+export const MAX_RESERVE_PERCENT = 0.5;
+
+/** Spec D.5: maxTaps = elapsedSinceLastFlush / 50ms, clamped server-side. */
+export const TAP_MIN_INTERVAL_MS = 50;
+
+/** Spec C.6: every stack shares one expiry, which keeps rates piecewise-constant. */
+export const TAP_TIMER_ID = "tap-expiry";
+
+export function applyReorderPriority(
+  state: WorldState,
+  _content: IndexedContent,
+  action: Extract<Action, { type: "REORDER_PRIORITY" }>,
+): ApplyResult {
+  const requested = action.entries;
+  if (requested.length !== state.priority.length) {
+    return reject(`expected ${state.priority.length} entries, got ${requested.length}`);
+  }
+
+  const byId = new Map(state.priority.map((entry) => [entry.id, entry]));
+  const seen = new Set<string>();
+  for (const id of requested) {
+    if (!byId.has(id)) return reject(`unknown priority entry "${id}"`);
+    if (seen.has(id)) return reject(`duplicate priority entry "${id}"`);
+    seen.add(id);
+  }
+
+  // Spec F.1: power is movable, with a warning in the UI. The engine allows it, and
+  // spec C.4's bottleneck report is what tells the player the consequence.
+  const priority = requested.map((id) => byId.get(id)!);
+  return accept({ ...state, priority }, [{ kind: "priorityChanged", order: [...requested] }]);
+}
+
+export function applySetPriorityMode(
+  state: WorldState,
+  _content: IndexedContent,
+  action: Extract<Action, { type: "SET_PRIORITY_MODE" }>,
+): ApplyResult {
+  const index = state.priority.findIndex((entry) => entry.id === action.entryId);
+  if (index < 0) return reject(`unknown priority entry "${action.entryId}"`);
+
+  const existing = state.priority[index]!;
+  const share = action.share ?? existing.share;
+  if (action.mode === "share" && !(share > 0)) return reject("share weight must be positive");
+
+  const targetRate = action.targetRate === undefined ? existing.targetRate : action.targetRate;
+  if (targetRate !== null && !(Number.isFinite(targetRate) && targetRate >= 0)) {
+    return reject("target rate must be a non-negative number or null");
+  }
+
+  const updated: PriorityEntry = {
+    ...existing,
+    mode: action.mode,
+    share,
+    targetRate,
+    paused: action.paused ?? existing.paused,
+  };
+  const priority = [...state.priority];
+  priority[index] = updated;
+
+  return accept({ ...state, priority }, [
+    {
+      kind: "entryModeChanged",
+      entryId: updated.id,
+      mode: updated.mode,
+      share: updated.share,
+      targetRate: updated.targetRate,
+      paused: updated.paused,
+    },
+  ]);
+}
+
+export function applySetReserve(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "SET_RESERVE" }>,
+): ApplyResult {
+  const { itemId, percent } = action;
+  if (!content.items.has(itemId)) return reject(`unknown item "${itemId}"`);
+  if (!Number.isFinite(percent) || percent < 0) return reject("reserve must be at least 0");
+  if (percent > MAX_RESERVE_PERCENT) {
+    return reject(`reserve cannot exceed 50% (${MAX_RESERVE_PERCENT})`);
+  }
+  return accept({ ...state, reserve: { ...state.reserve, [itemId]: percent } }, [
+    { kind: "reserveChanged", itemId, percent },
+  ]);
+}
+
+function buyLevels(
+  state: WorldState,
+  content: IndexedContent,
+  scope: "storage" | "quantum",
+  id: string,
+  levels: number,
+): ApplyResult {
+  if (!Number.isInteger(levels) || levels <= 0) return reject("levels must be a positive integer");
+
+  const curve = scope === "storage" ? content.bundle.storage : content.bundle.quantumStorage;
+  const currentLevel =
+    scope === "storage" ? (state.storageLevel[id] ?? 0) : (state.qsLevel[id] ?? 0);
+  if (currentLevel + levels > curve.maxLevel) {
+    return reject(`level ${currentLevel + levels} exceeds the maximum of ${curve.maxLevel}`);
+  }
+
+  // Spec C.5: a container is a build, so it draws bound stock first. Deliveries
+  // remain the only thing bound cannot pay for (spec D4).
+  const costs = levelCostRange(curve, currentLevel, levels);
+  const paid = spendForBuild(content, state, costs);
+  if (paid === null) return reject("cannot afford these levels");
+
+  const next: WorldState =
+    scope === "storage"
+      ? { ...paid, storageLevel: { ...paid.storageLevel, [id]: currentLevel + levels } }
+      : { ...paid, qsLevel: { ...paid.qsLevel, [id]: currentLevel + levels } };
+
+  return accept(next, [
+    costEffect("spent", costs),
+    { kind: "levelChanged", scope, id, level: currentLevel + levels },
+  ]);
+}
+
+export function applyBuyStorage(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "BUY_STORAGE" }>,
+): ApplyResult {
+  if (!content.items.has(action.itemId)) return reject(`unknown item "${action.itemId}"`);
+  return buyLevels(state, content, "storage", action.itemId, action.levels);
+}
+
+export function applyBuyQs(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "BUY_QS" }>,
+): ApplyResult {
+  if (!content.lanes.has(action.lane)) return reject(`unknown lane "${action.lane}"`);
+  return buyLevels(state, content, "quantum", action.lane, action.levels);
+}
+
+export function applyTap(
+  state: WorldState,
+  content: IndexedContent,
+  action: Extract<Action, { type: "TAP" }>,
+): ApplyResult {
+  const { count, clientElapsedMs } = action;
+  if (!Number.isFinite(count) || count < 0) return reject("tap count must be non-negative");
+  if (!Number.isFinite(clientElapsedMs) || clientElapsedMs < 0) {
+    return reject("clientElapsedMs must be non-negative");
+  }
+
+  // Spec D.5: clientElapsedMs is the only client-supplied number the engine reads,
+  // and this ceiling is the only thing it is trusted for. Surplus is discarded
+  // silently rather than rejected, so a laggy client is not punished.
+  const allowed = Math.floor(clientElapsedMs / TAP_MIN_INTERVAL_MS);
+  const applied = Math.min(Math.floor(count), allowed);
+  const discarded = Math.floor(count) - applied;
+
+  const tap = content.bundle.tap;
+  const stacks = Math.min(tap.maxStacks, state.tapStacks + applied);
+
+  // Spec C.6: one shared expiry, refreshed by each tap. lastResolvedAt is "now",
+  // because spec D.2's request lifecycle resolves before it applies.
+  const timers: Timer[] = state.timers.filter((timer) => timer.id !== TAP_TIMER_ID);
+  if (stacks > 0) {
+    timers.push({
+      id: TAP_TIMER_ID,
+      kind: "tapExpiry",
+      fireAt: state.lastResolvedAt + tap.durationSeconds * 1000,
+    });
+  }
+  // Spec A.5's canonical ordering: by time, ties broken by a stable id.
+  timers.sort((a, b) => (a.fireAt === b.fireAt ? (a.id < b.id ? -1 : 1) : a.fireAt - b.fireAt));
+
+  return accept({ ...state, tapStacks: stacks, timers }, [{ kind: "tapped", stacks, discarded }]);
+}
+```
+
+- [ ] **Step 4: Run the economy test to verify it passes**
+
+Run: `pnpm --filter @manufactory/engine test actions/economy`
+Expected: PASS.
+
+- [ ] **Step 5: Write the failing dispatcher test**
+
+`packages/engine/src/actions/apply.test.ts`:
+
+```ts
+import { fileURLToPath } from "node:url";
+import { loadBundleDir } from "@manufactory/content";
+import { describe, expect, it } from "vitest";
+import { D } from "../numbers/decimal.js";
+import { indexContent } from "../graph/index-content.js";
+import { initialWorld, installedAt, makePrng, type WorldState } from "../state/index.js";
+import { apply, applyBatch } from "./index.js";
+import type { Action } from "./types.js";
+
+const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
+const content = indexContent(loadBundleDir(fixtureDir));
+const START = 1_700_000_000_000;
+
+function rich(): WorldState {
+  const w = initialWorld(content, 1, START);
+  return { ...w, stored: { ...w.stored, iron_plate: D(100_000) } };
+}
+
+describe("apply", () => {
+  it("dispatches ten of spec D.1's eleven actions in sequence", () => {
+    const ids = rich().priority.map((e) => e.id);
+    const actions: Action[] = [
+      { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+      { type: "ASSIGN_MACHINES", recipeId: "make_plate", count: 1 },
+      { type: "SELECT_RECIPE", itemId: "iron_plate", recipeId: "make_plate" },
+      { type: "DISMANTLE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+      // Any permutation of the current ids; here, the last entry moved to the front.
+      { type: "REORDER_PRIORITY", entries: [ids[ids.length - 1]!, ...ids.slice(0, ids.length - 1)] },
+      { type: "SET_PRIORITY_MODE", entryId: "item:iron_ore", mode: "share", share: 2 },
+      { type: "SET_RESERVE", itemId: "iron_ore", percent: 0.1 },
+      { type: "BUY_STORAGE", itemId: "iron_ore", levels: 1 },
+      { type: "BUY_QS", lane: "iron", levels: 1 },
+      { type: "TAP", count: 3, clientElapsedMs: 1_000 },
+    ];
+    let state = rich();
+    for (const action of actions) {
+      const result = apply(state, content, action, state.seed);
+      if (result.rejected) throw new Error(`${action.type}: ${result.reason}`);
+      state = result.state;
+    }
+    expect(state.reserve.iron_ore).toBe(0.1);
+    expect(state.storageLevel.iron_ore).toBe(1);
+    expect(state.qsLevel.iron).toBe(1);
+    expect(state.tapStacks).toBe(3);
+  });
+
+  it("dispatches the eleventh, UPGRADE_MARK, once its mark is unlocked", () => {
+    // 45 Mk1 miners at tier 1 consolidate to floor(45 * 1 / 3) = 15 Mk2.
+    const start = rich();
+    const bought = apply(
+      { ...start, tier: 1 },
+      content,
+      { type: "BUY_MACHINE", lane: "iron", machineClass: "miner", mark: 1, count: 43 },
+      start.seed,
+    );
+    if (bought.rejected) throw new Error(bought.reason);
+    expect(installedAt(bought.state, "iron", "miner", 1)).toBe(45);
+
+    const upgraded = apply(
+      bought.state,
+      content,
+      { type: "UPGRADE_MARK", lane: "iron", machineClass: "miner", fromMark: 1 },
+      bought.state.seed,
+    );
+    if (upgraded.rejected) throw new Error(upgraded.reason);
+    expect(installedAt(upgraded.state, "iron", "miner", 1)).toBe(0);
+    expect(installedAt(upgraded.state, "iron", "miner", 2)).toBe(15);
+  });
+
+  it("threads the seed onto the returned state", () => {
+    const seed = makePrng(4242);
+    const result = apply(
+      rich(),
+      content,
+      { type: "SET_RESERVE", itemId: "iron_ore", percent: 0.1 },
+      seed,
+    );
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.state.seed).toEqual(seed);
+  });
+
+  it("returns a rejection rather than throwing on an invalid action", () => {
+    const result = apply(
+      rich(),
+      content,
+      { type: "BUY_MACHINE", lane: "ghost", machineClass: "miner", mark: 1, count: 1 },
+      makePrng(1),
+    );
+    expect(result.rejected).toBe(true);
+  });
+
+  it("never mutates the state it was given", () => {
+    const start = rich();
+    const snapshot = JSON.stringify(start.assignment);
+    apply(
+      start,
+      content,
+      { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 3 },
+      start.seed,
+    );
+    expect(JSON.stringify(start.assignment)).toBe(snapshot);
+    expect(installedAt(start, "iron", "constructor", 1)).toBe(1);
+  });
+});
+
+describe("applyBatch", () => {
+  it("applies actions in order and concatenates their effects", () => {
+    const result = applyBatch(
+      rich(),
+      content,
+      [
+        { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 2 },
+        { type: "ASSIGN_MACHINES", recipeId: "make_plate", count: 3 },
+      ],
+      makePrng(1),
+    );
+    if (result.rejected) throw new Error(result.reason);
+    expect(installedAt(result.state, "iron", "constructor", 1)).toBe(3);
+    expect(result.state.assignment.make_plate).toBe(3);
+    expect(result.effects.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("aborts the whole batch on the first failure and names which one (spec D.1)", () => {
+    const result = applyBatch(
+      rich(),
+      content,
+      [
+        { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+        { type: "ASSIGN_MACHINES", recipeId: "make_plate", count: 99 },
+        { type: "SET_RESERVE", itemId: "iron_ore", percent: 0.1 },
+      ],
+      makePrng(1),
+    );
+    expect(result.rejected).toBe(true);
+    if (!result.rejected) throw new Error("unreachable");
+    expect(result.failedIndex).toBe(1);
+    expect(result.reason).toMatch(/installed/i);
+  });
+
+  it("accepts an empty batch as a no-op", () => {
+    const start = rich();
+    const result = applyBatch(start, content, [], makePrng(7));
+    if (result.rejected) throw new Error(result.reason);
+    expect(result.effects).toEqual([]);
+    expect(result.state.tier).toBe(start.tier);
+  });
+});
+```
+
+- [ ] **Step 6: Run it to verify it fails**
+
+Run: `pnpm --filter @manufactory/engine test apply`
+Expected: FAIL — `Cannot find module './index.js'` under `actions/`.
+
+- [ ] **Step 7: Write the dispatcher**
+
+`packages/engine/src/actions/index.ts`:
+
+```ts
+// Spec A.2: actions are engine reducers, not API handlers. The API becomes almost
+// pure transport -- authenticate, lock the row, resolve, apply, persist, return --
+// so essentially no game logic lives in apps/api and there is nothing there to
+// drift from the client. It also buys spec 16.3's full action parity in `sim play`
+// structurally: the terminal client calls these identical functions with no HTTP in
+// between, so a divergence between what is possible in the simulator and in the
+// game cannot be expressed.
+import type { IndexedContent } from "../graph/index-content.js";
+import type { PrngState, WorldState } from "../state/world.js";
+import {
+  applyAssignMachines,
+  applyBuyMachine,
+  applyDismantle,
+  applySelectRecipe,
+  applyUpgradeMark,
+} from "./machines.js";
+import {
+  applyBuyQs,
+  applyBuyStorage,
+  applyReorderPriority,
+  applySetPriorityMode,
+  applySetReserve,
+  applyTap,
+} from "./economy.js";
+import type { Action, ApplyResult, Effect } from "./types.js";
+
+export * from "./types.js";
+export * from "./machines.js";
+export * from "./economy.js";
+
+/**
+ * Spec A.2's signature. `seed` is threaded onto the returned state: none of Phase
+ * 1's reducers draws from the PRNG -- disruptions and the MAM scan, which do, are
+ * Spec 2 -- but the parameter exists now so the signature never has to change.
+ * Callers pass `state.seed`.
+ */
+export function apply(
+  state: WorldState,
+  content: IndexedContent,
+  action: Action,
+  seed: PrngState,
+): ApplyResult {
+  const seeded: WorldState = { ...state, seed };
+  switch (action.type) {
+    case "BUY_MACHINE":
+      return applyBuyMachine(seeded, content, action);
+    case "DISMANTLE":
+      return applyDismantle(seeded, content, action);
+    case "UPGRADE_MARK":
+      return applyUpgradeMark(seeded, content, action);
+    case "ASSIGN_MACHINES":
+      return applyAssignMachines(seeded, content, action);
+    case "SELECT_RECIPE":
+      return applySelectRecipe(seeded, content, action);
+    case "REORDER_PRIORITY":
+      return applyReorderPriority(seeded, content, action);
+    case "SET_PRIORITY_MODE":
+      return applySetPriorityMode(seeded, content, action);
+    case "SET_RESERVE":
+      return applySetReserve(seeded, content, action);
+    case "BUY_STORAGE":
+      return applyBuyStorage(seeded, content, action);
+    case "BUY_QS":
+      return applyBuyQs(seeded, content, action);
+    case "TAP":
+      return applyTap(seeded, content, action);
+  }
+}
+
+export type BatchResult =
+  | { rejected: false; state: WorldState; effects: Effect[] }
+  | { rejected: true; reason: string; failedIndex: number };
+
+/**
+ * Spec D.1: one request carries an ordered list, and a failed action aborts the
+ * whole batch. Atomic and easy to reason about, and the response names which action
+ * failed and why. The wire format is identical to `sim replay`'s log format, so a
+ * real player's session file replays directly (spec E.4).
+ */
+export function applyBatch(
+  state: WorldState,
+  content: IndexedContent,
+  actions: readonly Action[],
+  seed: PrngState,
+): BatchResult {
+  let current: WorldState = { ...state, seed };
+  const effects: Effect[] = [];
+  for (let index = 0; index < actions.length; index += 1) {
+    const result = apply(current, content, actions[index]!, current.seed);
+    if (result.rejected) return { rejected: true, reason: result.reason, failedIndex: index };
+    current = result.state;
+    effects.push(...result.effects);
+  }
+  return { rejected: false, state: current, effects };
+}
+```
+
+- [ ] **Step 8: Register the barrel**
+
+Add one line to `packages/engine/src/index.ts`, after the `resolve` line:
+
+```ts
+export * from "./actions/index.js";
+```
+
+- [ ] **Step 9: Run everything**
+
+Run:
+
+```bash
+pnpm --filter @manufactory/engine test
+pnpm lint && pnpm typecheck
+```
+
+Expected: PASS.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add the economy action reducers and the apply dispatcher
+
+REORDER_PRIORITY, SET_PRIORITY_MODE, SET_RESERVE, BUY_STORAGE, BUY_QS and
+TAP complete spec D.1's eleven, and apply/applyBatch dispatch them. Spec
+A.2's signature means the Phase 3 API is pure transport and sim play gets
+full action parity structurally rather than by maintenance. A failed
+action aborts the whole batch and names its index. The tap ceiling is spec
+D.5's elapsed/50ms clamp with the surplus discarded silently, and every
+stack shares one expiry timer so rates stay piecewise-constant.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016rmcUbYFdRwjnpEmXWrbTB
+EOF
+)"
+```
+
+---
+
+### Task 14: The property suite and the fuzzer
+
+**Files:**
+- Modify: `packages/engine/package.json` (add `fast-check` to `devDependencies`)
+- Create: `packages/engine/src/testing/arbitrary.ts`
+- Test: `packages/engine/src/properties.test.ts`, `packages/engine/src/fuzz.test.ts`
+
+**Interfaces:**
+- Consumes: `D`, `type Dec` (Phase 0 Task 2); `type IndexedContent`, `isLiveRecipe`, `laneClassKey`, `getMark`, `type ItemId`, `type LaneId`, `type MachineClassId`, `type RecipeId` (Task 2); `computeExpansion` (Task 3); `type WorldState`, `initialWorld`, `installedAt`, `withInstalled`, `installedMachines` (Task 4); `machineCostRange` (Task 5); `computeCapacity` (Task 6); `depositProduction`, `depositRefund`, `liquidCap`, `liquid`, `quantumCap`, `itemStateTag` (Task 7); `effectivePriority` (Task 8); `solveItems` (Task 9); `solve` (Task 10); `resolve` (Task 11); `applyBuyMachine`, `applyDismantle` (Task 12)
+- Produces:
+  - `packages/engine/src/testing/arbitrary.ts` exporting `interface WorldSketch { tier: number; machines: number[]; fills: number[]; storageLevels: number[]; qsLevels: number[]; reserves: number[]; tapStacks: number; refund: number; rotate: number }`, `buildWorld(content: IndexedContent, sketch: WorldSketch, nowMs: number): WorldState`, and `arbWorldSketch(): fc.Arbitrary<WorldSketch>`
+  - No production exports — this task adds tests only
+
+`packages/engine/src/testing/arbitrary.ts` is **test-support code, not shipped code**, but it lives outside `*.test.ts`, so the engine import-boundary lint rule would otherwise apply to it and reject its `fast-check` import. Step 1 therefore adds `"packages/engine/src/testing/**"` to the `ignores` of the engine block in `eslint.config.js`, beside the `*.test.ts` entry Phase 0 ruling R2 added. Nothing outside a test imports this directory, so no impure import can reach shipped engine code.
+
+Spec E.6's table, in full, with the property that carries each:
+
+| Property | Guards |
+|---|---|
+| `resolve(s, 2t) ≡ resolve(resolve(s, t), t)` | **The one that matters most.** Offline and online cannot disagree if this holds |
+| Conservation — nothing created outside extraction | Spec 3.1's core economic rule |
+| Adding a machine never decreases output | Spec 4.6's dead-purchase guard, as an invariant |
+| The spec C.3 fixed point terminates in ≤ \|items\| passes | The provable bound, on random states |
+| An item at cap never has positive net rate | Backpressure |
+| `bound > 0` ⟹ `quantum == qsCap` | Spec D4's Quantum Storage invariant |
+| Buy N then dismantle N returns exactly what was paid | LIFO symmetry |
+
+Two of them need their statement pinned down, because the prose admits several readings:
+
+**Conservation** is stated as *no item with zero stock is consumed faster than it is produced*. That is exactly "nothing is created from nothing" — you cannot consume what does not exist and has not just been made — and it is the EMPTY half of spec C.2 holding. It is paired with a sharper structural check: in a state where every stockpile is empty and no extraction recipe has a machine assigned, every item's production is zero. Spec 3.1's "only extraction creates value", as an executable statement.
+
+**Adding a machine never decreases output** has one genuine exception: a purchase that pushes the grid into a brownout really does reduce output, and spec 6.1 wants that. The property is therefore conditioned on `power.ratio === 1` both before and after — spec 4.6's guard is about *starvation*, not about browning out your own factory. The machine is added directly through `withInstalled` rather than through `BUY_MACHINE`, so the purchase cost does not perturb the stock and confound the comparison.
+
+The split-invariance property uses a relative tolerance of **1e-8** on Decimal magnitudes and exact equality on discrete state. Spec E.4 specifies 1e-12 for replay comparison, but that applies to an identical sequence of steps; a split deliberately changes the step boundaries, so the integration rounds differently and the budget has to be looser. Discrete divergence is still a bug.
+
+- [ ] **Step 1: Add fast-check and widen the lint exemption**
+
+In `packages/engine/package.json`, add to `devDependencies`:
+
+```json
+    "fast-check": "^3.22.0",
+```
+
+Then run `pnpm install`.
+
+In `eslint.config.js`, the engine import-boundary block's `ignores` currently lists `packages/engine/**/*.test.ts` (Phase 0 ruling R2). Add the testing directory beside it:
+
+```js
+    ignores: ["packages/engine/**/*.test.ts", "packages/engine/src/testing/**"],
+```
+
+Test-support code legitimately needs `fast-check`, and it cannot reach shipped engine code because nothing outside a test imports it.
+
+- [ ] **Step 2: Write the arbitrary state builder**
+
+`packages/engine/src/testing/arbitrary.ts`:
+
+```ts
+// Random but *legal* world states for the spec E.6 property suite.
+//
+// Test support only: nothing outside a test imports this, and the engine's
+// import-boundary lint rule exempts src/testing/** for that reason.
+//
+// The generator builds states the way the game would reach them rather than by
+// filling fields at random. `bound` in particular is only ever created through
+// depositRefund, because spec D4's invariant -- bound > 0 implies quantum is at cap
+// -- is a property of how bound comes into existence, and a generator that violated
+// it would make that property untestable.
+import fc from "fast-check";
+import { D } from "../numbers/decimal.js";
+import type { ItemId, LaneId, MachineClassId } from "../content/types.js";
+import { getMark, isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
+import { depositProduction, depositRefund, liquidCap } from "../economy/storage.js";
+import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
+
+export interface WorldSketch {
+  tier: number;
+  /** Machines to install per lane-class slot, cycled if shorter than the slot list. */
+  machines: number[];
+  /** Fraction of each item's combined cap to pre-fill, cycled likewise. */
+  fills: number[];
+  storageLevels: number[];
+  qsLevels: number[];
+  reserves: number[];
+  tapStacks: number;
+  /** Extra iron_plate refunded in, which is the only way bound stock appears. */
+  refund: number;
+  /** Rotation applied to the priority list. */
+  rotate: number;
+}
+
+export function arbWorldSketch(): fc.Arbitrary<WorldSketch> {
+  const cycle = <T>(item: fc.Arbitrary<T>) => fc.array(item, { minLength: 8, maxLength: 8 });
+  return fc.record({
+    tier: fc.integer({ min: 0, max: 3 }),
+    machines: cycle(fc.integer({ min: 0, max: 12 })),
+    // 0 and 1 are repeated so EMPTY and FULL are common, not rare.
+    fills: cycle(fc.constantFrom(0, 0, 0.25, 0.5, 1, 1)),
+    storageLevels: cycle(fc.integer({ min: 0, max: 3 })),
+    qsLevels: cycle(fc.integer({ min: 0, max: 2 })),
+    reserves: cycle(fc.constantFrom(0, 0, 0, 0.1, 0.25)),
+    tapStacks: fc.integer({ min: 0, max: 10 }),
+    refund: fc.constantFrom(0, 0, 0, 5_000, 250_000),
+    rotate: fc.integer({ min: 0, max: 5 }),
+  });
+}
+
+function at<T>(list: readonly T[], index: number): T {
+  return list[index % list.length]!;
+}
+
+export function buildWorld(
+  content: IndexedContent,
+  sketch: WorldSketch,
+  nowMs: number,
+): WorldState {
+  let world = initialWorld(content, 1, nowMs);
+  world = { ...world, tier: sketch.tier, tapStacks: sketch.tapStacks, installed: {}, assignment: {} };
+
+  // Machines, per lane-class, only where mk1 has actually unlocked at this tier.
+  const slots = [...content.recipesByLaneClass.keys()].sort();
+  slots.forEach((key, index) => {
+    const [lane, machineClass] = key.split("::") as [LaneId, MachineClassId];
+    const markOne = getMark(content, machineClass, 1);
+    if (!markOne || markOne.unlockTier > sketch.tier) return;
+
+    const count = at(sketch.machines, index);
+    if (count <= 0) return;
+    world = withInstalled(world, lane, machineClass, 1, count);
+
+    const recipeIds = (content.recipesByLaneClass.get(key) ?? []).filter((recipeId) =>
+      isLiveRecipe(content, recipeId, world.tier, world.activeRecipe),
+    );
+    if (recipeIds.length === 0) return;
+
+    const assignment = { ...world.assignment };
+    for (let i = 0; i < count; i += 1) {
+      const recipeId = recipeIds[i % recipeIds.length]!;
+      assignment[recipeId] = (assignment[recipeId] ?? 0) + 1;
+    }
+    world = { ...world, assignment };
+  });
+
+  // Levels first, so the caps the fills are measured against are the final ones.
+  const storageLevel: Record<ItemId, number> = { ...world.storageLevel };
+  content.stockItemIds.forEach((itemId, index) => {
+    storageLevel[itemId] = at(sketch.storageLevels, index);
+  });
+  const qsLevel: Record<LaneId, number> = { ...world.qsLevel };
+  [...content.lanes.keys()].forEach((lane, index) => {
+    qsLevel[lane] = at(sketch.qsLevels, index);
+  });
+  world = { ...world, storageLevel, qsLevel };
+
+  // Fills go in through the real deposit path, so storage tops up before quantum.
+  content.stockItemIds.forEach((itemId, index) => {
+    const fraction = at(sketch.fills, index);
+    if (fraction <= 0) return;
+    const amount = liquidCap(content, world, itemId).times(fraction);
+    world = depositProduction(content, world, itemId, amount).state;
+  });
+
+  const reserve: Record<ItemId, number> = { ...world.reserve };
+  content.stockItemIds.forEach((itemId, index) => {
+    reserve[itemId] = at(sketch.reserves, index);
+  });
+  world = { ...world, reserve };
+
+  // The only legal source of bound stock (spec D4).
+  if (sketch.refund > 0) {
+    world = depositRefund(content, world, "iron_plate", D(sketch.refund));
+  }
+
+  const rotate = sketch.rotate % world.priority.length;
+  world = {
+    ...world,
+    priority: [...world.priority.slice(rotate), ...world.priority.slice(0, rotate)],
+  };
+  return world;
+}
+```
+
+- [ ] **Step 3: Write the property suite**
+
+`packages/engine/src/properties.test.ts`:
+
+```ts
+import { fileURLToPath } from "node:url";
+import { loadBundleDir } from "@manufactory/content";
+import fc from "fast-check";
+import { describe, expect, it } from "vitest";
+import { D } from "./numbers/decimal.js";
+import { indexContent } from "./graph/index-content.js";
+import { computeExpansion } from "./graph/expand.js";
+import { computeCapacity } from "./economy/capacity.js";
+import { itemStateTag, liquid, quantumCap } from "./economy/storage.js";
+import { machineCostRange } from "./economy/curves.js";
+import { initialWorld, installedAt, withInstalled, type WorldState } from "./state/world.js";
+import { effectivePriority } from "./solve/waterfall.js";
+import { solveItems } from "./solve/fixpoint.js";
+import { solve } from "./solve/solve.js";
+import { resolve } from "./resolve/index.js";
+import { applyBuyMachine, applyDismantle } from "./actions/machines.js";
+import { arbWorldSketch, buildWorld } from "./testing/arbitrary.js";
+
+const fixtureDir = fileURLToPath(new URL("../../content/bundles/fixture", import.meta.url));
+const content = indexContent(loadBundleDir(fixtureDir));
+const START = 1_700_000_000_000;
+
+/** Rates below this are float64 noise, not signal. */
+const SLACK = 1e-7;
+
+function world(sketch: Parameters<typeof buildWorld>[1]): WorldState {
+  return buildWorld(content, sketch, START);
+}
+
+describe("resolve(s, 2t) equals resolve(resolve(s, t), t) — spec E.6's centrepiece", () => {
+  it("holds on random states for windows well under the offline cap", () => {
+    fc.assert(
+      fc.property(
+        arbWorldSketch(),
+        fc.integer({ min: 30_000, max: 900_000 }),
+        (sketch, halfMs) => {
+          const start = world(sketch);
+          const whole = resolve(start, content, 2 * halfMs);
+          const split = resolve(resolve(start, content, halfMs).state, content, halfMs);
+
+          // Discrete state must be exactly equal (spec E.4).
+          expect(split.state.tier).toBe(whole.state.tier);
+          expect(split.state.tapStacks).toBe(whole.state.tapStacks);
+          expect(split.state.timers).toEqual(whole.state.timers);
+          expect(split.state.storageLevel).toEqual(whole.state.storageLevel);
+          expect(split.state.qsLevel).toEqual(whole.state.qsLevel);
+          expect(split.state.installed).toEqual(whole.state.installed);
+          expect(split.state.lastResolvedAt).toBe(whole.state.lastResolvedAt);
+
+          // Magnitudes within a relative 1e-8. Tighter than this is not available:
+          // a split moves the integration boundaries, so the two paths round
+          // differently even though they describe the same trajectory.
+          for (const itemId of content.stockItemIds) {
+            for (const field of ["stored", "quantum", "bound", "lifetime"] as const) {
+              const a = whole.state[field][itemId]!.toNumber();
+              const b = split.state[field][itemId]!.toNumber();
+              expect(Math.abs(a - b) / Math.max(1, Math.abs(a))).toBeLessThan(1e-8);
+            }
+          }
+        },
+      ),
+      { numRuns: 30 },
+    );
+  });
+});
+
+describe("conservation — nothing is created outside extraction (spec 3.1)", () => {
+  it("never consumes an item with no stock faster than it is produced", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), (sketch) => {
+        const state = world(sketch);
+        const solution = solve(state, content);
+        for (const itemId of content.stockItemIds) {
+          if (liquid(state, itemId).gt(0)) continue;
+          const flow = solution.itemRates.get(itemId)!;
+          expect(flow.consumption).toBeLessThanOrEqual(flow.production + SLACK);
+        }
+      }),
+      { numRuns: 60 },
+    );
+  });
+
+  it("produces nothing at all when no extraction machine is assigned and no stock exists", () => {
+    const start = initialWorld(content, 1, START);
+    // The fixture's only extraction recipes are mine_iron and extract_oil.
+    const idle: WorldState = {
+      ...start,
+      assignment: { ...start.assignment, mine_iron: 0, extract_oil: 0 },
+    };
+    const solution = solve(idle, content);
+    for (const itemId of content.stockItemIds) {
+      expect(solution.itemRates.get(itemId)!.production).toBeLessThan(SLACK);
+    }
+  });
+});
+
+describe("adding a machine never decreases output (spec 4.6)", () => {
+  it("holds whenever the grid has headroom before and after", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), (sketch) => {
+        const before = world(sketch);
+        const beforeSolution = solve(before, content);
+        // A purchase that browns the grid out really does cut output, and spec 6.1
+        // wants that. The guard is about starvation, not self-inflicted brownout.
+        fc.pre(beforeSolution.power.ratio === 1);
+
+        // Add one Mk1 constructor to the iron lane directly, bypassing the cost so
+        // the comparison is not confounded by the stock the purchase would spend.
+        const owned = installedAt(before, "iron", "constructor", 1);
+        let after = withInstalled(before, "iron", "constructor", 1, owned + 1);
+        after = {
+          ...after,
+          assignment: { ...after.assignment, make_plate: (after.assignment.make_plate ?? 0) + 1 },
+        };
+        const afterSolution = solve(after, content);
+        fc.pre(afterSolution.power.ratio === 1);
+
+        const beforeRate = beforeSolution.itemRates.get("iron_plate")!.production;
+        const afterRate = afterSolution.itemRates.get("iron_plate")!.production;
+        expect(afterRate).toBeGreaterThanOrEqual(beforeRate - SLACK);
+      }),
+      { numRuns: 60 },
+    );
+  });
+});
+
+describe("the spec C.3 fixed point terminates in at most |items| passes", () => {
+  it("holds on random states, unseeded", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), (sketch) => {
+        const state = world(sketch);
+        const capacity = computeCapacity(content, state);
+        const result = solveItems({
+          content,
+          vectors: computeExpansion(content, state.tier, state.activeRecipe),
+          state,
+          capacityUnits: capacity.unitsByRecipe,
+          entries: effectivePriority(content, state, capacity, 0),
+          reserveFloor: 0,
+          seedPins: false,
+        });
+        expect(result.passes).toBeLessThanOrEqual(content.itemIds.length);
+        // Every pass adds at least one pin, so the two must agree.
+        expect(result.pinOrder.length).toBeGreaterThanOrEqual(result.passes - 1);
+        expect(new Set(result.pinOrder).size).toBe(result.pinOrder.length);
+      }),
+      { numRuns: 60 },
+    );
+  });
+});
+
+describe("an item at cap never has a positive net rate", () => {
+  it("holds on random states", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), (sketch) => {
+        const state = world(sketch);
+        const solution = solve(state, content);
+        for (const itemId of content.stockItemIds) {
+          if (itemStateTag(content, state, itemId) !== "FULL") continue;
+          expect(solution.itemRates.get(itemId)!.net).toBeLessThanOrEqual(SLACK);
+        }
+      }),
+      { numRuns: 60 },
+    );
+  });
+
+  it("holds after a resolve, which is where it would show up as overflow", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), fc.integer({ min: 1_000, max: 600_000 }), (sketch, ms) => {
+        const after = resolve(world(sketch), content, ms).state;
+        for (const itemId of content.stockItemIds) {
+          const cap = liquid(after, itemId);
+          expect(cap.gte(0)).toBe(true);
+        }
+      }),
+      { numRuns: 30 },
+    );
+  });
+});
+
+describe("bound > 0 implies quantum is at its cap (spec D4)", () => {
+  it("holds on random states and after a resolve", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), fc.integer({ min: 0, max: 600_000 }), (sketch, ms) => {
+        const state = resolve(world(sketch), content, ms).state;
+        for (const itemId of content.stockItemIds) {
+          const bound = state.bound[itemId]!;
+          if (bound.lte(0)) continue;
+          const quantum = state.quantum[itemId]!;
+          const cap = quantumCap(content, state, itemId);
+          expect(cap.minus(quantum).toNumber()).toBeLessThan(SLACK);
+        }
+      }),
+      { numRuns: 40 },
+    );
+  });
+});
+
+describe("buy N then dismantle N returns exactly what was paid (spec D4, LIFO)", () => {
+  it("holds for every machine class and batch size", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom("miner", "smelter", "constructor"),
+        fc.integer({ min: 1, max: 20 }),
+        (machineClass, count) => {
+          const start = initialWorld(content, 1, START);
+          const funded: WorldState = {
+            ...start,
+            stored: { ...start.stored, iron_plate: D("1e12") },
+          };
+
+          const bought = applyBuyMachine(funded, content, {
+            type: "BUY_MACHINE",
+            lane: "iron",
+            machineClass,
+            mark: 1,
+            count,
+          });
+          if (bought.rejected) throw new Error(bought.reason);
+          const spent = bought.effects.find((e) => e.kind === "spent");
+          if (spent?.kind !== "spent") throw new Error("expected a spent effect");
+
+          const removed = applyDismantle(bought.state, content, {
+            type: "DISMANTLE",
+            lane: "iron",
+            machineClass,
+            mark: 1,
+            count,
+          });
+          if (removed.rejected) throw new Error(removed.reason);
+          const refunded = removed.effects.find((e) => e.kind === "refunded");
+          if (refunded?.kind !== "refunded") throw new Error("expected a refunded effect");
+
+          // Bitwise equal, because both directions evaluate the same closed form
+          // over the same range. Symmetric, so there is no pump.
+          expect(refunded.items).toEqual(spent.items);
+          expect(installedAt(removed.state, "iron", machineClass, 1)).toBe(
+            installedAt(funded, "iron", machineClass, 1),
+          );
+        },
+      ),
+      { numRuns: 40 },
+    );
+  });
+
+  it("refunds the same range the purchase charged, at any starting count", () => {
+    // A direct check of the underlying curve, independent of the reducers.
+    for (const from of [0, 1, 7, 40]) {
+      for (const count of [1, 3, 12]) {
+        const paid = machineCostRange(content, "constructor", 1, from, count);
+        const back = machineCostRange(content, "constructor", 1, from, count);
+        expect(back.get("iron_plate")!.toString()).toBe(paid.get("iron_plate")!.toString());
+      }
+    }
+  });
+});
+```
+
+- [ ] **Step 4: Run the property suite**
+
+Run: `pnpm --filter @manufactory/engine test properties`
+Expected: PASS.
+
+If the split-invariance property fails with a tier mismatch, the shrunk counterexample fast-check prints names the state — check that `settle` is the only thing that advances a tier. If it fails on a magnitude by more than 1e-8, the integration is not linear between events: look for a rate that changes without a corresponding discontinuity being reported by `nextDiscontinuity`.
+
+- [ ] **Step 5: Write the fuzzer**
+
+`packages/engine/src/fuzz.test.ts`:
+
+```ts
+import { fileURLToPath } from "node:url";
+import { loadBundleDir } from "@manufactory/content";
+import fc from "fast-check";
+import { describe, expect, it } from "vitest";
+import { indexContent } from "./graph/index-content.js";
+import { liquid, liquidCap } from "./economy/storage.js";
+import { solve } from "./solve/solve.js";
+import { resolve } from "./resolve/index.js";
+import { serializeWorld, deserializeWorld } from "./state/serialize.js";
+import { arbWorldSketch, buildWorld } from "./testing/arbitrary.js";
+
+const fixtureDir = fileURLToPath(new URL("../../content/bundles/fixture", import.meta.url));
+const content = indexContent(loadBundleDir(fixtureDir));
+const START = 1_700_000_000_000;
+
+describe("fuzzing solve", () => {
+  it("never returns a NaN, an infinite rate, or a clock outside [0, 1]", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), (sketch) => {
+        const solution = solve(buildWorld(content, sketch, START), content);
+        for (const [, clock] of solution.clocks) {
+          expect(Number.isFinite(clock)).toBe(true);
+          expect(clock).toBeGreaterThanOrEqual(0);
+          expect(clock).toBeLessThanOrEqual(1 + 1e-9);
+        }
+        for (const [, flow] of solution.itemRates) {
+          expect(Number.isFinite(flow.production)).toBe(true);
+          expect(Number.isFinite(flow.consumption)).toBe(true);
+          expect(flow.production).toBeGreaterThanOrEqual(0);
+          expect(flow.consumption).toBeGreaterThanOrEqual(0);
+        }
+        expect(Number.isFinite(solution.power.ratio)).toBe(true);
+        expect(solution.power.ratio).toBeGreaterThanOrEqual(0);
+        expect(solution.power.ratio).toBeLessThanOrEqual(1);
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+describe("fuzzing resolve", () => {
+  it("never produces a negative stockpile, a NaN, or an overfilled buffer", () => {
+    fc.assert(
+      fc.property(
+        arbWorldSketch(),
+        fc.integer({ min: 0, max: 8 * 60 * 60 * 1000 }),
+        (sketch, elapsedMs) => {
+          const after = resolve(buildWorld(content, sketch, START), content, elapsedMs).state;
+          for (const itemId of content.stockItemIds) {
+            for (const field of ["stored", "quantum", "bound", "lifetime"] as const) {
+              const value = after[field][itemId]!;
+              expect(Number.isNaN(value.toNumber())).toBe(false);
+              expect(value.gte(0)).toBe(true);
+            }
+            const cap = liquidCap(content, after, itemId);
+            expect(liquid(after, itemId).lte(cap.plus(1e-6))).toBe(true);
+          }
+        },
+      ),
+      { numRuns: 60 },
+    );
+  });
+
+  it("does not trip the spec C.7 guards on legitimate input", () => {
+    fc.assert(
+      fc.property(
+        arbWorldSketch(),
+        fc.integer({ min: 0, max: 8 * 60 * 60 * 1000 }),
+        (sketch, elapsedMs) => {
+          const result = resolve(buildWorld(content, sketch, START), content, elapsedMs);
+          expect(result.summary.guardTripped).toBe(false);
+        },
+      ),
+      { numRuns: 60 },
+    );
+  });
+
+  it("round-trips every resolved state through serialization", () => {
+    fc.assert(
+      fc.property(
+        arbWorldSketch(),
+        fc.integer({ min: 0, max: 600_000 }),
+        (sketch, elapsedMs) => {
+          const after = resolve(buildWorld(content, sketch, START), content, elapsedMs).state;
+          const text = serializeWorld(after);
+          expect(serializeWorld(deserializeWorld(text))).toBe(text);
+        },
+      ),
+      { numRuns: 40 },
+    );
+  });
+});
+```
+
+- [ ] **Step 6: Run the fuzzer**
+
+Run: `pnpm --filter @manufactory/engine test fuzz`
+Expected: PASS.
+
+If `guardTripped` fires, print the shrunk sketch and the event count: an oscillating factory that legitimately produces more than 10,000 events in eight hours would mean `nextDiscontinuity` is returning times far smaller than the real ones.
+
+- [ ] **Step 7: Run the whole engine suite and lint**
+
+Run:
+
+```bash
+pnpm --filter @manufactory/engine test
+pnpm lint && pnpm typecheck
+```
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add the spec E.6 property suite and the fuzzer
+
+All seven properties from spec E.6, with resolve(s, 2t) equalling
+resolve(resolve(s, t), t) as the centrepiece -- offline and online cannot
+disagree if it holds. Conservation is stated as "no item with zero stock
+is consumed faster than it is produced", which is spec 3.1's rule made
+executable. The dead-purchase guard is conditioned on the grid having
+headroom, because a purchase that browns out the grid really does cut
+output and spec 6.1 wants that. States are generated the way the game
+would reach them, so bound stock only ever appears through a refund.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016rmcUbYFdRwjnpEmXWrbTB
+EOF
+)"
+```
+
+---
+
+### Task 15: `apps/sim` and `sim run` — the four policies and the report
+
+**Files:**
+- Create: `apps/sim/package.json`, `apps/sim/tsconfig.json`
+- Create: `apps/sim/src/bootstrap.ts`, `apps/sim/src/policies.ts`, `apps/sim/src/report.ts`, `apps/sim/src/run.ts`, `apps/sim/src/bin.ts`
+- Modify: `.github/workflows/ci.yml`
+- Test: `apps/sim/src/policies.test.ts`, `apps/sim/src/run.test.ts`
+
+**Interfaces:**
+- Consumes, from `@manufactory/engine`: `indexContent`, `type IndexedContent`, `type ContentBundle`, `type ItemId`, `type LaneId`, `type MachineClassId`, `getMark`; `initialWorld`, `type WorldState`, `installedAt`; `computeCapacity`, `bestUnlockedMark`; `machineCostRange`, `levelCostRange`; `canAffordBuild`; `solve`, `type Solution`; `resolve`; `apply`, `type Action`; `D`, `type Dec`. From `@manufactory/content`: `loadBundleDir`.
+- Produces:
+  - `bootstrap.ts`: `const FIXTURE_BUNDLE_DIR: string`, `loadContent(dir?: string): IndexedContent`, `newWorld(content: IndexedContent, seed: number): WorldState`
+  - `policies.ts`: `type PolicyName = "optimal" | "greedy" | "casual" | "bottleneck"`, `const POLICY_NAMES: readonly PolicyName[]`, `interface PolicyContext { content: IndexedContent; state: WorldState; solution: Solution; nowMs: number }`, `interface Policy { name: PolicyName; intervalMs(ctx: PolicyContext): number; decide(ctx: PolicyContext): Action[] }`, `interface Candidate { action: Action; costs: Map<ItemId, Dec>; score: number; label: string }`, `costScore(costs: ReadonlyMap<ItemId, Dec>): number`, `affordableCandidates(ctx: PolicyContext): Candidate[]`, `topTargetItem(ctx: PolicyContext): ItemId | null`, `getPolicy(name: PolicyName): Policy`
+  - `report.ts`: `interface TierMark { tier: number; atMs: number; collections: number }`, `interface REffRow { lane: LaneId; machineClass: MachineClassId; authored: number; observed: number | null }`, `interface RunReport { policy: PolicyName; contentVersion: string; seed: number; reachedTier: number; finished: boolean; simulatedMs: number; collections: number; tierTimes: TierMark[]; maxDeadTimeMs: number; purchases: number; bindingConstraints: { recipeId: string; boundMs: number }[]; rEff: REffRow[] }`, `authoredREff(content: IndexedContent, machineClass: MachineClassId): number`, `observedREff(costRatio: number, ladderStep: number, ladderInterval: number, fromCount: number, toCount: number): number | null`, `formatReport(report: RunReport): string`
+  - `run.ts`: `interface RunOptions { policy: PolicyName; contentDir?: string; seed: number; untilTier: number; maxSimMs: number }`, `runSimulation(options: RunOptions): RunReport`
+  - `bin.ts`: the `sim run` / `sim play` CLI entry
+
+Spec E.1 is why this exists: calibration *is* the simulator with a search wrapper, so content cannot be authored without it, and there is no game without content. Spec E.2's four policies, and the reason the fourth exists is worth restating — **`bottleneck` answers the only question that matters about the game's advice mechanism: is the advice actually good?** If it lands materially worse than `greedy`, the UI is lying to players and no amount of balance tuning fixes that.
+
+`apps/sim` is a **separate workspace package** and may import Node builtins, `@manufactory/content` and React freely. Spec A.2's purity rule binds `packages/engine` only. This is also where `Math.pow` becomes legal again: `r_eff = r / m` needs `m = step^(1/interval)`, a fractional power, and it is a reporting figure that never re-enters state — which is precisely why Task 5 left it out of the engine.
+
+Times are reported in **collections**, not hours, per spec B.7 and 16.2: with an 8h offline cap a player gets about three meaningful collections a day, so a tier costing 40 collections is a two-week tier no matter what the hour count claims. One collection is one `offlineCapMs`.
+
+`optimal` is implemented as **greedy with one-step lookahead**: for every affordable candidate it applies the purchase to a copy, re-solves, and scores the marginal gain in the top target's rate per unit of cost. That is an upper-bound *proxy*, not a true optimum — a genuine optimum would need search over the whole purchase sequence. The plan says so rather than overclaiming, and it is still strictly stronger than `greedy`, which is what the policy is for.
+
+- [ ] **Step 1: Create the package**
+
+`apps/sim/package.json`:
+
+```json
+{
+  "name": "@manufactory/sim",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/bin.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "sim": "tsx src/bin.ts",
+    "sim:ci": "tsx src/bin.ts run --policy greedy --until tier:2 --max-days 120 --report text"
+  },
+  "dependencies": {
+    "@manufactory/content": "workspace:*",
+    "@manufactory/engine": "workspace:*",
+    "ink": "^5.1.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}
+```
+
+`apps/sim/tsconfig.json`:
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "noEmit": true,
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}
+```
+
+`jsx` and the `DOM` lib are here for Task 16's Ink client; they are harmless for this task's modules.
+
+Run `pnpm install`.
+
+- [ ] **Step 2: Write the bootstrap module**
+
+`apps/sim/src/bootstrap.ts`:
+
+```ts
+// Loading the bundle and standing up a world. This module is also where the
+// structural compatibility between @manufactory/content's Zod-inferred `Bundle` and
+// @manufactory/engine's hand-declared `ContentBundle` is checked: the assignment in
+// `loadContent` fails to typecheck the moment the two drift, which is the guard
+// that lets spec A.2 keep the engine free of a content import.
+import { fileURLToPath } from "node:url";
+import { loadBundleDir } from "@manufactory/content";
+import {
+  indexContent,
+  initialWorld,
+  type ContentBundle,
+  type IndexedContent,
+  type WorldState,
+} from "@manufactory/engine";
+
+export const FIXTURE_BUNDLE_DIR = fileURLToPath(
+  new URL("../../../packages/content/bundles/fixture", import.meta.url),
+);
+
+export function loadContent(dir: string = FIXTURE_BUNDLE_DIR): IndexedContent {
+  const bundle: ContentBundle = loadBundleDir(dir);
+  return indexContent(bundle);
+}
+
+/** Simulated worlds start at t = 0, so report times are elapsed times. */
+export function newWorld(content: IndexedContent, seed: number): WorldState {
+  return initialWorld(content, seed, 0);
+}
+```
+
+- [ ] **Step 3: Write the failing policy test**
+
+`apps/sim/src/policies.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { D, apply, computeCapacity, solve, type WorldState } from "@manufactory/engine";
+import { loadContent, newWorld } from "./bootstrap.js";
+import {
+  POLICY_NAMES,
+  affordableCandidates,
+  costScore,
+  getPolicy,
+  topTargetItem,
+  type PolicyContext,
+} from "./policies.js";
+
+const content = loadContent();
+
+function context(over: Partial<WorldState> = {}): PolicyContext {
+  const state: WorldState = { ...newWorld(content, 1), ...over };
+  return { content, state, solution: solve(state, content), nowMs: 0 };
+}
+
+function rich(): PolicyContext {
+  const base = newWorld(content, 1);
+  return context({ stored: { ...base.stored, iron_plate: D(100_000) } });
+}
+
+describe("costScore", () => {
+  it("sums the amounts so candidates can be ordered", () => {
+    expect(costScore(new Map([["a", D(10)], ["b", D(5)]]))).toBe(15);
+    expect(costScore(new Map())).toBe(0);
+  });
+});
+
+describe("affordableCandidates", () => {
+  it("offers nothing when nothing can be paid for", () => {
+    expect(affordableCandidates(context())).toEqual([]);
+  });
+
+  it("offers a machine in every unlocked lane-class, plus storage and QS levels", () => {
+    const candidates = affordableCandidates(rich());
+    const kinds = new Set(candidates.map((c) => c.action.type));
+    expect(kinds.has("BUY_MACHINE")).toBe(true);
+    expect(kinds.has("BUY_STORAGE")).toBe(true);
+    expect(kinds.has("BUY_QS")).toBe(true);
+    // At tier 0 only the iron lane's three classes have unlocked.
+    const machines = candidates.filter((c) => c.action.type === "BUY_MACHINE");
+    expect(machines).toHaveLength(3);
+  });
+
+  it("offers no locked machine class", () => {
+    const candidates = affordableCandidates(rich());
+    for (const candidate of candidates) {
+      if (candidate.action.type !== "BUY_MACHINE") continue;
+      expect(["miner", "smelter", "constructor"]).toContain(candidate.action.machineClass);
+    }
+  });
+
+  it("every candidate it returns is actually applicable", () => {
+    const ctx = rich();
+    for (const candidate of affordableCandidates(ctx)) {
+      const result = apply(ctx.state, ctx.content, candidate.action, ctx.state.seed);
+      expect(result.rejected).toBe(false);
+    }
+  });
+
+  it("scores each candidate by its total cost", () => {
+    const candidates = affordableCandidates(rich());
+    for (const candidate of candidates) {
+      expect(candidate.score).toBe(costScore(candidate.costs));
+      expect(candidate.score).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("topTargetItem", () => {
+  it("is the highest-priority item entry with a live recipe", () => {
+    expect(topTargetItem(context())).toBe("iron_plate");
+  });
+
+  it("skips paused entries", () => {
+    const base = newWorld(content, 1);
+    const ctx = context({
+      priority: base.priority.map((e) => (e.itemId === "iron_plate" ? { ...e, paused: true } : e)),
+    });
+    expect(topTargetItem(ctx)).toBe("iron_ingot");
+  });
+});
+
+describe("getPolicy", () => {
+  it("knows all four of spec E.2's policies", () => {
+    expect([...POLICY_NAMES].sort()).toEqual(["bottleneck", "casual", "greedy", "optimal"]);
+    for (const name of POLICY_NAMES) expect(getPolicy(name).name).toBe(name);
+  });
+
+  it("greedy buys the single cheapest affordable thing", () => {
+    const ctx = rich();
+    const actions = getPolicy("greedy").decide(ctx);
+    expect(actions).toHaveLength(1);
+    const cheapest = affordableCandidates(ctx).reduce((a, b) => (b.score < a.score ? b : a));
+    expect(actions[0]).toEqual(cheapest.action);
+  });
+
+  it("casual checks in three times a day and buys what it can", () => {
+    const ctx = rich();
+    // Three collections a day is spec E.2's lower bound: one 8h window per check-in.
+    expect(getPolicy("casual").intervalMs(ctx)).toBe(content.offlineCapMs);
+    expect(getPolicy("casual").decide(ctx).length).toBeGreaterThan(0);
+  });
+
+  it("casual never reorders priorities or changes modes (spec E.2)", () => {
+    const actions = getPolicy("casual").decide(rich());
+    for (const action of actions) {
+      expect(["REORDER_PRIORITY", "SET_PRIORITY_MODE", "SET_RESERVE"]).not.toContain(action.type);
+    }
+  });
+
+  it("greedy and bottleneck check in at the authored early purchase interval", () => {
+    const ctx = rich();
+    const expected = content.bundle.pacing.purchaseIntervalEarlySeconds * 1000;
+    expect(getPolicy("greedy").intervalMs(ctx)).toBe(expected);
+    expect(getPolicy("bottleneck").intervalMs(ctx)).toBe(expected);
+  });
+
+  it("bottleneck buys exactly what the reporter recommends (spec 4.5, E.2)", () => {
+    const ctx = rich();
+    expect(ctx.solution.bottleneck).toEqual({
+      kind: "recipe",
+      recipeId: "make_plate",
+      limitingTarget: "item:iron_plate",
+      machinesToClear: 1,
+    });
+    const actions = getPolicy("bottleneck").decide(ctx);
+    expect(actions).toEqual([
+      { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+    ]);
+  });
+
+  it("bottleneck does nothing when there is no bottleneck to clear", () => {
+    const base = newWorld(content, 1);
+    // Pausing every item entry leaves the solver with nothing to be limited by.
+    const ctx = context({
+      stored: { ...base.stored, iron_plate: D(100_000) },
+      priority: base.priority.map((e) => (e.kind === "item" ? { ...e, paused: true } : e)),
+    });
+    expect(ctx.solution.bottleneck).toBeNull();
+    expect(getPolicy("bottleneck").decide(ctx)).toEqual([]);
+  });
+
+  it("optimal picks a candidate that does not lower the top target's rate", () => {
+    const ctx = rich();
+    const actions = getPolicy("optimal").decide(ctx);
+    expect(actions).toHaveLength(1);
+    const applied = apply(ctx.state, ctx.content, actions[0]!, ctx.state.seed);
+    if (applied.rejected) throw new Error(applied.reason);
+    const before = ctx.solution.itemRates.get("iron_plate")!.production;
+    const after = solve(applied.state, content).itemRates.get("iron_plate")!.production;
+    expect(after).toBeGreaterThanOrEqual(before - 1e-9);
+  });
+
+  it("every policy returns an empty list rather than throwing when broke", () => {
+    const ctx = context();
+    for (const name of POLICY_NAMES) expect(getPolicy(name).decide(ctx)).toEqual([]);
+  });
+
+  it("capacity is what a purchase actually moves", () => {
+    const ctx = rich();
+    const before = computeCapacity(content, ctx.state).unitsByRecipe.get("make_plate")!;
+    const applied = apply(
+      ctx.state,
+      content,
+      { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+      ctx.state.seed,
+    );
+    if (applied.rejected) throw new Error(applied.reason);
+    expect(computeCapacity(content, applied.state).unitsByRecipe.get("make_plate")!).toBeGreaterThan(
+      before,
+    );
+  });
+});
+```
+
+- [ ] **Step 4: Run it to verify it fails**
+
+Run: `pnpm --filter @manufactory/sim test policies`
+Expected: FAIL — `Cannot find module './policies.js'`.
+
+- [ ] **Step 5: Write the policies**
+
+`apps/sim/src/policies.ts`:
+
+```ts
+// Spec E.2's four policies. Real players sit between greedy and casual; tuning only
+// against optimal produces a game that is brutal for everyone else.
+//
+// The fourth, `bottleneck`, is the one that earns its place: it answers the only
+// question that matters about the game's advice mechanism -- is the advice actually
+// good? If it lands materially worse than greedy, the UI is lying to players and no
+// amount of balance tuning fixes that.
+import {
+  apply,
+  bestUnlockedMark,
+  canAffordBuild,
+  getMark,
+  laneClassKey,
+  levelCostRange,
+  machineCostRange,
+  solve,
+  type Action,
+  type Dec,
+  type IndexedContent,
+  type ItemId,
+  type Solution,
+  type WorldState,
+} from "@manufactory/engine";
+
+export type PolicyName = "optimal" | "greedy" | "casual" | "bottleneck";
+
+export const POLICY_NAMES: readonly PolicyName[] = [
+  "optimal",
+  "greedy",
+  "casual",
+  "bottleneck",
+] as const;
+
+export interface PolicyContext {
+  content: IndexedContent;
+  state: WorldState;
+  solution: Solution;
+  nowMs: number;
+}
+
+export interface Policy {
+  name: PolicyName;
+  /** Simulated milliseconds to advance before the next decision point. */
+  intervalMs(ctx: PolicyContext): number;
+  /** Actions to attempt now. The runner skips any the engine rejects. */
+  decide(ctx: PolicyContext): Action[];
+}
+
+export interface Candidate {
+  action: Action;
+  costs: Map<ItemId, Dec>;
+  /** Total cost, used to order candidates. Lower is cheaper. */
+  score: number;
+  label: string;
+}
+
+/**
+ * A single scalar for a multi-item cost. Exact when a tier's build costs share one
+ * currency, which they do in the fixture, and a stable ordering heuristic otherwise.
+ */
+export function costScore(costs: ReadonlyMap<ItemId, Dec>): number {
+  let total = 0;
+  for (const [, amount] of costs) total += amount.toNumber();
+  return total;
+}
+
+/** The highest-priority unpaused item entry that something can actually produce. */
+export function topTargetItem(ctx: PolicyContext): ItemId | null {
+  for (const entry of ctx.state.priority) {
+    if (entry.paused || entry.kind !== "item" || entry.itemId === null) continue;
+    const recipeId = ctx.state.activeRecipe[entry.itemId];
+    if (recipeId === undefined) continue;
+    // Only a recipe with live capacity is a target anything can be steered toward.
+    if (!ctx.solution.capacity.unitsByRecipe.has(recipeId)) continue;
+    return entry.itemId;
+  }
+  return null;
+}
+
+export function affordableCandidates(ctx: PolicyContext): Candidate[] {
+  const { content, state } = ctx;
+  const candidates: Candidate[] = [];
+
+  const offer = (action: Action, costs: Map<ItemId, Dec>, label: string): void => {
+    if (costs.size === 0) return;
+    if (!canAffordBuild(state, costs)) return;
+    candidates.push({ action, costs, score: costScore(costs), label });
+  };
+
+  for (const key of content.recipesByLaneClass.keys()) {
+    const [lane, machineClass] = key.split("::") as [string, string];
+    const mark = bestUnlockedMark(content, machineClass, state.tier);
+    if (mark === null) continue;
+    const markDef = getMark(content, machineClass, mark);
+    if (!markDef) continue;
+
+    const owned = state.installed[lane]?.[machineClass]?.[mark - 1] ?? 0;
+    offer(
+      { type: "BUY_MACHINE", lane, machineClass, mark, count: 1 },
+      machineCostRange(content, machineClass, mark, owned, 1),
+      `machine:${key}`,
+    );
+  }
+
+  for (const itemId of content.stockItemIds) {
+    const level = state.storageLevel[itemId] ?? 0;
+    if (level >= content.bundle.storage.maxLevel) continue;
+    offer(
+      { type: "BUY_STORAGE", itemId, levels: 1 },
+      levelCostRange(content.bundle.storage, level, 1),
+      `storage:${itemId}`,
+    );
+  }
+
+  for (const lane of content.lanes.keys()) {
+    const level = state.qsLevel[lane] ?? 0;
+    if (level >= content.bundle.quantumStorage.maxLevel) continue;
+    offer(
+      { type: "BUY_QS", lane, levels: 1 },
+      levelCostRange(content.bundle.quantumStorage, level, 1),
+      `qs:${lane}`,
+    );
+  }
+
+  return candidates;
+}
+
+function cheapest(candidates: readonly Candidate[]): Candidate | null {
+  let best: Candidate | null = null;
+  for (const candidate of candidates) {
+    // Ties break on the label, which is derived from ids, so the choice is stable.
+    if (best === null || candidate.score < best.score) best = candidate;
+    else if (candidate.score === best.score && candidate.label < best.label) best = candidate;
+  }
+  return best;
+}
+
+const greedy: Policy = {
+  name: "greedy",
+  intervalMs: (ctx) => ctx.content.bundle.pacing.purchaseIntervalEarlySeconds * 1000,
+  decide: (ctx) => {
+    const pick = cheapest(affordableCandidates(ctx));
+    return pick === null ? [] : [pick.action];
+  },
+};
+
+/**
+ * Spec E.2's lower bound: checks in three times a day, buys whatever it can see, and
+ * never touches the priority list. One check-in per offline window.
+ */
+const casual: Policy = {
+  name: "casual",
+  intervalMs: (ctx) => ctx.content.offlineCapMs,
+  decide: (ctx) => {
+    const actions: Action[] = [];
+    let state = ctx.state;
+    // Buy repeatedly until nothing is affordable, because a casual player who has
+    // been away eight hours spends the whole backlog in one sitting.
+    for (let i = 0; i < 50; i += 1) {
+      const pick = cheapest(affordableCandidates({ ...ctx, state }));
+      if (pick === null) break;
+      const result = apply(state, ctx.content, pick.action, state.seed);
+      if (result.rejected) break;
+      state = result.state;
+      actions.push(pick.action);
+    }
+    return actions;
+  },
+};
+
+const bottleneck: Policy = {
+  name: "bottleneck",
+  intervalMs: (ctx) => ctx.content.bundle.pacing.purchaseIntervalEarlySeconds * 1000,
+  decide: (ctx) => {
+    const report = ctx.solution.bottleneck;
+    if (report === null) return [];
+
+    const recipeId = report.kind === "recipe" ? report.recipeId : report.generatorRecipeId;
+    if (recipeId === null) return [];
+    const recipe = ctx.content.recipes.get(recipeId);
+    if (!recipe) return [];
+
+    const mark = bestUnlockedMark(ctx.content, recipe.machineClass, ctx.state.tier);
+    if (mark === null) return [];
+
+    const owned =
+      ctx.state.installed[recipe.lane]?.[recipe.machineClass]?.[mark - 1] ?? 0;
+
+    // Buy what the reporter says, then fall back to what is affordable, so the
+    // policy still makes progress rather than stalling on an expensive quote.
+    for (let count = Math.max(1, report.machinesToClear); count >= 1; count -= 1) {
+      const costs = machineCostRange(ctx.content, recipe.machineClass, mark, owned, count);
+      if (canAffordBuild(ctx.state, costs)) {
+        return [
+          {
+            type: "BUY_MACHINE",
+            lane: recipe.lane,
+            machineClass: recipe.machineClass,
+            mark,
+            count,
+          },
+        ];
+      }
+    }
+    return [];
+  },
+};
+
+/**
+ * Greedy with one-step lookahead, and named `optimal` because spec E.2 calls the
+ * upper-bound policy that. It is a proxy, not a true optimum: a real optimum would
+ * search the whole purchase sequence. It is still strictly better informed than
+ * greedy, which is the comparison the policy exists to provide.
+ */
+const optimal: Policy = {
+  name: "optimal",
+  intervalMs: (ctx) => ctx.content.bundle.pacing.purchaseIntervalEarlySeconds * 1000,
+  decide: (ctx) => {
+    const target = topTargetItem(ctx);
+    const candidates = affordableCandidates(ctx);
+    if (candidates.length === 0) return [];
+    if (target === null) {
+      const pick = cheapest(candidates);
+      return pick === null ? [] : [pick.action];
+    }
+
+    const before = ctx.solution.itemRates.get(target)?.production ?? 0;
+    let best: { action: Action; value: number; label: string } | null = null;
+
+    for (const candidate of candidates) {
+      const applied = apply(ctx.state, ctx.content, candidate.action, ctx.state.seed);
+      if (applied.rejected) continue;
+      const after = solve(applied.state, ctx.content).itemRates.get(target)?.production ?? 0;
+      const value = (after - before) / Math.max(1, candidate.score);
+      if (
+        best === null ||
+        value > best.value ||
+        (value === best.value && candidate.label < best.label)
+      ) {
+        best = { action: candidate.action, value, label: candidate.label };
+      }
+    }
+
+    if (best === null) return [];
+    // Nothing helped the top target, so fall back to the cheapest capacity there is:
+    // a purchase that does nothing today may unblock a tier tomorrow.
+    if (best.value <= 0) {
+      const pick = cheapest(candidates);
+      return pick === null ? [] : [pick.action];
+    }
+    return [best.action];
+  },
+};
+
+const POLICIES: Record<PolicyName, Policy> = { optimal, greedy, casual, bottleneck };
+
+export function getPolicy(name: PolicyName): Policy {
+  return POLICIES[name];
+}
+```
+
+- [ ] **Step 6: Run the policy test**
+
+Run: `pnpm --filter @manufactory/sim test policies`
+Expected: PASS.
+
+- [ ] **Step 7: Write the failing runner test**
+
+`apps/sim/src/run.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { loadContent } from "./bootstrap.js";
+import { POLICY_NAMES } from "./policies.js";
+import { authoredREff, formatReport, observedREff } from "./report.js";
+import { runSimulation } from "./run.js";
+
+const content = loadContent();
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+describe("loadContent", () => {
+  it("loads and indexes the fixture bundle", () => {
+    expect(content.bundle.version).toBe("fixture.v1");
+    expect(content.recipes.size).toBeGreaterThan(0);
+  });
+});
+
+describe("authoredREff", () => {
+  it("is the cost ratio over the per-machine multiplier growth (spec D3)", () => {
+    // Miner: r = 1.09, ladder x1.5 every 10, so m = 1.5^(1/10) = 1.0413797 and
+    // r_eff = 1.09 / 1.0413797 = 1.04669. Spec D3 quotes 1.047.
+    expect(authoredREff(content, "miner")).toBeCloseTo(1.04669, 4);
+    // Refinery: r = 1.12 on the same ladder -> 1.12 / 1.0413797 = 1.07549.
+    expect(authoredREff(content, "refinery")).toBeCloseTo(1.07549, 4);
+  });
+
+  it("stays above 1, which is spec D3's runaway invariant", () => {
+    for (const machineClass of content.machineClasses.keys()) {
+      expect(authoredREff(content, machineClass)).toBeGreaterThan(1);
+    }
+  });
+});
+
+describe("observedREff", () => {
+  it("matches the authored value when the run spans a whole ladder interval", () => {
+    // 10 machines bought on the miner's curve: cost grows 1.09^10 and the ladder
+    // steps once, x1.5, so the observed r_eff is exactly 1.09 / 1.5^(1/10).
+    expect(observedREff(1.09, 1.5, 10, 0, 10)).toBeCloseTo(1.04669, 4);
+  });
+
+  it("is null when too little was bought to measure", () => {
+    expect(observedREff(1.09, 1.5, 10, 4, 4)).toBeNull();
+  });
+});
+
+describe("runSimulation", () => {
+  it.each([...POLICY_NAMES])("%s reaches tier 1 and reports it", (policy) => {
+    const report = runSimulation({
+      policy,
+      seed: 42,
+      untilTier: 1,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    expect(report.policy).toBe(policy);
+    expect(report.contentVersion).toBe("fixture.v1");
+    expect(report.finished).toBe(true);
+    expect(report.reachedTier).toBeGreaterThanOrEqual(1);
+    expect(report.tierTimes[0]!.tier).toBe(1);
+    expect(report.tierTimes[0]!.atMs).toBeGreaterThan(0);
+  });
+
+  it("reports times in collections, one collection per offline window (spec B.7)", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    for (const mark of report.tierTimes) {
+      expect(mark.collections).toBeCloseTo(mark.atMs / content.offlineCapMs, 9);
+    }
+    expect(report.collections).toBeCloseTo(report.simulatedMs / content.offlineCapMs, 9);
+  });
+
+  it("reports a finite max dead time no larger than the run (spec 16.6)", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    expect(Number.isFinite(report.maxDeadTimeMs)).toBe(true);
+    expect(report.maxDeadTimeMs).toBeGreaterThanOrEqual(0);
+    expect(report.maxDeadTimeMs).toBeLessThanOrEqual(report.simulatedMs);
+  });
+
+  it("reports which recipe was binding and for how long (spec E.2)", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    expect(report.bindingConstraints.length).toBeGreaterThan(0);
+    let total = 0;
+    for (const row of report.bindingConstraints) {
+      expect(row.boundMs).toBeGreaterThan(0);
+      total += row.boundMs;
+    }
+    expect(total).toBeLessThanOrEqual(report.simulatedMs + 1);
+    // Sorted longest-binding first, so the report reads top-down.
+    for (let i = 1; i < report.bindingConstraints.length; i += 1) {
+      expect(report.bindingConstraints[i - 1]!.boundMs).toBeGreaterThanOrEqual(
+        report.bindingConstraints[i]!.boundMs,
+      );
+    }
+  });
+
+  it("stops at the simulated-time budget rather than running forever", () => {
+    const report = runSimulation({
+      policy: "casual",
+      seed: 1,
+      untilTier: 99,
+      maxSimMs: 60 * 60 * 1000,
+    });
+    expect(report.finished).toBe(false);
+    expect(report.simulatedMs).toBeLessThanOrEqual(60 * 60 * 1000 + content.offlineCapMs);
+  });
+
+  it("is deterministic for a given seed and policy (spec E.4)", () => {
+    const options = {
+      policy: "greedy" as const,
+      seed: 7,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    };
+    const a = runSimulation(options);
+    const b = runSimulation(options);
+    expect(b.tierTimes).toEqual(a.tierTimes);
+    expect(b.purchases).toBe(a.purchases);
+    expect(b.simulatedMs).toBe(a.simulatedMs);
+  });
+
+  it("casual buys nothing before its first check-in", () => {
+    // Its first decision point is at t = 0 with an empty warehouse, and the next is
+    // a whole offline window later -- by which time tier 1 has already landed.
+    const report = runSimulation({
+      policy: "casual",
+      seed: 42,
+      untilTier: 1,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    expect(report.purchases).toBe(0);
+  });
+
+  it("greedy buys before it reaches tier 1", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      seed: 42,
+      untilTier: 1,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    expect(report.purchases).toBeGreaterThan(0);
+  });
+});
+
+describe("formatReport", () => {
+  it("renders every section a human needs", () => {
+    const text = formatReport(
+      runSimulation({ policy: "greedy", seed: 42, untilTier: 2, maxSimMs: THIRTY_DAYS_MS }),
+    );
+    expect(text).toContain("greedy");
+    expect(text).toContain("fixture.v1");
+    expect(text).toContain("collections");
+    expect(text).toContain("dead time");
+    expect(text).toContain("r_eff");
+  });
+});
+```
+
+- [ ] **Step 8: Run it to verify it fails**
+
+Run: `pnpm --filter @manufactory/sim test run`
+Expected: FAIL — `Cannot find module './report.js'`.
+
+- [ ] **Step 9: Write the report module**
+
+`apps/sim/src/report.ts`:
+
+```ts
+// Spec E.2's report, in collections rather than hours per spec 16.2: with an 8h
+// offline cap a player gets about three meaningful collections a day, so a tier
+// costing 40 collections is a two-week tier no matter what the hour count claims.
+//
+// This file is where Math.pow becomes legal again. r_eff = r / m needs
+// m = step^(1/interval), a fractional power, which spec E.4 bans from
+// state-affecting paths -- and this is a reporting figure that never re-enters
+// state, which is exactly why the engine's economy module does not compute it.
+import type { IndexedContent, LaneId, MachineClassId } from "@manufactory/engine";
+import type { PolicyName } from "./policies.js";
+
+export interface TierMark {
+  tier: number;
+  atMs: number;
+  collections: number;
+}
+
+export interface REffRow {
+  lane: LaneId;
+  machineClass: MachineClassId;
+  authored: number;
+  observed: number | null;
+}
+
+export interface RunReport {
+  policy: PolicyName;
+  contentVersion: string;
+  seed: number;
+  reachedTier: number;
+  finished: boolean;
+  simulatedMs: number;
+  collections: number;
+  tierTimes: TierMark[];
+  /** Spec 16.6's pace-decay detector, as a hard number. */
+  maxDeadTimeMs: number;
+  purchases: number;
+  bindingConstraints: { recipeId: string; boundMs: number }[];
+  rEff: REffRow[];
+}
+
+/** r_eff = r / m, where m is the ladder's multiplier growth per machine (spec D3). */
+export function authoredREff(content: IndexedContent, machineClass: MachineClassId): number {
+  const cls = content.machineClasses.get(machineClass);
+  if (!cls) return Number.NaN;
+  const m = Math.pow(cls.ladder.step, 1 / cls.ladder.interval);
+  return cls.costRatio / m;
+}
+
+/**
+ * The same figure measured over a run: cost growth per machine divided by
+ * multiplier growth per machine, across the machines actually bought.
+ *
+ * Counts are the mark-weighted ladder input, which is exact while a run stays on one
+ * mark and an approximation across a mark boundary, where the cost curve resets but
+ * the ladder does not (spec B.2). Phase 2's calibration measures per-mark segments.
+ */
+export function observedREff(
+  costRatio: number,
+  ladderStep: number,
+  ladderInterval: number,
+  fromCount: number,
+  toCount: number,
+): number | null {
+  const delta = toCount - fromCount;
+  if (delta <= 0) return null;
+  const costGrowth = Math.pow(costRatio, delta);
+  const stepsBefore = Math.floor(fromCount / ladderInterval);
+  const stepsAfter = Math.floor(toCount / ladderInterval);
+  const multiplierGrowth = Math.pow(ladderStep, stepsAfter - stepsBefore);
+  return Math.pow(costGrowth / multiplierGrowth, 1 / delta);
+}
+
+function duration(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${seconds % 60}s`;
+}
+
+export function formatReport(report: RunReport): string {
+  const lines: string[] = [];
+  lines.push(
+    `policy ${report.policy}  content ${report.contentVersion}  seed ${report.seed}  ` +
+      `${report.finished ? "finished" : "budget exhausted"}`,
+  );
+  lines.push(
+    `reached tier ${report.reachedTier} in ${report.collections.toFixed(2)} collections ` +
+      `(${duration(report.simulatedMs)}), ${report.purchases} purchases`,
+  );
+  lines.push("");
+  lines.push("tier   collections   elapsed");
+  for (const mark of report.tierTimes) {
+    lines.push(
+      `${String(mark.tier).padStart(4)}   ${mark.collections.toFixed(2).padStart(11)}   ` +
+        duration(mark.atMs),
+    );
+  }
+  lines.push("");
+  lines.push(`max dead time between meaningful events: ${duration(report.maxDeadTimeMs)}`);
+  lines.push("");
+  lines.push("binding constraint            time bound");
+  for (const row of report.bindingConstraints.slice(0, 8)) {
+    lines.push(`${row.recipeId.padEnd(28)}  ${duration(row.boundMs)}`);
+  }
+  lines.push("");
+  lines.push("lane / class                  r_eff authored   observed");
+  for (const row of report.rEff) {
+    lines.push(
+      `${`${row.lane}/${row.machineClass}`.padEnd(28)}  ${row.authored.toFixed(4).padStart(15)}   ` +
+        (row.observed === null ? "       -" : row.observed.toFixed(4).padStart(8)),
+    );
+  }
+  return lines.join("\n");
+}
+```
+
+- [ ] **Step 10: Write the runner**
+
+`apps/sim/src/run.ts`:
+
+```ts
+// Spec E.2's batch mode. One binary, two modes, both driving the identical engine
+// the real game uses -- there is no second implementation to keep in sync (spec
+// 16.3), and spec A.2's reducers are what make that structural rather than a
+// discipline.
+import {
+  apply,
+  installedAt,
+  resolve,
+  solve,
+  type IndexedContent,
+  type LaneId,
+  type MachineClassId,
+  type WorldState,
+} from "@manufactory/engine";
+import { loadContent, newWorld } from "./bootstrap.js";
+import { getPolicy, type PolicyName } from "./policies.js";
+import { authoredREff, observedREff, type REffRow, type RunReport, type TierMark } from "./report.js";
+
+export interface RunOptions {
+  policy: PolicyName;
+  contentDir?: string;
+  seed: number;
+  /** Stop once this tier is reached. */
+  untilTier: number;
+  /** Stop after this much simulated time regardless. */
+  maxSimMs: number;
+}
+
+interface ClassSlot {
+  lane: LaneId;
+  machineClass: MachineClassId;
+  startCount: number;
+}
+
+function classSlots(content: IndexedContent, state: WorldState): ClassSlot[] {
+  const slots: ClassSlot[] = [];
+  const seen = new Set<string>();
+  for (const key of content.recipesByLaneClass.keys()) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const [lane, machineClass] = key.split("::") as [LaneId, MachineClassId];
+    let startCount = 0;
+    const cls = content.machineClasses.get(machineClass);
+    for (const mark of cls?.marks ?? []) {
+      startCount += installedAt(state, lane, machineClass, mark.mark) * mark.rateMultiplier;
+    }
+    slots.push({ lane, machineClass, startCount });
+  }
+  return slots;
+}
+
+export function runSimulation(options: RunOptions): RunReport {
+  const content = loadContent(options.contentDir);
+  const policy = getPolicy(options.policy);
+
+  let state = newWorld(content, options.seed);
+  const slots = classSlots(content, state);
+
+  let nowMs = 0;
+  let purchases = 0;
+  let lastEventMs = 0;
+  let maxDeadTimeMs = 0;
+  const tierTimes: TierMark[] = [];
+  const boundMsByRecipe = new Map<string, number>();
+
+  const markEvent = (atMs: number): void => {
+    maxDeadTimeMs = Math.max(maxDeadTimeMs, atMs - lastEventMs);
+    lastEventMs = atMs;
+  };
+
+  while (nowMs < options.maxSimMs && state.tier < options.untilTier) {
+    const solution = solve(state, content);
+    const ctx = { content, state, solution, nowMs };
+
+    for (const action of policy.decide(ctx)) {
+      const result = apply(state, content, action, state.seed);
+      if (result.rejected) continue;
+      state = result.state;
+      purchases += 1;
+      markEvent(nowMs);
+    }
+
+    // Re-solve after the purchases so the binding-constraint accounting describes
+    // the interval that is about to be simulated, not the one before it.
+    const settled = solve(state, content);
+    const stepMs = Math.min(
+      Math.max(1_000, policy.intervalMs({ ...ctx, state, solution: settled })),
+      options.maxSimMs - nowMs,
+    );
+    if (stepMs <= 0) break;
+
+    if (settled.bottleneck !== null) {
+      const id =
+        settled.bottleneck.kind === "recipe"
+          ? settled.bottleneck.recipeId
+          : `power:${settled.bottleneck.generatorRecipeId ?? "none"}`;
+      boundMsByRecipe.set(id, (boundMsByRecipe.get(id) ?? 0) + stepMs);
+    }
+
+    const advanced = resolve(state, content, stepMs);
+    state = advanced.state;
+    nowMs += stepMs;
+
+    for (const tier of advanced.summary.tiersUnlocked) {
+      const event = advanced.events.find((e) => e.kind === "milestone" && e.tier === tier);
+      const atMs = event?.atMs ?? nowMs;
+      tierTimes.push({ tier, atMs, collections: atMs / content.offlineCapMs });
+      markEvent(atMs);
+    }
+  }
+  markEvent(nowMs);
+
+  const rEff: REffRow[] = slots.map((slot) => {
+    const cls = content.machineClasses.get(slot.machineClass)!;
+    let endCount = 0;
+    for (const mark of cls.marks) {
+      endCount += installedAt(state, slot.lane, slot.machineClass, mark.mark) * mark.rateMultiplier;
+    }
+    return {
+      lane: slot.lane,
+      machineClass: slot.machineClass,
+      authored: authoredREff(content, slot.machineClass),
+      observed: observedREff(
+        cls.costRatio,
+        cls.ladder.step,
+        cls.ladder.interval,
+        slot.startCount,
+        endCount,
+      ),
+    };
+  });
+
+  const bindingConstraints = [...boundMsByRecipe.entries()]
+    .map(([recipeId, boundMs]) => ({ recipeId, boundMs }))
+    // Longest first, ties broken by id so the report is stable (spec A.5).
+    .sort((a, b) => (b.boundMs === a.boundMs ? (a.recipeId < b.recipeId ? -1 : 1) : b.boundMs - a.boundMs));
+
+  return {
+    policy: options.policy,
+    contentVersion: content.bundle.version,
+    seed: options.seed,
+    reachedTier: state.tier,
+    finished: state.tier >= options.untilTier,
+    simulatedMs: nowMs,
+    collections: nowMs / content.offlineCapMs,
+    tierTimes,
+    maxDeadTimeMs,
+    purchases,
+    bindingConstraints,
+    rEff,
+  };
+}
+```
+
+- [ ] **Step 11: Write the CLI**
+
+`apps/sim/src/bin.ts`:
+
+```ts
+#!/usr/bin/env node
+// sim run --policy greedy --content <dir> --until tier:10 --report json
+// sim run --policy casual --seed 42
+// sim play --seed 42
+import { parseArgs } from "node:util";
+import { argv, exit, stderr, stdout } from "node:process";
+import { POLICY_NAMES, type PolicyName } from "./policies.js";
+import { formatReport } from "./report.js";
+import { runSimulation } from "./run.js";
+
+const USAGE = `usage:
+  sim run  [--policy greedy|casual|optimal|bottleneck] [--content <dir>]
+           [--seed <n>] [--until tier:<n>] [--max-days <n>] [--report text|json]
+  sim play [--content <dir>] [--seed <n>]
+`;
+
+function parseUntilTier(value: string | undefined): number {
+  if (value === undefined) return 1;
+  const match = /^tier:(\d+)$/.exec(value);
+  if (!match) throw new Error(`--until must look like "tier:3", got "${value}"`);
+  return Number(match[1]);
+}
+
+async function main(): Promise<number> {
+  const mode = argv[2];
+  if (mode !== "run" && mode !== "play") {
+    stderr.write(USAGE);
+    return 2;
+  }
+
+  const { values } = parseArgs({
+    args: argv.slice(3),
+    options: {
+      policy: { type: "string", default: "greedy" },
+      content: { type: "string" },
+      seed: { type: "string", default: "42" },
+      until: { type: "string", default: "tier:1" },
+      "max-days": { type: "string", default: "365" },
+      report: { type: "string", default: "text" },
+    },
+  });
+
+  if (mode === "play") {
+    const { startPlay } = await import("./play.js");
+    await startPlay({ contentDir: values.content, seed: Number(values.seed) });
+    return 0;
+  }
+
+  const policy = values.policy as PolicyName;
+  if (!POLICY_NAMES.includes(policy)) {
+    stderr.write(`unknown policy "${values.policy}"\n${USAGE}`);
+    return 2;
+  }
+
+  const report = runSimulation({
+    policy,
+    contentDir: values.content,
+    seed: Number(values.seed),
+    untilTier: parseUntilTier(values.until),
+    maxSimMs: Number(values["max-days"]) * 24 * 60 * 60 * 1000,
+  });
+
+  stdout.write(
+    values.report === "json"
+      ? `${JSON.stringify(report, null, 2)}\n`
+      : `${formatReport(report)}\n`,
+  );
+  return report.finished ? 0 : 1;
+}
+
+main().then(
+  (code) => exit(code),
+  (error: unknown) => {
+    stderr.write(`${String(error)}\n`);
+    exit(2);
+  },
+);
+```
+
+`./play.js` arrives in Task 16. Until then `sim play` fails at the dynamic import with a clear module-not-found error, and `sim run` — everything this task is tested on — works. The import is dynamic precisely so `sim run` does not pay Ink's startup cost.
+
+- [ ] **Step 12: Run the tests**
+
+Run:
+
+```bash
+pnpm --filter @manufactory/sim test
+pnpm lint && pnpm typecheck
+```
+
+Expected: PASS. Typecheck will fail on `./play.js` not existing; add `apps/sim/src/play.tsx` as a one-line stub now and let Task 16 replace it:
+
+```tsx
+export async function startPlay(_options: { contentDir?: string; seed: number }): Promise<void> {
+  throw new Error("sim play arrives in Task 16");
+}
+```
+
+- [ ] **Step 13: Run the simulator by hand**
+
+Run:
+
+```bash
+pnpm --filter @manufactory/sim run sim run --policy greedy --until tier:2 --report text
+pnpm --filter @manufactory/sim run sim run --policy bottleneck --until tier:2 --report json
+```
+
+Expected: a report naming the policy, the tier times in collections, the max dead time, the binding constraints, and the authored-versus-observed `r_eff` per lane-class. Both should reach tier 2. If `bottleneck` lands materially worse than `greedy`, that is spec E.2's stated warning sign, not a bug in this task — record the numbers and raise it.
+
+- [ ] **Step 14: Add the simulator to CI**
+
+In `.github/workflows/ci.yml`, add after the `pnpm content:check` step:
+
+```yaml
+      - run: pnpm --filter @manufactory/sim run sim:ci
+```
+
+- [ ] **Step 15: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add apps/sim and sim run with its four policies
+
+Spec E.2's batch mode over the identical engine the game uses, so there is
+no second implementation to keep in sync. Times are reported in
+collections rather than hours per spec 16.2, because with an 8h cap a tier
+costing 40 collections is a two-week tier whatever the hour count says.
+The fourth policy, bottleneck, exists to answer whether the game's advice
+is actually good: if it lands materially worse than greedy, the UI is
+lying to players. r_eff lives here rather than in the engine because it
+needs a fractional power, which spec E.4 bans from state-affecting paths.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016rmcUbYFdRwjnpEmXWrbTB
+EOF
+)"
+```
+
+---
+
+### Task 16: `sim play` — the Ink terminal client, with `explain` and `assert`
+
+**Files:**
+- Create: `apps/sim/src/commands.ts`
+- Replace: `apps/sim/src/play.tsx` (Task 15 left a one-line stub)
+- Test: `apps/sim/src/commands.test.ts`
+
+**Interfaces:**
+- Consumes, from `@manufactory/engine`: `type IndexedContent`, `type ItemId`, `type LaneId`, `type RecipeId`, `POWER_ITEM`, `getMark`, `isLiveRecipe`; `type WorldState`, `installedAt`, `installedMachines`, `serializeWorld`, `deserializeWorld`; `bestUnlockedMark`, `computeCapacity`; `liquid`, `liquidCap`, `itemStateTag`; `computeExpansion`; `solve`, `type Solution`; `resolve`; `apply`, `type Action`; `D`, `format`. From `./bootstrap.js`: `loadContent`, `newWorld`. From `./policies.js`: nothing.
+- Produces:
+  - `commands.ts`: `interface Session { content: IndexedContent; state: WorldState; solution: Solution; nowMs: number; actionLog: Action[]; assertions: string[] }`, `interface CommandResult { session: Session; output: string[]; quit: boolean }`, `type AssertOutcome = { ok: boolean; text: string }`, `newSession(content: IndexedContent, seed: number): Session`, `refresh(session: Session): Session`, `parseDuration(text: string): number | null`, `runCommand(session: Session, line: string): CommandResult`, `renderStatus(session: Session): string[]`, `renderLane(session: Session, laneId: LaneId): string[]`, `renderPriority(session: Session): string[]`, `explain(session: Session, itemId: ItemId): string[]`, `evaluateAssert(session: Session, expression: string): AssertOutcome`, `const HELP: readonly string[]`
+  - `play.tsx`: `startPlay(options: { contentDir?: string; seed: number }): Promise<void>`
+
+Spec 16.3 is blunt that play mode "is not a developer-only tool… it will get more use than the batch mode", and spec E.3 adds two commands beyond that list:
+
+- **`explain <item>`** — why a rate is what it is: which constraint bound it, which of spec C.2's three states each upstream item is in, and what the fixed point pinned in what order. Debugging the spec C.3 solver interactively will be the most-used feature in the tool, which is why `solve` returns `pinOrder` at all.
+- **`assert <expr>`** — turns an exploratory session into a committed regression test without leaving the REPL.
+
+**Time warp is the first-class verb.** `advance 8h`, `advance 3d`, `advance until tier:3`. Spec 16.3: this is the entire point — you can play eight months in an afternoon and feel where the game drags.
+
+**Full action parity comes for free** (spec A.2): every command routes through the same `apply` reducers the Phase 3 API will call, so a divergence between what is possible here and in the game cannot be expressed.
+
+All the logic lives in `commands.ts` as pure functions over a `Session`. `play.tsx` is a thin Ink shell that reads a line, calls `runCommand`, and appends the output — so the whole surface is unit-testable without rendering a terminal, and the tests in this task exercise `commands.ts` directly.
+
+- [ ] **Step 1: Write the failing command test**
+
+`apps/sim/src/commands.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { D, installedAt, type WorldState } from "@manufactory/engine";
+import { loadContent } from "./bootstrap.js";
+import {
+  evaluateAssert,
+  explain,
+  newSession,
+  parseDuration,
+  refresh,
+  renderLane,
+  renderPriority,
+  renderStatus,
+  runCommand,
+  type Session,
+} from "./commands.js";
+
+const content = loadContent();
+
+function session(): Session {
+  return newSession(content, 42);
+}
+
+function rich(): Session {
+  const base = session();
+  const state: WorldState = { ...base.state, stored: { ...base.state.stored, iron_plate: D(100_000) } };
+  return refresh({ ...base, state });
+}
+
+function run(s: Session, line: string): Session {
+  const result = runCommand(s, line);
+  return result.session;
+}
+
+describe("parseDuration", () => {
+  it("understands seconds, minutes, hours and days", () => {
+    expect(parseDuration("90s")).toBe(90_000);
+    expect(parseDuration("45m")).toBe(2_700_000);
+    expect(parseDuration("8h")).toBe(28_800_000);
+    expect(parseDuration("3d")).toBe(259_200_000);
+  });
+
+  it("accepts a decimal quantity", () => {
+    expect(parseDuration("1.5h")).toBe(5_400_000);
+  });
+
+  it("returns null for anything else", () => {
+    for (const bad of ["8", "h", "8w", "", "-3h", "eight hours"]) {
+      expect(parseDuration(bad)).toBeNull();
+    }
+  });
+});
+
+describe("status and lane views", () => {
+  it("renders the tier, the grid, and the bottleneck", () => {
+    const text = renderStatus(session()).join("\n");
+    expect(text).toContain("tier 0");
+    expect(text).toContain("MW");
+    // Spec 4.5: exactly one bottleneck, stated as a consequence and a fix.
+    expect(text).toContain("make_plate");
+    expect(text).toContain("1 more");
+  });
+
+  it("renders a lane with a rate and a storage readout per item", () => {
+    const lines = renderLane(session(), "iron");
+    expect(lines.join("\n")).toContain("Iron Plate");
+    expect(lines.join("\n")).toMatch(/\/s/);
+    expect(lines.join("\n")).toMatch(/EMPTY|FLOWING|FULL/);
+  });
+
+  it("renders the priority list in order with its modes", () => {
+    const lines = renderPriority(session());
+    expect(lines[0]).toContain("power");
+    expect(lines.join("\n")).toContain("iron_plate");
+    expect(lines.join("\n")).toContain("guaranteed");
+  });
+
+  it("reports an unknown lane rather than throwing", () => {
+    const result = runCommand(session(), "lane ghost");
+    expect(result.output.join("\n")).toMatch(/unknown lane/i);
+  });
+});
+
+describe("action commands route through the engine reducers (spec A.2)", () => {
+  it("buys, dismantles, and records the action log", () => {
+    let s = rich();
+    s = run(s, "buy constructor 2");
+    expect(installedAt(s.state, "iron", "constructor", 1)).toBe(3);
+    expect(s.actionLog.at(-1)).toEqual({
+      type: "BUY_MACHINE",
+      lane: "iron",
+      machineClass: "constructor",
+      mark: 1,
+      count: 2,
+    });
+    s = run(s, "dismantle constructor 2");
+    expect(installedAt(s.state, "iron", "constructor", 1)).toBe(1);
+  });
+
+  it("defaults count to 1 and picks the best unlocked mark", () => {
+    const s = run(rich(), "buy miner");
+    expect(installedAt(s.state, "iron", "miner", 1)).toBe(3);
+  });
+
+  it("honours an explicit lane and mark", () => {
+    let s = rich();
+    s = run(s, "tier 1");
+    s = run(s, "buy miner 1 --mark 2");
+    expect(installedAt(s.state, "iron", "miner", 2)).toBe(1);
+  });
+
+  it("surfaces a rejection instead of applying it", () => {
+    const result = runCommand(session(), "buy constructor 1");
+    expect(result.output.join("\n")).toMatch(/afford/i);
+    expect(result.session.actionLog).toHaveLength(0);
+  });
+
+  it("assigns, selects, reserves, and buys storage and Quantum Storage", () => {
+    let s = rich();
+    s = run(s, "buy constructor 2");
+    s = run(s, "assign make_plate 3");
+    expect(s.state.assignment.make_plate).toBe(3);
+    s = run(s, "select iron_plate make_plate");
+    expect(s.state.activeRecipe.iron_plate).toBe("make_plate");
+    s = run(s, "reserve iron_ore 0.25");
+    expect(s.state.reserve.iron_ore).toBe(0.25);
+    s = run(s, "storage iron_ore 2");
+    expect(s.state.storageLevel.iron_ore).toBe(2);
+    s = run(s, "qs iron 1");
+    expect(s.state.qsLevel.iron).toBe(1);
+  });
+
+  it("taps and reorders and re-modes the priority list", () => {
+    let s = rich();
+    s = run(s, "tap 5");
+    expect(s.state.tapStacks).toBe(5);
+    const before = s.state.priority.map((e) => e.id);
+    s = run(s, `priority move ${before.at(-1)!} 1`);
+    expect(s.state.priority[0]!.id).toBe(before.at(-1));
+    s = run(s, "priority mode item:iron_ore share 3");
+    const entry = s.state.priority.find((e) => e.id === "item:iron_ore")!;
+    expect(entry.mode).toBe("share");
+    expect(entry.share).toBe(3);
+    s = run(s, "priority pause item:iron_ore on");
+    expect(s.state.priority.find((e) => e.id === "item:iron_ore")!.paused).toBe(true);
+  });
+
+  it("upgrades a mark in one command (spec D.1)", () => {
+    let s = rich();
+    s = run(s, "tier 1");
+    // --mark 1 is required: at tier 1 the default is the best unlocked mark, Mk2.
+    s = run(s, "buy miner 43 --mark 1");
+    expect(installedAt(s.state, "iron", "miner", 1)).toBe(45);
+    s = run(s, "upgrade miner");
+    expect(installedAt(s.state, "iron", "miner", 1)).toBe(0);
+    expect(installedAt(s.state, "iron", "miner", 2)).toBe(15);
+  });
+});
+
+describe("advance — time warp as a first-class verb (spec 16.3)", () => {
+  it("advances by a duration and reports what happened", () => {
+    const result = runCommand(session(), "advance 1m");
+    expect(result.session.nowMs).toBe(60_000);
+    expect(result.session.state.lastResolvedAt).toBe(60_000);
+    // 1/3 plate per second for 60 seconds.
+    expect(result.session.state.stored.iron_plate!.toNumber()).toBeCloseTo(20, 6);
+  });
+
+  it("crosses a milestone and says so", () => {
+    // Tier 1 needs 200 plate at 1/3 per second, so 600 seconds; 11 minutes clears it
+    // with margin rather than landing exactly on the float boundary.
+    const result = runCommand(session(), "advance 11m");
+    expect(result.session.state.tier).toBe(1);
+    expect(result.output.join("\n")).toMatch(/tier 1/i);
+  });
+
+  it("advances until a tier is reached", () => {
+    const result = runCommand(session(), "advance until tier:1");
+    expect(result.session.state.tier).toBeGreaterThanOrEqual(1);
+  });
+
+  it("rejects a duration it cannot parse", () => {
+    const result = runCommand(session(), "advance soon");
+    expect(result.output.join("\n")).toMatch(/duration/i);
+    expect(result.session.nowMs).toBe(0);
+  });
+});
+
+describe("explain (spec E.3)", () => {
+  it("names the rate, the item state, and every producer and consumer", () => {
+    const text = explain(session(), "iron_ingot").join("\n");
+    expect(text).toContain("iron_ingot");
+    expect(text).toContain("EMPTY");
+    expect(text).toContain("smelt_iron");
+    expect(text).toContain("make_plate");
+    expect(text).toMatch(/clock/i);
+  });
+
+  it("reports what the fixed point pinned, in order", () => {
+    const text = explain(session(), "iron_plate").join("\n");
+    expect(text).toMatch(/pinned/i);
+    expect(text).toContain("iron_ore");
+  });
+
+  it("names the binding constraint for the item's own target", () => {
+    expect(explain(session(), "iron_plate").join("\n")).toContain("make_plate");
+  });
+
+  it("reports an unknown item rather than throwing", () => {
+    expect(explain(session(), "ghost").join("\n")).toMatch(/unknown item/i);
+  });
+
+  it("traces an item back to its raw extraction cost (spec F.1's Handbook)", () => {
+    // One plate is 1.5 ingot is 1.5 ore.
+    expect(explain(session(), "iron_plate").join("\n")).toContain("1.5");
+  });
+});
+
+describe("assert (spec E.3)", () => {
+  it("evaluates a rate comparison", () => {
+    const s = session();
+    expect(evaluateAssert(s, "rate(iron_plate) > 0.3").ok).toBe(true);
+    expect(evaluateAssert(s, "rate(iron_plate) > 10").ok).toBe(false);
+  });
+
+  it("evaluates stockpiles, clocks, levels and machine counts", () => {
+    const s = run(rich(), "buy constructor 2");
+    expect(evaluateAssert(s, "stored(iron_plate) > 1000").ok).toBe(true);
+    expect(evaluateAssert(s, "liquid(iron_ore) == 0").ok).toBe(true);
+    expect(evaluateAssert(s, "clock(make_plate) <= 1").ok).toBe(true);
+    expect(evaluateAssert(s, "machines(iron,constructor) >= 3").ok).toBe(true);
+    expect(evaluateAssert(s, "level(iron_ore) == 0").ok).toBe(true);
+  });
+
+  it("evaluates the bare scalars", () => {
+    const s = session();
+    expect(evaluateAssert(s, "tier == 0").ok).toBe(true);
+    expect(evaluateAssert(s, "power >= 0.99").ok).toBe(true);
+    expect(evaluateAssert(s, "taps == 0").ok).toBe(true);
+  });
+
+  it("handles every comparison operator", () => {
+    const s = session();
+    expect(evaluateAssert(s, "tier < 1").ok).toBe(true);
+    expect(evaluateAssert(s, "tier <= 0").ok).toBe(true);
+    expect(evaluateAssert(s, "tier != 1").ok).toBe(true);
+    expect(evaluateAssert(s, "tier >= 0").ok).toBe(true);
+  });
+
+  it("reports a parse failure rather than throwing", () => {
+    for (const bad of ["", "tier", "tier ~ 1", "ghost(x) > 1", "rate(ghost) > 1"]) {
+      const outcome = evaluateAssert(session(), bad);
+      expect(outcome.ok).toBe(false);
+      expect(outcome.text.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("records passing assertions on the session, for export as a regression test", () => {
+    const s = run(session(), "assert tier == 0");
+    expect(s.assertions).toEqual(["tier == 0"]);
+  });
+
+  it("does not record a failing assertion", () => {
+    const s = run(session(), "assert tier == 9");
+    expect(s.assertions).toEqual([]);
+  });
+});
+
+describe("session plumbing", () => {
+  it("reports an unknown command with a pointer to help", () => {
+    const result = runCommand(session(), "frobnicate");
+    expect(result.output.join("\n")).toMatch(/unknown command/i);
+    expect(result.output.join("\n")).toMatch(/help/i);
+  });
+
+  it("ignores a blank line", () => {
+    const result = runCommand(session(), "   ");
+    expect(result.output).toEqual([]);
+  });
+
+  it("quits", () => {
+    expect(runCommand(session(), "quit").quit).toBe(true);
+  });
+
+  it("keeps solution and state in step after every command", () => {
+    const s = run(rich(), "buy constructor 4");
+    expect(s.solution.capacity.unitsByRecipe.get("make_plate")).toBeCloseTo(5, 9);
+  });
+});
+```
+
+Note on the `tier N` command used by two tests: it is a **debug verb**, not one of spec D.1's eleven. `sim play` needs a way to jump to a tier to inspect late content without grinding to it, and it never touches the reducers — it sets `state.tier` directly. Step 3 marks it clearly as debug-only in the help text.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `pnpm --filter @manufactory/sim test commands`
+Expected: FAIL — `Cannot find module './commands.js'`.
+
+- [ ] **Step 3: Write the command layer**
+
+`apps/sim/src/commands.ts`:
+
+```ts
+// The whole of `sim play`, as pure functions over a Session. play.tsx is a thin Ink
+// shell over runCommand, so every command is unit-testable without rendering a
+// terminal.
+//
+// Spec A.2 gives full action parity for free: every verb here routes through the
+// same `apply` reducers the Phase 3 API will call, so a divergence between what is
+// possible in the simulator and in the game cannot be expressed.
+import { readFileSync, writeFileSync } from "node:fs";
+import {
+  D,
+  POWER_ITEM,
+  apply,
+  bestUnlockedMark,
+  computeExpansion,
+  deserializeWorld,
+  format,
+  installedAt,
+  installedMachines,
+  itemStateTag,
+  liquid,
+  liquidCap,
+  resolve,
+  serializeWorld,
+  solve,
+  type Action,
+  type IndexedContent,
+  type ItemId,
+  type LaneId,
+  type Solution,
+  type WorldState,
+} from "@manufactory/engine";
+import { newWorld } from "./bootstrap.js";
+
+export interface Session {
+  content: IndexedContent;
+  state: WorldState;
+  /** Always the solution of `state`; `refresh` is what keeps the two in step. */
+  solution: Solution;
+  nowMs: number;
+  /** Spec 16.3's session recording. The wire format is spec D.1's batch format. */
+  actionLog: Action[];
+  assertions: string[];
+}
+
+export interface CommandResult {
+  session: Session;
+  output: string[];
+  quit: boolean;
+}
+
+export type AssertOutcome = { ok: boolean; text: string };
+
+export function refresh(session: Session): Session {
+  return { ...session, solution: solve(session.state, session.content) };
+}
+
+export function newSession(content: IndexedContent, seed: number): Session {
+  const state = newWorld(content, seed);
+  return { content, state, solution: solve(state, content), nowMs: 0, actionLog: [], assertions: [] };
+}
+
+export const HELP: readonly string[] = [
+  "status                          the grid, the tier, and the one bottleneck",
+  "lanes | lane <id>               item rates, states and storage for a lane",
+  "priority                        the ordered list",
+  "priority move <entry> <pos>     1-based position",
+  "priority mode <entry> guaranteed|share [weight]",
+  "priority pause <entry> on|off",
+  "buy <class> [count] [--lane L] [--mark M]",
+  "dismantle <class> [count] [--lane L] [--mark M]",
+  "upgrade <class> [--lane L] [--mark M]     atomic dismantle and rebuild",
+  "assign <recipe> <count>         distribute the lane-class pool",
+  "select <item> <recipe>          switch the active recipe",
+  "reserve <item> <fraction>       0 to 0.5",
+  "storage <item> [levels] | qs <lane> [levels]",
+  "tap [count]",
+  "advance <8h|3d|90s|45m> | advance until tier:<n>",
+  "explain <item>                  why a rate is what it is",
+  "assert <expr>                   e.g. rate(iron_plate) > 0.3",
+  "save <file> | load <file>",
+  "tier <n>                        DEBUG ONLY: jump to a tier, bypassing delivery",
+  "help | quit",
+];
+
+const UNITS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+
+export function parseDuration(text: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)([smhd])$/.exec(text.trim());
+  if (!match) return null;
+  return Number(match[1]) * UNITS[match[2]!]!;
+}
+
+interface Parsed {
+  words: string[];
+  flags: Record<string, string>;
+}
+
+function parseLine(line: string): Parsed {
+  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  const words: string[] = [];
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]!;
+    if (token.startsWith("--")) {
+      flags[token.slice(2)] = tokens[i + 1] ?? "";
+      i += 1;
+    } else {
+      words.push(token);
+    }
+  }
+  return { words, flags };
+}
+
+function laneOf(session: Session, machineClass: string, flags: Record<string, string>): LaneId | null {
+  if (flags.lane !== undefined) return session.content.lanes.has(flags.lane) ? flags.lane : null;
+  // Default to the first lane that has a recipe for this class, in authored order.
+  for (const lane of session.content.lanes.keys()) {
+    if (session.content.recipesByLaneClass.has(`${lane}::${machineClass}`)) return lane;
+  }
+  return null;
+}
+
+function markOf(session: Session, machineClass: string, flags: Record<string, string>): number | null {
+  if (flags.mark !== undefined) {
+    const mark = Number(flags.mark);
+    return Number.isInteger(mark) && mark >= 1 ? mark : null;
+  }
+  return bestUnlockedMark(session.content, machineClass, session.state.tier);
+}
+
+function dispatch(session: Session, action: Action): CommandResult {
+  const result = apply(session.state, session.content, action, session.state.seed);
+  if (result.rejected) return { session, output: [`rejected: ${result.reason}`], quit: false };
+  const next = refresh({
+    ...session,
+    state: result.state,
+    actionLog: [...session.actionLog, action],
+  });
+  return {
+    session: next,
+    output: result.effects.map((effect) => `  ${effect.kind}`),
+    quit: false,
+  };
+}
+
+function rateOf(session: Session, itemId: ItemId): number {
+  return session.solution.itemRates.get(itemId)?.net ?? 0;
+}
+
+export function renderStatus(session: Session): string[] {
+  const { solution, state, content } = session;
+  const lines: string[] = [];
+  lines.push(
+    `t+${Math.round(session.nowMs / 1000)}s   tier ${state.tier}   ` +
+      `taps ${state.tapStacks}/${content.bundle.tap.maxStacks}`,
+  );
+  lines.push(
+    `grid  ${solution.power.demandMw.toFixed(1)} / ${solution.power.supplyMw.toFixed(1)} MW ` +
+      `(ratio ${solution.power.ratio.toFixed(3)})`,
+  );
+
+  const bottleneck = solution.bottleneck;
+  if (bottleneck === null) {
+    lines.push("no bottleneck");
+  } else if (bottleneck.kind === "recipe") {
+    // Spec 4.5: state the consequence in plain language and the fix as a number.
+    lines.push(
+      `BOTTLENECK  ${bottleneck.recipeId} limiting ${bottleneck.limitingTarget} — ` +
+        `${bottleneck.machinesToClear} more clears it`,
+    );
+  } else {
+    lines.push(
+      `BOTTLENECK  power limiting ${bottleneck.limitingTarget} — ` +
+        `${bottleneck.machinesToClear} more ${bottleneck.generatorRecipeId ?? "generator"} clears it`,
+    );
+  }
+  return lines;
+}
+
+export function renderLane(session: Session, laneId: LaneId): string[] {
+  const { content, state } = session;
+  if (!content.lanes.has(laneId)) return [`unknown lane "${laneId}"`];
+
+  const lines = [`lane ${content.lanes.get(laneId)!.name}`];
+  for (const item of content.bundle.items) {
+    if (item.lane !== laneId) continue;
+    const rate = rateOf(session, item.id);
+    const have = liquid(state, item.id);
+    const cap = liquidCap(content, state, item.id);
+    const bound = state.bound[item.id] ?? D(0);
+    const tag = itemStateTag(content, state, item.id);
+    let line =
+      `  ${item.name.padEnd(20)} ${rate >= 0 ? "+" : ""}${rate.toFixed(3)}/s   ` +
+      `${format(have, "hybrid")} / ${format(cap, "hybrid")}  ${tag}`;
+    // Spec F.1: the BOUND chip appears only when non-zero, so the early game reads
+    // exactly like the MVP and complexity arrives only once the player has met it.
+    if (bound.gt(0)) line += `  BOUND ${format(bound, "hybrid")}`;
+    lines.push(line);
+  }
+  return lines;
+}
+
+export function renderPriority(session: Session): string[] {
+  return session.state.priority.map((entry, index) => {
+    const target = entry.kind === "power" ? "power" : (entry.itemId ?? "?");
+    const mode = entry.mode === "share" ? `share ${entry.share}` : "guaranteed";
+    const cap = entry.targetRate === null ? "" : `  cap ${entry.targetRate}/s`;
+    const paused = entry.paused ? "  PAUSED" : "";
+    return `  ${String(index + 1).padStart(2)}. ${entry.id.padEnd(24)} ${target.padEnd(20)} ${mode}${cap}${paused}`;
+  });
+}
+
+export function explain(session: Session, itemId: ItemId): string[] {
+  const { content, state, solution } = session;
+  if (itemId !== POWER_ITEM && !content.items.has(itemId)) return [`unknown item "${itemId}"`];
+
+  const flow = solution.itemRates.get(itemId);
+  const lines = [
+    `${itemId}: production ${(flow?.production ?? 0).toFixed(4)}/s, ` +
+      `consumption ${(flow?.consumption ?? 0).toFixed(4)}/s, net ${(flow?.net ?? 0).toFixed(4)}/s`,
+    `state ${itemStateTag(content, state, itemId)}  ` +
+      `${format(liquid(state, itemId), "hybrid")} / ${format(liquidCap(content, state, itemId), "hybrid")}`,
+    `active recipe ${state.activeRecipe[itemId] ?? "(none)"}`,
+    "producers:",
+  ];
+
+  for (const recipeId of content.producersOf.get(itemId) ?? []) {
+    const clock = solution.clocks.get(recipeId);
+    lines.push(
+      `  ${recipeId.padEnd(20)} clock ${clock === undefined ? "idle" : clock.toFixed(4)}`,
+    );
+  }
+  lines.push("consumers:");
+  for (const recipeId of content.consumersOf.get(itemId) ?? []) {
+    const clock = solution.clocks.get(recipeId);
+    lines.push(
+      `  ${recipeId.padEnd(20)} clock ${clock === undefined ? "idle" : clock.toFixed(4)}`,
+    );
+  }
+
+  // Spec C.3's fixed point, laid bare: which items were pinned, and in what order.
+  lines.push(
+    `fixed point: ${solution.passes} pass(es), pinned in order: ` +
+      (solution.pinOrder.length === 0 ? "(none)" : solution.pinOrder.join(", ")),
+  );
+
+  const entry = solution.entries.find((e) => e.itemId === itemId);
+  if (entry) {
+    lines.push(
+      entry.limitedBy === null
+        ? `target ${entry.entryId} is unconstrained at ${entry.allocated.toFixed(4)}/s`
+        : `target ${entry.entryId} is limited by ${entry.limitedBy} at ${entry.allocated.toFixed(4)}/s ` +
+          `(would reach ${entry.runnerUpRate.toFixed(4)}/s if cleared)`,
+    );
+  }
+
+  // Spec F.1's Handbook trace, free from the precomputed vectors (spec A.4).
+  const vectors = computeExpansion(content, state.tier, state.activeRecipe);
+  const raw = vectors.rawCost.get(itemId);
+  if (raw && raw.size > 0) {
+    lines.push(
+      `traces back to: ${[...raw.entries()].map(([id, amount]) => `${amount} ${id}`).join(", ")}`,
+    );
+  }
+  return lines;
+}
+
+const ASSERT_RE = /^([a-z]+)(?:\(([^)]*)\))?\s*(<=|>=|==|!=|<|>)\s*(-?[\d.]+(?:e-?\d+)?)$/i;
+
+export function evaluateAssert(session: Session, expression: string): AssertOutcome {
+  const match = ASSERT_RE.exec(expression.trim());
+  if (!match) return { ok: false, text: `cannot parse "${expression}"` };
+  const [, fn, rawArgs, op, rhsText] = match;
+  const args = (rawArgs ?? "").split(",").map((a) => a.trim()).filter(Boolean);
+  const rhs = Number(rhsText);
+  const { content, state, solution } = session;
+
+  const itemArg = (): ItemId | null => {
+    const id = args[0];
+    if (id === undefined) return null;
+    if (id !== POWER_ITEM && !content.items.has(id)) return null;
+    return id;
+  };
+
+  let lhs: number | null = null;
+  switch (fn) {
+    case "tier":
+      lhs = state.tier;
+      break;
+    case "power":
+      lhs = solution.power.ratio;
+      break;
+    case "taps":
+      lhs = state.tapStacks;
+      break;
+    case "rate":
+    case "production":
+    case "consumption": {
+      const id = itemArg();
+      if (id === null) break;
+      const flow = solution.itemRates.get(id);
+      lhs = fn === "rate" ? (flow?.net ?? 0) : fn === "production" ? (flow?.production ?? 0) : (flow?.consumption ?? 0);
+      break;
+    }
+    case "stored":
+    case "quantum":
+    case "bound": {
+      const id = itemArg();
+      if (id === null) break;
+      lhs = (state[fn][id] ?? D(0)).toNumber();
+      break;
+    }
+    case "liquid": {
+      const id = itemArg();
+      if (id === null) break;
+      lhs = liquid(state, id).toNumber();
+      break;
+    }
+    case "level": {
+      const id = itemArg();
+      if (id === null) break;
+      lhs = state.storageLevel[id] ?? 0;
+      break;
+    }
+    case "qslevel": {
+      const lane = args[0];
+      if (lane === undefined || !content.lanes.has(lane)) break;
+      lhs = state.qsLevel[lane] ?? 0;
+      break;
+    }
+    case "clock": {
+      const recipeId = args[0];
+      if (recipeId === undefined || !content.recipes.has(recipeId)) break;
+      lhs = solution.clocks.get(recipeId) ?? 0;
+      break;
+    }
+    case "machines": {
+      const [lane, machineClass] = args;
+      if (lane === undefined || machineClass === undefined) break;
+      if (!content.lanes.has(lane) || !content.machineClasses.has(machineClass)) break;
+      lhs = installedMachines(state, lane, machineClass);
+      break;
+    }
+    default:
+      return { ok: false, text: `unknown assertion function "${fn}"` };
+  }
+
+  if (lhs === null) return { ok: false, text: `bad argument in "${expression}"` };
+
+  // Equality on a float is compared with a small relative tolerance; everything else
+  // is exact, because these are diagnostics rather than state.
+  const near = Math.abs(lhs - rhs) <= 1e-9 * Math.max(1, Math.abs(rhs));
+  const ok =
+    op === "<" ? lhs < rhs
+    : op === "<=" ? lhs <= rhs
+    : op === ">" ? lhs > rhs
+    : op === ">=" ? lhs >= rhs
+    : op === "==" ? near
+    : !near;
+
+  return { ok, text: `${ok ? "PASS" : "FAIL"}  ${expression}   (lhs = ${lhs})` };
+}
+
+function advance(session: Session, ms: number): CommandResult {
+  const result = resolve(session.state, session.content, ms);
+  const next = refresh({ ...session, state: result.state, nowMs: session.nowMs + ms });
+  const output = [
+    `[${Math.round(ms / 1000)}s elapsed] ${result.summary.events} event(s)`,
+    ...result.summary.tiersUnlocked.map((tier) => `  reached tier ${tier}`),
+    ...result.summary.filled.map((f) => `  ${f.itemId} filled`),
+  ];
+  if (result.summary.stalled.length > 0) output.push(`  stalled: ${result.summary.stalled.join(", ")}`);
+  return { session: next, output, quit: false };
+}
+
+export function runCommand(session: Session, line: string): CommandResult {
+  const { words, flags } = parseLine(line);
+  const [verb, ...rest] = words;
+  const none = (output: string[]): CommandResult => ({ session, output, quit: false });
+  if (verb === undefined) return none([]);
+
+  switch (verb) {
+    case "help":
+      return none([...HELP]);
+    case "quit":
+    case "exit":
+      return { session, output: ["bye"], quit: true };
+    case "status":
+      return none(renderStatus(session));
+    case "lanes":
+      return none(
+        [...session.content.lanes.values()].flatMap((lane) => renderLane(session, lane.id)),
+      );
+    case "lane":
+      return none(renderLane(session, rest[0] ?? ""));
+    case "explain":
+      return none(explain(session, rest[0] ?? ""));
+
+    case "priority": {
+      const sub = rest[0];
+      if (sub === undefined) return none(renderPriority(session));
+      if (sub === "move") {
+        const [, entryId, positionText] = rest;
+        const position = Number(positionText);
+        const ids = session.state.priority.map((e) => e.id);
+        if (entryId === undefined || !ids.includes(entryId)) return none([`unknown entry "${entryId}"`]);
+        if (!Number.isInteger(position) || position < 1 || position > ids.length) {
+          return none([`position must be 1..${ids.length}`]);
+        }
+        const without = ids.filter((id) => id !== entryId);
+        without.splice(position - 1, 0, entryId);
+        return dispatch(session, { type: "REORDER_PRIORITY", entries: without });
+      }
+      if (sub === "mode") {
+        const [, entryId, mode, weight] = rest;
+        if (entryId === undefined || (mode !== "guaranteed" && mode !== "share")) {
+          return none(["usage: priority mode <entry> guaranteed|share [weight]"]);
+        }
+        return dispatch(session, {
+          type: "SET_PRIORITY_MODE",
+          entryId,
+          mode,
+          ...(weight === undefined ? {} : { share: Number(weight) }),
+        });
+      }
+      if (sub === "pause") {
+        const [, entryId, onOff] = rest;
+        const entry = session.state.priority.find((e) => e.id === entryId);
+        if (!entry) return none([`unknown entry "${entryId}"`]);
+        return dispatch(session, {
+          type: "SET_PRIORITY_MODE",
+          entryId: entry.id,
+          mode: entry.mode,
+          paused: onOff !== "off",
+        });
+      }
+      return none(["usage: priority [move|mode|pause] ..."]);
+    }
+
+    case "buy":
+    case "dismantle": {
+      const machineClass = rest[0];
+      if (machineClass === undefined) return none([`usage: ${verb} <class> [count]`]);
+      const count = rest[1] === undefined ? 1 : Number(rest[1]);
+      const lane = laneOf(session, machineClass, flags);
+      const mark = markOf(session, machineClass, flags);
+      if (lane === null) return none([`no lane for "${machineClass}"`]);
+      if (mark === null) return none([`no unlocked mark for "${machineClass}"`]);
+      return dispatch(session, {
+        type: verb === "buy" ? "BUY_MACHINE" : "DISMANTLE",
+        lane,
+        machineClass,
+        mark,
+        count,
+      });
+    }
+
+    case "upgrade": {
+      const machineClass = rest[0];
+      if (machineClass === undefined) return none(["usage: upgrade <class> [--lane L] [--mark M]"]);
+      const lane = laneOf(session, machineClass, flags);
+      if (lane === null) return none([`no lane for "${machineClass}"`]);
+      const fromMark = flags.mark === undefined ? 1 : Number(flags.mark);
+      return dispatch(session, { type: "UPGRADE_MARK", lane, machineClass, fromMark });
+    }
+
+    case "assign": {
+      const [recipeId, countText] = rest;
+      if (recipeId === undefined || countText === undefined) return none(["usage: assign <recipe> <count>"]);
+      return dispatch(session, { type: "ASSIGN_MACHINES", recipeId, count: Number(countText) });
+    }
+
+    case "select": {
+      const [itemId, recipeId] = rest;
+      if (itemId === undefined || recipeId === undefined) return none(["usage: select <item> <recipe>"]);
+      return dispatch(session, { type: "SELECT_RECIPE", itemId, recipeId });
+    }
+
+    case "reserve": {
+      const [itemId, percentText] = rest;
+      if (itemId === undefined || percentText === undefined) return none(["usage: reserve <item> <fraction>"]);
+      return dispatch(session, { type: "SET_RESERVE", itemId, percent: Number(percentText) });
+    }
+
+    case "storage": {
+      const [itemId, levelsText] = rest;
+      if (itemId === undefined) return none(["usage: storage <item> [levels]"]);
+      return dispatch(session, {
+        type: "BUY_STORAGE",
+        itemId,
+        levels: levelsText === undefined ? 1 : Number(levelsText),
+      });
+    }
+
+    case "qs": {
+      const [lane, levelsText] = rest;
+      if (lane === undefined) return none(["usage: qs <lane> [levels]"]);
+      return dispatch(session, {
+        type: "BUY_QS",
+        lane,
+        levels: levelsText === undefined ? 1 : Number(levelsText),
+      });
+    }
+
+    case "tap": {
+      const count = rest[0] === undefined ? 1 : Number(rest[0]);
+      // The simulator is its own client, so it grants itself exactly the elapsed
+      // time spec D.5's ceiling requires for the taps it is asking for.
+      return dispatch(session, { type: "TAP", count, clientElapsedMs: count * 50 });
+    }
+
+    case "advance": {
+      if (rest[0] === "until") {
+        const match = /^tier:(\d+)$/.exec(rest[1] ?? "");
+        if (!match) return none(['usage: advance until tier:<n>']);
+        const target = Number(match[1]);
+        let current = session;
+        const output: string[] = [];
+        // Bounded so a target that can never be reached still returns.
+        for (let i = 0; i < 400 && current.state.tier < target; i += 1) {
+          const step = advance(current, current.content.offlineCapMs);
+          current = step.session;
+          output.push(...step.output);
+        }
+        output.push(
+          current.state.tier >= target
+            ? `reached tier ${current.state.tier}`
+            : `gave up at tier ${current.state.tier}`,
+        );
+        return { session: current, output, quit: false };
+      }
+      const ms = parseDuration(rest[0] ?? "");
+      if (ms === null) return none([`cannot parse duration "${rest[0] ?? ""}"`]);
+      return advance(session, ms);
+    }
+
+    case "assert": {
+      const expression = line.trim().slice("assert".length).trim();
+      const outcome = evaluateAssert(session, expression);
+      const next = outcome.ok
+        ? { ...session, assertions: [...session.assertions, expression] }
+        : session;
+      return { session: next, output: [outcome.text], quit: false };
+    }
+
+    case "save": {
+      const file = rest[0];
+      if (file === undefined) return none(["usage: save <file>"]);
+      writeFileSync(file, serializeWorld(session.state), "utf8");
+      return none([`saved ${file}`]);
+    }
+
+    case "load": {
+      const file = rest[0];
+      if (file === undefined) return none(["usage: load <file>"]);
+      const state = deserializeWorld(readFileSync(file, "utf8"));
+      return {
+        session: refresh({ ...session, state, nowMs: state.lastResolvedAt }),
+        output: [`loaded ${file}`],
+        quit: false,
+      };
+    }
+
+    // DEBUG ONLY, and deliberately not one of spec D.1's eleven: jumping to a tier
+    // bypasses milestone delivery so late content can be inspected without grinding
+    // to it. It never touches the reducers.
+    case "tier": {
+      const tier = Number(rest[0]);
+      if (!Number.isInteger(tier) || tier < 0) return none(["usage: tier <n>"]);
+      return {
+        session: refresh({ ...session, state: { ...session.state, tier } }),
+        output: [`debug: tier set to ${tier}`],
+        quit: false,
+      };
+    }
+
+    default:
+      return none([`unknown command "${verb}" — try help`]);
+  }
+}
+```
+
+- [ ] **Step 4: Run the command test**
+
+Run: `pnpm --filter @manufactory/sim test commands`
+Expected: PASS.
+
+- [ ] **Step 5: Write the Ink shell**
+
+Replace `apps/sim/src/play.tsx` with:
+
+```tsx
+// Spec 16.3 asks for Ink so the lane view, bottleneck highlighting and priority list
+// render as real components rather than print statements, and so the tool shares a
+// mental model with the web client.
+//
+// Everything of substance lives in commands.ts as pure functions; this file only
+// reads a line, calls runCommand, and appends the output.
+import React, { useState } from "react";
+import { Box, Static, Text, render, useApp } from "ink";
+import TextInput from "ink-text-input";
+import { loadContent } from "./bootstrap.js";
+import { HELP, newSession, renderStatus, runCommand, type Session } from "./commands.js";
+
+interface Line {
+  key: string;
+  text: string;
+}
+
+function App({ initial }: { initial: Session }): React.JSX.Element {
+  const { exit } = useApp();
+  const [session, setSession] = useState(initial);
+  const [input, setInput] = useState("");
+  const [lines, setLines] = useState<Line[]>(() =>
+    ["Manufactory Idle — sim play. Type help.", ...HELP.slice(0, 3)].map((text, i) => ({
+      key: `boot-${i}`,
+      text,
+    })),
+  );
+
+  const submit = (value: string): void => {
+    const result = runCommand(session, value);
+    const stamp = Date.now();
+    setLines((current) => [
+      ...current,
+      { key: `in-${stamp}`, text: `> ${value}` },
+      ...result.output.map((text, i) => ({ key: `out-${stamp}-${i}`, text })),
+    ]);
+    setSession(result.session);
+    setInput("");
+    if (result.quit) exit();
+  };
+
+  return (
+    <Box flexDirection="column">
+      <Static items={lines}>{(line) => <Text key={line.key}>{line.text}</Text>}</Static>
+      <Box flexDirection="column" marginTop={1}>
+        {renderStatus(session).map((text, i) => (
+          <Text key={`status-${i}`} dimColor={i > 0}>
+            {text}
+          </Text>
+        ))}
+      </Box>
+      <Box>
+        <Text color="green">{"> "}</Text>
+        <TextInput value={input} onChange={setInput} onSubmit={submit} />
+      </Box>
+    </Box>
+  );
+}
+
+export async function startPlay(options: { contentDir?: string; seed: number }): Promise<void> {
+  const content = loadContent(options.contentDir);
+  const instance = render(<App initial={newSession(content, options.seed)} />);
+  await instance.waitUntilExit();
+}
+```
+
+`Date.now()` here is a React key, not game state — the engine's clock still arrives only as a parameter, and spec A.5's rule binds `packages/engine`, not `apps/sim`.
+
+- [ ] **Step 6: Drive the client by hand**
+
+Run:
+
+```bash
+pnpm --filter @manufactory/sim run sim play --seed 42
+```
+
+Then, in the client:
+
+```
+status
+lane iron
+advance 11m
+status
+buy constructor 4
+explain iron_plate
+priority move item:iron_ore 2
+advance 8h
+assert tier >= 1
+quit
+```
+
+Expected: the status block shows the grid and exactly one bottleneck; `advance 11m` reports reaching tier 1; `explain iron_plate` names the binding recipe, the pinned items in order, and the raw-cost trace; `assert tier >= 1` prints PASS. This is Phase 1's deliverable — a playable game in the terminal.
+
+- [ ] **Step 7: Run everything**
+
+Run:
+
+```bash
+pnpm test
+pnpm lint && pnpm typecheck
+pnpm content:check
+```
+
+Expected: every package green.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add sim play, the Ink terminal client
+
+Spec E.3, with time warp as a first-class verb: advance 8h, advance 3d,
+advance until tier:3. Every command routes through the same apply reducers
+the Phase 3 API will call, so spec 16.3's full action parity is structural
+rather than maintained. explain lays the spec C.3 fixed point bare --
+which constraint bound the target, what state each upstream item is in,
+and what was pinned in what order -- and assert turns an exploratory
+session into a committed regression test. All the logic is pure functions
+over a Session; play.tsx is a thin Ink shell over runCommand.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016rmcUbYFdRwjnpEmXWrbTB
+EOF
+)"
+```
+
+---
+
+## Definition of done
+
+Phase 1 is complete when, from a clean checkout:
+
+```bash
+pnpm install
+pnpm lint           # exit 0
+pnpm typecheck      # exit 0
+pnpm test           # rational, engine, content and sim suites all green
+pnpm content:check  # the extended fixture validates
+pnpm --filter @manufactory/sim run sim run --policy greedy --until tier:2
+pnpm --filter @manufactory/sim run sim play --seed 42
+```
+
+and `sim play` can run the fixture factory, buy machines, reorder priorities, warp time forward and produce sane numbers — spec F.2's "a playable game in the terminal".
+
+## What Phase 1 deliberately does not include
+
+| Deferred | Owner |
+|---|---|
+| The HTTP API, Postgres schema, SuperTokens, guests, idempotency, rate limits | Phase 3 |
+| The web client | Phase 4 |
+| The B.5 vertical slice and the calibration script | Phase 2 — Phase 1 extends the Phase 0 fixture |
+| Validator checks 8, 9, 10 | Phase 2 — they need calibration machinery |
+| Overclocking (spec D3 lever 4) | No action in spec D.1's eleven; Spec 2 |
+| Power Storage purchase (spec 6.2) | No action in spec D.1's eleven; Spec 2. `powerBank` is carried and stays zero |
+| Disruptions, pollution, alt-recipe acquisition, ranks, Pioneers | Spec 2 |
+| The SCC solver for cyclic recipes | Ruling R6 — forbidden, not solved, and the outer waterfall does not change when it is added |
+| `sim replay` and `sim export` | The action log and canonical serialization exist; the CLI verbs land with Phase 3's `action_log` |
+
+## Spec coverage
+
+| Spec requirement | Task |
+|---|---|
+| A.4 zone 1 — exact rationals at load time only | 3 |
+| A.4 zone 2 — float64 clocks, satisfaction, allocation | 8, 9, 10 |
+| A.4 zone 3 — Decimal stockpiles, rates, costs | 4, 5, 7 |
+| A.5 / E.4 — determinism, no transcendentals in state paths, canonical ordering | 4, 5, 11 |
+| B.2 — the single counter, mark-weighted ladder | 5, 6 |
+| B.3 — stepped ladder, authored per class | 1, 5 |
+| B.4 — the three curves, QS per lane | 1, 5, 7 |
+| C.0 — why the ladder is mark-weighted; `UPGRADE_MARK` | 5, 12 |
+| C.1 — `WorldState` and its serialization | 4 |
+| C.2 — the three item states | 7, 9 |
+| C.3 — the waterfall, the fixed point, bottleneck as first-class output | 8, 9, 10 |
+| C.4 — power equilibrium, power as priority entry 1 | 2, 4, 10 |
+| C.5 / D4 — storage, Quantum Storage, `bound`, fill and spend orders, LIFO refunds | 7, 12 |
+| C.6 — the tap as a step function | 1, 5, 13 |
+| C.7 — event-driven resolve with `MAX_EVENTS` and `EPSILON` | 11 |
+| D.1 — the eleven action reducers, batched, atomic | 12, 13 |
+| D.5 — the tap ceiling, resolve-cost guards | 11, 13 |
+| E.2 — `sim run`, four policies, the report in collections | 15 |
+| E.3 — `sim play`, time warp, `explain`, `assert` | 16 |
+| E.6 — the property suite | 14 |
+| F.2 — a playable game in the terminal | 15, 16 |
+| Spec 3.1 — only extraction creates value | 14 |
+| Spec 3.3 / 3.4 — backpressure, reserve, byproduct outlets | 7, 9, 13 |
+| Spec 4.1 / 4.2 — priority list, share mode, reserve floor | 8, 13 |
+| Spec 4.3 — cycles forbidden and flagged (ruling R6) | 2, 3, 12 |
+| Spec 4.4 — alt recipes, `SELECT_RECIPE` | 2, 12 |
+| Spec 4.5 — bottleneck reporting | 10, 16 |
+| Spec 4.6 — dead-purchase guard as an invariant | 14 |
+| Spec 6.1 / 6.3 — grid model, generators as ordinary recipes | 2, 6, 10 |
+| Spec 8 — offline resolution, the cap | 11 |
+| Spec 10.1 — milestones (ruling R7) | 1, 11 |
+| Spec 16.2 / 16.6 — collections, dead-time detector | 15 |
+
+## Next
+
+| Phase | Plan to write |
+|---|---|
+| 2 | Calibrated content — the B.5 vertical slice, the calibration script, validator checks 8–10, CI pacing gates |
+| 3 | Server + authority — action API, schema, SuperTokens, guests, idempotency, rate limits |
+| 4 | Web client |
