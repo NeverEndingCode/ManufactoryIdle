@@ -9,16 +9,32 @@ for years.
 
 ## Status
 
-**Design phase.** No implementation has started.
+**Design phase.** The engine core design is complete and ready for an implementation plan. No code has been written yet.
 
 | Document | What it is |
 |---|---|
 | [`manufactory-idle-spec.md`](manufactory-idle-spec.md) | The original full-game specification — all systems, all progression layers |
-| [`docs/superpowers/specs/2026-09-01-engine-core-design.md`](docs/superpowers/specs/2026-09-01-engine-core-design.md) | The working design for Spec 1 (engine core). Decision record + Section A. **Supersedes the original spec where they disagree** |
+| [`docs/superpowers/specs/2026-09-01-engine-core-design.md`](docs/superpowers/specs/2026-09-01-engine-core-design.md) | **Complete design for Spec 1 (engine core).** Decision record plus Sections A–F. **Supersedes the original spec where they disagree** |
 | [`manufactory-idle-mvp.html`](manufactory-idle-mvp.html) | Single-file browser prototype — waterfall solver, split bars, backpressure, byproduct triangle, the tap |
 
-The original spec is being decomposed into four specs, of which the engine core is
-the first. See §1 of the engine core design.
+The original spec is decomposed into four, of which the engine core is the first:
+
+| Spec | Covers | Status |
+|---|---|---|
+| **1. Engine core** | Solver, storage, power, offline resolution, server authority, simulator | **Design complete** |
+| 2. Progression | Alt recipes, ranks, Pioneers, contracts, Phases, Engineer Level, disruptions | Not started |
+| 3. Live content | Expeditions, Deep Core, daily contracts, achievements, leaderboards | Not started |
+| 4. Statistics & platform | Statistics, graphs, PWA, push notifications | Not started |
+
+### Build order for Spec 1
+
+| Phase | Deliverable | Ends in |
+|---|---|---|
+| 0 | Monorepo, Postgres, SuperTokens, engine skeleton, content validator, CI | Green pipeline |
+| 1 | Engine + simulator | A playable game in the terminal |
+| 2 | Calibrated content | A game that is *paced* |
+| 3 | Server + authority | A game with a backend |
+| 4 | Web client | A game other people can play |
 
 ## Design pillars
 
