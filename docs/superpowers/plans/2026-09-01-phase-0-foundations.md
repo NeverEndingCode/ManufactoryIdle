@@ -1655,3 +1655,915 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 )"
 ```
+
+---
+
+### Task 8: Structural graph checks (checks 3, 4, 5, 7)
+
+**Files:**
+- Create: `packages/content/src/validate/graph.ts`
+- Test: `packages/content/src/validate/graph.test.ts`
+
+**Interfaces:**
+- Consumes: `type Bundle` from Task 5, `type ValidationIssue` from Task 6
+- Produces:
+  - `checkProducers(bundle: Bundle): ValidationIssue[]` — check 3
+  - `checkConsumers(bundle: Bundle): ValidationIssue[]` — check 4
+  - `checkByproductOutlets(bundle: Bundle): ValidationIssue[]` — check 5
+  - `checkBuildCostsSatisfiable(bundle: Bundle): ValidationIssue[]` — check 7
+
+Check 5 is the one that matters most. Spec §3.4: *"every byproduct in the graph must have at least one real consumer recipe reachable at the tier it appears."* A byproduct with no outlet fills its tank, backpressures its producer, and stalls the whole downstream chain with no way out.
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/content/src/validate/graph.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import {
+  checkByproductOutlets,
+  checkBuildCostsSatisfiable,
+  checkConsumers,
+  checkProducers,
+} from "./graph.js";
+import type { Bundle } from "../schema.js";
+
+function bundle(): Bundle {
+  return {
+    version: "t.v1",
+    lanes: [{ id: "iron", name: "Iron", order: 0, unlockTier: 0 }],
+    items: [
+      { id: "ore", lane: "iron", tier: 0, name: "Ore", fluid: false, terminal: false, baseStorageCap: 600, baseQuantumCap: 2400 },
+      { id: "ingot", lane: "iron", tier: 0, name: "Ingot", fluid: false, terminal: false, baseStorageCap: 400, baseQuantumCap: 1600 },
+      { id: "plate", lane: "iron", tier: 1, name: "Plate", fluid: false, terminal: true, baseStorageCap: 300, baseQuantumCap: 1200 },
+      { id: "slag", lane: "iron", tier: 1, name: "Slag", fluid: true, terminal: false, baseStorageCap: 100, baseQuantumCap: 400 },
+    ],
+    machineClasses: [
+      {
+        id: "miner",
+        name: "Miner",
+        ladder: { step: 1.5, interval: 10 },
+        marks: [
+          { mark: 1, name: "Mk.1", rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 5, buildCost: [{ item: "plate", amount: 10 }], unlockTier: 1 },
+        ],
+      },
+    ],
+    recipes: [
+      { id: "mine", name: "Mine", lane: "iron", machineClass: "miner", inputs: [], outputs: [{ item: "ore", rate: "60", byproduct: false }], powerOutput: 0, isAlternate: false, unlockTier: 0 },
+      { id: "smelt", name: "Smelt", lane: "iron", machineClass: "miner", inputs: [{ item: "ore", rate: "30", byproduct: false }], outputs: [{ item: "ingot", rate: "30", byproduct: false }, { item: "slag", rate: "10", byproduct: true }], powerOutput: 0, isAlternate: false, unlockTier: 1 },
+      { id: "plate", name: "Plate", lane: "iron", machineClass: "miner", inputs: [{ item: "ingot", rate: "30", byproduct: false }], outputs: [{ item: "plate", rate: "20", byproduct: false }], powerOutput: 0, isAlternate: false, unlockTier: 1 },
+      { id: "reslag", name: "Reslag", lane: "iron", machineClass: "miner", inputs: [{ item: "slag", rate: "10", byproduct: false }], outputs: [{ item: "ingot", rate: "1", byproduct: false }], powerOutput: 0, isAlternate: false, unlockTier: 1 },
+    ],
+    pacing: {
+      targetCollectionsToTier: [2, 5],
+      activeHoursPerDay: 2.5,
+      offlineCollectionsPerDay: 3,
+      purchaseIntervalEarlySeconds: 120,
+      purchaseIntervalLateSeconds: 1800,
+      storageBindingCadence: 12,
+    },
+  };
+}
+
+describe("checkProducers (check 3)", () => {
+  it("passes when every item is produced", () => {
+    expect(checkProducers(bundle())).toEqual([]);
+  });
+
+  it("flags an item nothing produces", () => {
+    const b = bundle();
+    b.items.push({ id: "ghost", lane: "iron", tier: 0, name: "Ghost", fluid: false, terminal: true, baseStorageCap: 1, baseQuantumCap: 1 });
+    const issues = checkProducers(b);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.check).toBe(3);
+    expect(issues[0]!.message).toContain("ghost");
+  });
+});
+
+describe("checkConsumers (check 4)", () => {
+  it("passes: plate is terminal and also a build cost, slag is consumed", () => {
+    expect(checkConsumers(bundle())).toEqual([]);
+  });
+
+  it("flags a dead-end item that is neither consumed, terminal, nor a build cost", () => {
+    const b = bundle();
+    b.recipes = b.recipes.filter((r) => r.id !== "reslag");
+    const issues = checkConsumers(b);
+    expect(issues.some((i) => i.check === 4 && i.message.includes("slag"))).toBe(true);
+  });
+
+  it("accepts an unconsumed item when it is marked terminal", () => {
+    const b = bundle();
+    b.recipes = b.recipes.filter((r) => r.id !== "reslag");
+    b.items.find((i) => i.id === "slag")!.terminal = true;
+    expect(checkConsumers(b)).toEqual([]);
+  });
+});
+
+describe("checkByproductOutlets (check 5)", () => {
+  it("passes when the byproduct has a consumer at or below its tier", () => {
+    expect(checkByproductOutlets(bundle())).toEqual([]);
+  });
+
+  it("flags a byproduct whose only consumer unlocks later", () => {
+    const b = bundle();
+    b.recipes.find((r) => r.id === "reslag")!.unlockTier = 5;
+    const issues = checkByproductOutlets(b);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.check).toBe(5);
+    expect(issues[0]!.message).toContain("slag");
+  });
+
+  it("flags a byproduct with no consumer at all", () => {
+    const b = bundle();
+    b.recipes = b.recipes.filter((r) => r.id !== "reslag");
+    expect(checkByproductOutlets(b).some((i) => i.check === 5)).toBe(true);
+  });
+
+  it("ignores non-byproduct outputs with no consumer", () => {
+    const b = bundle();
+    b.recipes = b.recipes.filter((r) => r.id !== "reslag");
+    b.recipes.find((r) => r.id === "smelt")!.outputs[1]!.byproduct = false;
+    expect(checkByproductOutlets(b)).toEqual([]);
+  });
+});
+
+describe("checkBuildCostsSatisfiable (check 7)", () => {
+  it("passes when the build cost item is produced at or below the mark's tier", () => {
+    expect(checkBuildCostsSatisfiable(bundle())).toEqual([]);
+  });
+
+  it("flags a build cost whose item is only produced at a later tier", () => {
+    const b = bundle();
+    b.recipes.find((r) => r.id === "plate")!.unlockTier = 4;
+    const issues = checkBuildCostsSatisfiable(b);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.check).toBe(7);
+    expect(issues[0]!.message).toContain("plate");
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @manufactory/content test graph`
+Expected: FAIL — `Cannot find module './graph.js'`.
+
+- [ ] **Step 3: Write the implementation**
+
+`packages/content/src/validate/graph.ts`:
+
+```ts
+// Structural graph checks. Spec B.6 checks 3, 4, 5, and 7. Each of these
+// catches content that produces a permanently stuck save rather than merely
+// bad balance, which is why they fail the build rather than warn.
+import type { ValidationIssue } from "../load.js";
+import type { Bundle } from "../schema.js";
+
+function issue(check: number, message: string): ValidationIssue {
+  return { check, severity: "error", message };
+}
+
+// Lowest unlockTier at which each item can be produced at all.
+function earliestProduction(bundle: Bundle): Map<string, number> {
+  const earliest = new Map<string, number>();
+  for (const recipe of bundle.recipes) {
+    for (const output of recipe.outputs) {
+      const current = earliest.get(output.item);
+      if (current === undefined || recipe.unlockTier < current) {
+        earliest.set(output.item, recipe.unlockTier);
+      }
+    }
+  }
+  return earliest;
+}
+
+export function checkProducers(bundle: Bundle): ValidationIssue[] {
+  const produced = earliestProduction(bundle);
+  return bundle.items
+    .filter((item) => !produced.has(item.id))
+    .map((item) => issue(3, `item "${item.id}" has no recipe that produces it`));
+}
+
+export function checkConsumers(bundle: Bundle): ValidationIssue[] {
+  const consumed = new Set<string>();
+  for (const recipe of bundle.recipes) {
+    for (const input of recipe.inputs) consumed.add(input.item);
+  }
+  // Build costs are a legitimate sink: spec section 3.2 pays for machines out
+  // of stored items, so an item used only to build things is not a dead end.
+  for (const cls of bundle.machineClasses) {
+    for (const mark of cls.marks) {
+      for (const cost of mark.buildCost) consumed.add(cost.item);
+    }
+  }
+
+  return bundle.items
+    .filter((item) => !item.terminal && !consumed.has(item.id))
+    .map((item) =>
+      issue(
+        4,
+        `item "${item.id}" is never consumed, never a build cost, and not marked terminal`,
+      ),
+    );
+}
+
+export function checkByproductOutlets(bundle: Bundle): ValidationIssue[] {
+  // Earliest tier at which each item is consumed by something.
+  const earliestConsumption = new Map<string, number>();
+  for (const recipe of bundle.recipes) {
+    for (const input of recipe.inputs) {
+      const current = earliestConsumption.get(input.item);
+      if (current === undefined || recipe.unlockTier < current) {
+        earliestConsumption.set(input.item, recipe.unlockTier);
+      }
+    }
+  }
+
+  const issues: ValidationIssue[] = [];
+  for (const recipe of bundle.recipes) {
+    for (const output of recipe.outputs) {
+      if (!output.byproduct) continue;
+      const consumedAt = earliestConsumption.get(output.item);
+      if (consumedAt === undefined) {
+        issues.push(
+          issue(
+            5,
+            `byproduct "${output.item}" from recipe "${recipe.id}" has no consumer recipe anywhere`,
+          ),
+        );
+      } else if (consumedAt > recipe.unlockTier) {
+        issues.push(
+          issue(
+            5,
+            `byproduct "${output.item}" appears at tier ${recipe.unlockTier} (recipe "${recipe.id}") but its earliest consumer unlocks at tier ${consumedAt}`,
+          ),
+        );
+      }
+    }
+  }
+  return issues;
+}
+
+export function checkBuildCostsSatisfiable(bundle: Bundle): ValidationIssue[] {
+  const produced = earliestProduction(bundle);
+  const issues: ValidationIssue[] = [];
+
+  for (const cls of bundle.machineClasses) {
+    for (const mark of cls.marks) {
+      for (const cost of mark.buildCost) {
+        const producedAt = produced.get(cost.item);
+        if (producedAt === undefined) {
+          issues.push(
+            issue(7, `"${cls.id}" mk${mark.mark} costs "${cost.item}", which nothing produces`),
+          );
+        } else if (producedAt > mark.unlockTier) {
+          issues.push(
+            issue(
+              7,
+              `"${cls.id}" mk${mark.mark} unlocks at tier ${mark.unlockTier} but costs "${cost.item}", first produced at tier ${producedAt}`,
+            ),
+          );
+        }
+      }
+    }
+  }
+  return issues;
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm --filter @manufactory/content test graph`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add structural graph validation
+
+Checks 3, 4, 5, and 7 from spec B.6. Check 5 enforces spec section 3.4's
+rule that every byproduct must have a consumer reachable at the tier it
+appears; without it a byproduct fills its tank, backpressures its
+producer, and stalls the chain with no way out.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 9: Checksum, the fixture bundle, and the `content:check` CLI
+
+**Files:**
+- Create: `packages/content/src/checksum.ts`, `packages/content/src/validate/index.ts`, `packages/content/src/cli.ts`
+- Create: `packages/content/bundles/fixture/{lanes,items,machines,recipes,pacing}.yaml`
+- Modify: `packages/content/package.json`, `packages/content/src/index.ts`, `.github/workflows/ci.yml`
+- Test: `packages/content/src/checksum.test.ts`, `packages/content/src/validate/fixture.test.ts`
+
+**Interfaces:**
+- Consumes: `loadBundleDir`, `checkReferences` (Task 6); `checkCycles` (Task 7); `checkProducers`, `checkConsumers`, `checkByproductOutlets`, `checkBuildCostsSatisfiable` (Task 8)
+- Produces:
+  - `bundleChecksum(bundle: Bundle): string` — sha256 hex over a key-sorted serialization (check 11)
+  - `validateBundle(bundle: Bundle): ValidationIssue[]` — every implemented check, ordered by check number
+  - A CLI: `pnpm content:check` exits 0 on a clean bundle, 1 with a readable report otherwise
+
+- [ ] **Step 1: Add tsx and point the script at the CLI**
+
+In `packages/content/package.json`, change the `content:check` script and add the dev dependency:
+
+```json
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "content:check": "tsx src/cli.ts bundles/fixture"
+  },
+```
+
+Add `"tsx": "^4.19.0"` to `devDependencies`, then run `pnpm install`.
+
+- [ ] **Step 2: Write the failing checksum test**
+
+`packages/content/src/checksum.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { bundleChecksum } from "./checksum.js";
+import type { Bundle } from "./schema.js";
+
+const base = (): Bundle =>
+  ({
+    version: "t.v1",
+    lanes: [{ id: "iron", name: "Iron", order: 0, unlockTier: 0 }],
+    items: [],
+    machineClasses: [],
+    recipes: [],
+    pacing: {
+      targetCollectionsToTier: [2],
+      activeHoursPerDay: 2.5,
+      offlineCollectionsPerDay: 3,
+      purchaseIntervalEarlySeconds: 120,
+      purchaseIntervalLateSeconds: 1800,
+      storageBindingCadence: 12,
+    },
+  }) as unknown as Bundle;
+
+describe("bundleChecksum", () => {
+  it("is a 64-character hex sha256", () => {
+    expect(bundleChecksum(base())).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("is stable across repeated calls", () => {
+    expect(bundleChecksum(base())).toBe(bundleChecksum(base()));
+  });
+
+  it("ignores key insertion order", () => {
+    const a = base();
+    const b = { pacing: a.pacing, recipes: [], machineClasses: [], items: [], lanes: a.lanes, version: a.version } as unknown as Bundle;
+    expect(bundleChecksum(b)).toBe(bundleChecksum(a));
+  });
+
+  it("changes when any value changes", () => {
+    const changed = base();
+    changed.version = "t.v2";
+    expect(bundleChecksum(changed)).not.toBe(bundleChecksum(base()));
+  });
+
+  it("does not ignore array order, which is meaningful", () => {
+    const a = base();
+    a.lanes = [
+      { id: "iron", name: "Iron", order: 0, unlockTier: 0 },
+      { id: "oil", name: "Oil", order: 1, unlockTier: 2 },
+    ];
+    const b = base();
+    b.lanes = [...a.lanes].reverse();
+    expect(bundleChecksum(a)).not.toBe(bundleChecksum(b));
+  });
+});
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `pnpm --filter @manufactory/content test checksum`
+Expected: FAIL — `Cannot find module './checksum.js'`.
+
+- [ ] **Step 4: Write the checksum implementation**
+
+`packages/content/src/checksum.ts`:
+
+```ts
+// Spec B.6 check 11 and spec section 12.7: a bundle is identified by a checksum
+// so a save pinned to a content version is pinned to exactly those numbers.
+// Object key order must not affect the result — yaml authors reorder keys freely
+// — but array order must, because lane order and recipe order are meaningful.
+import { createHash } from "node:crypto";
+import type { Bundle } from "./schema.js";
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
+    return Object.fromEntries(entries.map(([k, v]) => [k, canonicalize(v)]));
+  }
+  return value;
+}
+
+export function bundleChecksum(bundle: Bundle): string {
+  return createHash("sha256").update(JSON.stringify(canonicalize(bundle))).digest("hex");
+}
+```
+
+- [ ] **Step 5: Write the aggregate validator**
+
+`packages/content/src/validate/index.ts`:
+
+```ts
+// Spec B.6. Checks 8, 9, and 10 (r_eff > 1 + epsilon, storage cap versus largest
+// build cost, generator capacity versus tier draw) need the economy and
+// calibration machinery and land in Phase 2.
+import { checkReferences, type ValidationIssue } from "../load.js";
+import type { Bundle } from "../schema.js";
+import {
+  checkByproductOutlets,
+  checkBuildCostsSatisfiable,
+  checkConsumers,
+  checkProducers,
+} from "./graph.js";
+import { checkCycles } from "./scc.js";
+
+export function validateBundle(bundle: Bundle): ValidationIssue[] {
+  return [
+    ...checkReferences(bundle),
+    ...checkProducers(bundle),
+    ...checkConsumers(bundle),
+    ...checkByproductOutlets(bundle),
+    ...checkCycles(bundle),
+    ...checkBuildCostsSatisfiable(bundle),
+  ].sort((a, b) => a.check - b.check);
+}
+
+export { checkByproductOutlets, checkBuildCostsSatisfiable, checkConsumers, checkProducers };
+export { buildRecipeDependencyGraph, checkCycles, findStronglyConnectedComponents } from "./scc.js";
+```
+
+- [ ] **Step 6: Author the fixture bundle**
+
+`packages/content/bundles/fixture/lanes.yaml`:
+
+```yaml
+version: fixture.v1
+lanes:
+  - { id: iron, name: Iron, order: 0, unlockTier: 0 }
+  - { id: oil, name: Oil, order: 1, unlockTier: 2 }
+```
+
+`packages/content/bundles/fixture/items.yaml`:
+
+```yaml
+items:
+  - { id: iron_ore,   lane: iron, tier: 0, name: Iron Ore,   baseStorageCap: 600, baseQuantumCap: 2400 }
+  - { id: iron_ingot, lane: iron, tier: 0, name: Iron Ingot, baseStorageCap: 400, baseQuantumCap: 1600 }
+  - { id: iron_plate, lane: iron, tier: 1, name: Iron Plate, baseStorageCap: 300, baseQuantumCap: 1200, terminal: true }
+  - { id: crude_oil,  lane: oil,  tier: 2, name: Crude Oil,  baseStorageCap: 400, baseQuantumCap: 1600, fluid: true }
+  - { id: plastic,    lane: oil,  tier: 3, name: Plastic,    baseStorageCap: 200, baseQuantumCap: 800,  terminal: true }
+  - { id: heavy_oil_residue, lane: oil, tier: 3, name: Heavy Oil Residue, baseStorageCap: 100, baseQuantumCap: 400, fluid: true }
+  - { id: fuel,       lane: oil,  tier: 3, name: Fuel,       baseStorageCap: 200, baseQuantumCap: 800,  fluid: true }
+```
+
+`packages/content/bundles/fixture/machines.yaml`:
+
+```yaml
+machineClasses:
+  - id: miner
+    name: Miner
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Miner Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 5,  buildCost: [{ item: iron_plate, amount: 10 }], unlockTier: 0 }
+      # Spec C.0: buildCostMultiplier equals rateMultiplier, so this mark is
+      # pace-neutral across a tier cycle.
+      - { mark: 2, name: Miner Mk.2, rateMultiplier: 3, buildCostMultiplier: 3, powerDraw: 15, buildCost: [{ item: iron_plate, amount: 30 }], unlockTier: 1 }
+  - id: smelter
+    name: Smelter
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Smelter, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 4, buildCost: [{ item: iron_plate, amount: 15 }], unlockTier: 0 }
+  - id: constructor
+    name: Constructor
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Constructor, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 4, buildCost: [{ item: iron_plate, amount: 20 }], unlockTier: 0 }
+  - id: extractor
+    name: Oil Extractor
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Oil Extractor, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 20, buildCost: [{ item: iron_plate, amount: 80 }], unlockTier: 2 }
+  - id: refinery
+    name: Refinery
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Refinery, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 30, buildCost: [{ item: iron_plate, amount: 120 }], unlockTier: 2 }
+  - id: generator
+    name: Fuel Generator
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Fuel Generator, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 0, buildCost: [{ item: iron_plate, amount: 200 }], unlockTier: 3 }
+```
+
+`packages/content/bundles/fixture/recipes.yaml`:
+
+```yaml
+recipes:
+  - id: mine_iron
+    name: Iron Ore
+    lane: iron
+    machineClass: miner
+    inputs: []
+    outputs: [{ item: iron_ore, rate: "60" }]
+    unlockTier: 0
+
+  - id: smelt_iron
+    name: Iron Ingot
+    lane: iron
+    machineClass: smelter
+    inputs: [{ item: iron_ore, rate: "30" }]
+    outputs: [{ item: iron_ingot, rate: "30" }]
+    unlockTier: 0
+
+  - id: make_plate
+    name: Iron Plate
+    lane: iron
+    machineClass: constructor
+    inputs: [{ item: iron_ingot, rate: "30" }]
+    outputs: [{ item: iron_plate, rate: "20" }]
+    unlockTier: 0
+
+  - id: extract_oil
+    name: Crude Oil
+    lane: oil
+    machineClass: extractor
+    inputs: []
+    outputs: [{ item: crude_oil, rate: "120" }]
+    unlockTier: 2
+
+  # The byproduct triangle in miniature: this emits residue, and residual_fuel
+  # is its consume corner at the same tier, satisfying check 5.
+  - id: refine_plastic
+    name: Plastic
+    lane: oil
+    machineClass: refinery
+    inputs: [{ item: crude_oil, rate: "30" }]
+    outputs:
+      - { item: plastic, rate: "20" }
+      - { item: heavy_oil_residue, rate: "10", byproduct: true }
+    unlockTier: 2
+
+  - id: residual_fuel
+    name: Residual Fuel
+    lane: oil
+    machineClass: refinery
+    inputs: [{ item: heavy_oil_residue, rate: "60" }]
+    outputs: [{ item: fuel, rate: "40" }]
+    unlockTier: 2
+
+  # Generators are ordinary recipes that consume a fuel item and emit power
+  # (spec section 6.3), so they have no item outputs.
+  - id: burn_fuel
+    name: Fuel Generator
+    lane: oil
+    machineClass: generator
+    inputs: [{ item: fuel, rate: "20" }]
+    outputs: []
+    powerOutput: 250
+    unlockTier: 3
+```
+
+`packages/content/bundles/fixture/pacing.yaml`:
+
+```yaml
+pacing:
+  targetCollectionsToTier: [2, 5, 11, 24]
+  activeHoursPerDay: 2.5
+  offlineCollectionsPerDay: 3
+  purchaseIntervalEarlySeconds: 120
+  purchaseIntervalLateSeconds: 1800
+  storageBindingCadence: 12
+```
+
+- [ ] **Step 7: Write the fixture test**
+
+`packages/content/src/validate/fixture.test.ts`:
+
+```ts
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { loadBundleDir } from "../load.js";
+import { validateBundle } from "./index.js";
+
+const fixtureDir = fileURLToPath(new URL("../../bundles/fixture", import.meta.url));
+
+describe("the fixture bundle", () => {
+  it("loads and passes every implemented check", () => {
+    const bundle = loadBundleDir(fixtureDir);
+    expect(validateBundle(bundle)).toEqual([]);
+  });
+
+  it("covers the shapes the engine needs to exercise", () => {
+    const bundle = loadBundleDir(fixtureDir);
+    expect(bundle.lanes.length).toBeGreaterThanOrEqual(2);
+    expect(bundle.items.some((i) => i.fluid)).toBe(true);
+    expect(bundle.recipes.some((r) => r.inputs.length === 0)).toBe(true);
+    expect(bundle.recipes.some((r) => r.outputs.some((o) => o.byproduct))).toBe(true);
+    expect(bundle.recipes.some((r) => r.powerOutput > 0)).toBe(true);
+    expect(bundle.machineClasses.some((m) => m.marks.length > 1)).toBe(true);
+  });
+
+  it("fails loudly once a byproduct outlet is removed", () => {
+    const bundle = loadBundleDir(fixtureDir);
+    bundle.recipes = bundle.recipes.filter((r) => r.id !== "residual_fuel");
+    const issues = validateBundle(bundle);
+    expect(issues.some((i) => i.check === 5)).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 8: Write the CLI**
+
+`packages/content/src/cli.ts`:
+
+```ts
+#!/usr/bin/env node
+// `pnpm content:check` — spec B.6. Exits non-zero on any error so CI fails the
+// build on structurally broken content.
+import { argv, exit, stderr, stdout } from "node:process";
+import { bundleChecksum } from "./checksum.js";
+import { loadBundleDir } from "./load.js";
+import { validateBundle } from "./validate/index.js";
+
+const dir = argv[2];
+if (!dir) {
+  stderr.write("usage: content:check <bundle-directory>\n");
+  exit(2);
+}
+
+let bundle;
+try {
+  bundle = loadBundleDir(dir);
+} catch (error) {
+  stderr.write(`check 1 (schema) failed for ${dir}:\n${String(error)}\n`);
+  exit(1);
+}
+
+const issues = validateBundle(bundle);
+
+if (issues.length > 0) {
+  stderr.write(`${issues.length} problem(s) in ${dir}:\n`);
+  for (const i of issues) stderr.write(`  [check ${i.check}] ${i.message}\n`);
+  exit(1);
+}
+
+stdout.write(
+  `${bundle.version}: ${bundle.lanes.length} lanes, ${bundle.items.length} items, ` +
+    `${bundle.recipes.length} recipes, ${bundle.machineClasses.length} machine classes\n` +
+    `checksum ${bundleChecksum(bundle)}\n`,
+);
+```
+
+- [ ] **Step 9: Export everything from the package entry point**
+
+`packages/content/src/index.ts`:
+
+```ts
+export * from "./schema.js";
+export { checkReferences, loadBundleDir, type ValidationIssue } from "./load.js";
+export { bundleChecksum } from "./checksum.js";
+export * from "./validate/index.js";
+```
+
+- [ ] **Step 10: Run the tests and the CLI**
+
+Run:
+
+```bash
+pnpm --filter @manufactory/content test
+pnpm content:check
+```
+
+Expected: tests PASS; the CLI prints `fixture.v1: 2 lanes, 7 items, 7 recipes, 6 machine classes` plus a 64-character checksum, and exits 0.
+
+- [ ] **Step 11: Add content:check to CI**
+
+In `.github/workflows/ci.yml`, add a final step after `pnpm test`:
+
+```yaml
+      - run: pnpm content:check
+```
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add the bundle checksum, fixture bundle, and content:check CLI
+
+Completes validator checks 1-7 and 11 from spec B.6; checks 8, 9, and 10
+need calibration machinery and arrive in Phase 2. The fixture bundle is
+small but exercises every shape the engine will need: extraction,
+conversion, fluids, a byproduct with its consume corner, a generator with
+power output, and a machine class with two marks.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 10: Postgres and SuperTokens via Docker Compose
+
+**Files:**
+- Create: `infra/docker-compose.yml`, `infra/.env.example`, `infra/initdb/01-supertokens.sql`, `infra/README.md`
+
+**Interfaces:**
+- Consumes: nothing
+- Produces: a local Postgres 16 on `localhost:5432` (database `manufactory`, role `manufactory`) and a SuperTokens core on `localhost:3567` backed by a separate `supertokens` database in the same instance
+
+Spec §15 targets Unraid with an existing Postgres, creating an isolated database and role rather than a second instance. This compose file is the development mirror of that arrangement: one Postgres, two databases.
+
+- [ ] **Step 1: Write the init script**
+
+`infra/initdb/01-supertokens.sql`:
+
+```sql
+-- Spec section 15: SuperTokens gets its own database inside the same Postgres
+-- instance rather than a second container. This mirrors the production layout,
+-- where the database and role are created inside the existing Unraid Postgres.
+CREATE DATABASE supertokens;
+```
+
+- [ ] **Step 2: Write the environment template**
+
+`infra/.env.example`:
+
+```
+POSTGRES_PASSWORD=devpassword
+SUPERTOKENS_API_KEY=devapikey
+```
+
+- [ ] **Step 3: Write the compose file**
+
+`infra/docker-compose.yml`:
+
+```yaml
+name: manufactory-idle
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: manufactory
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+      POSTGRES_DB: manufactory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manufactory -d manufactory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  supertokens:
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRESQL_CONNECTION_URI: postgresql://manufactory:${POSTGRES_PASSWORD}@postgres:5432/supertokens
+      API_KEYS: ${SUPERTOKENS_API_KEY:?set SUPERTOKENS_API_KEY in infra/.env}
+    ports:
+      - "3567:3567"
+
+volumes:
+  pgdata:
+```
+
+- [ ] **Step 4: Bring the stack up**
+
+Run:
+
+```bash
+cd infra
+cp .env.example .env
+docker compose up -d
+docker compose ps
+```
+
+Expected: both services running, `postgres` reporting healthy.
+
+- [ ] **Step 5: Verify both services answer**
+
+Run:
+
+```bash
+docker compose exec -T postgres psql -U manufactory -d manufactory -c '\l' | grep -E 'manufactory|supertokens'
+curl -fsS http://localhost:3567/hello
+```
+
+Expected: the `\l` output lists both the `manufactory` and `supertokens` databases, and `curl` prints `Hello`.
+
+If `curl` fails, check `docker compose logs supertokens` — the usual cause is the init script not running because the `pgdata` volume already existed from an earlier attempt. Fix with `docker compose down -v` and repeat Step 4.
+
+- [ ] **Step 6: Pin the SuperTokens image**
+
+Run:
+
+```bash
+docker compose images supertokens
+```
+
+Take the resolved tag or digest and replace `:latest` in `infra/docker-compose.yml` with it, so the stack is reproducible. Re-run `docker compose up -d` to confirm the pinned reference still starts.
+
+- [ ] **Step 7: Write the infra README**
+
+`infra/README.md`:
+
+```markdown
+# Local infrastructure
+
+One Postgres 16 instance holding two databases — `manufactory` for game state and
+`supertokens` for auth — plus the SuperTokens core. This mirrors the production
+layout in spec section 15, where both databases live inside the existing Unraid
+Postgres rather than a second instance.
+
+## Usage
+
+    cp .env.example .env      # then edit the secrets
+    docker compose up -d
+    curl http://localhost:3567/hello    # -> Hello
+
+Reset everything, including data:
+
+    docker compose down -v
+
+## Notes
+
+- `.env` is gitignored. Never commit real secrets; the image carries none.
+- `initdb/` runs only on a first-time volume initialization. If you change it,
+  you must `docker compose down -v` for the change to take effect.
+- Production adds a `pg_dump` cron sidecar (spec section 15). Not needed locally.
+```
+
+- [ ] **Step 8: Confirm .env is ignored**
+
+Run: `git status --short infra/`
+Expected: `infra/.env` does not appear. The root `.gitignore` already carries `.env` and `.env.*` with a `!.env.example` exception.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+Add local Postgres and SuperTokens via Docker Compose
+
+One Postgres 16 instance with two databases, mirroring the production
+layout in spec section 15 where both live inside the existing Unraid
+instance rather than standing up a second Postgres.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## Definition of done
+
+Phase 0 is complete when, from a clean checkout:
+
+```bash
+pnpm install
+pnpm lint          # exit 0
+pnpm typecheck     # exit 0
+pnpm test          # rational + engine + content suites all green
+pnpm content:check # fixture bundle validates, prints a checksum
+cd infra && docker compose up -d && curl -fsS http://localhost:3567/hello   # -> Hello
+```
+
+and CI reproduces the first four on every push.
+
+## What Phase 0 deliberately does not include
+
+- **Validator checks 8, 9, 10** — need economy and calibration machinery (Phase 2)
+- **Any solver, storage, power, or resolve code** — Phase 1
+- **The real vertical slice content** — Phase 2; the fixture is a pipeline test, not a game
+- **The API, migrations, or auth wiring** — Phase 3. This task stands the containers up; nothing connects to them yet
