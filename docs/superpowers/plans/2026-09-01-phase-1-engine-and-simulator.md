@@ -1415,7 +1415,7 @@ EOF
 - Test: `packages/engine/src/graph/expand.test.ts`
 
 **Interfaces:**
-- Consumes: `indexContent`, `type IndexedContent`, `type IndexedRecipe`, `laneClassKey`, `POWER_ITEM`, `type ItemId`, `type RecipeId`, `type ContentBundle` (Task 2); `parseRational`, `multiply`, `divide`, `add`, `of`, `toApproximateNumber`, `ZERO`, `ONE`, `type Rational` from `@manufactory/rational`
+- Consumes: `indexContent`, `type IndexedContent`, `isLiveRecipe`, `POWER_ITEM`, `type ItemId`, `type RecipeId`, `type ContentBundle` (Task 2); `parseRational`, `multiply`, `divide`, `add`, `of`, `toApproximateNumber`, `ZERO`, `type Rational` from `@manufactory/rational`
 - Produces, from `@manufactory/engine`:
   - `interface ExpansionVectors { key: string; unitsPerItem: Map<ItemId, number>; directInputs: Map<ItemId, Map<ItemId, number>>; perUnit: Map<ItemId, Map<RecipeId, number>>; rawCost: Map<ItemId, Map<ItemId, number>> }`
   - `computeExpansion(content: IndexedContent, tier: number, activeRecipe: Readonly<Record<ItemId, RecipeId>>): ExpansionVectors`
@@ -3213,7 +3213,11 @@ describe("computeCapacity", () => {
     w = { ...w, assignment: { ...w.assignment, refine_plastic: 4 } };
     // refine_plastic unlocks at tier 2; the world is at tier 0.
     expect(computeCapacity(content, w).unitsByRecipe.has("refine_plastic")).toBe(false);
-    expect(computeCapacity(content, { ...w, tier: 2 }).unitsByRecipe.get("refine_plastic")).toBe(4);
+    // At tier 2 the oil lane has picked up that tier's x1.5 milestone grant, so the
+    // four machines are 6 machine-units.
+    expect(
+      computeCapacity(content, { ...w, tier: 2 }).unitsByRecipe.get("refine_plastic"),
+    ).toBeCloseTo(6, 9);
   });
 
   it("gives a deselected recipe no capacity (spec 4.4)", () => {
@@ -3275,15 +3279,20 @@ describe("power", () => {
     expect(powerDemandMw(content, cap, w, new Map([["mine_iron", 1]]))).toBe(0);
   });
 
-  it("sums generator output plus the HUB allowance and the tap injection", () => {
-    let w = initialWorld(content, 1, 3);
+  it("sums generator output on top of the HUB allowance", () => {
+    let w = initialWorld(content, 1, 0);
+    // burn_fuel unlocks at tier 3, so the world has to be there for it to be live.
     w = { ...w, tier: 3 };
     w = withInstalled(w, "oil", "generator", 1, 2);
     w = { ...w, assignment: { ...w.assignment, burn_fuel: 2 } };
     const cap = computeCapacity(content, w);
-    // 2 units x 250 MW at clock 1 = 500, plus the fixture's 200 MW HUB allowance.
-    expect(powerSupplyMw(content, cap, new Map([["burn_fuel", 1]]))).toBeCloseTo(700, 9);
-    expect(powerSupplyMw(content, cap, new Map([["burn_fuel", 0.4]]))).toBeCloseTo(400, 9);
+    // At tier 3 the oil lane carries the tier-2 and tier-3 milestone grants, x1.5
+    // each, so the lane multiplier is 2.25 and 2 machines are 4.5 machine-units.
+    expect(cap.unitsByRecipe.get("burn_fuel")).toBeCloseTo(4.5, 9);
+    // 4.5 units x 250 MW at clock 1 = 1125, plus the fixture's 200 MW HUB allowance.
+    expect(powerSupplyMw(content, cap, new Map([["burn_fuel", 1]]))).toBeCloseTo(1325, 6);
+    // At clock 0.4: 1125 * 0.4 = 450, plus 200.
+    expect(powerSupplyMw(content, cap, new Map([["burn_fuel", 0.4]]))).toBeCloseTo(650, 6);
   });
 
   it("counts the power item as a generator output, not a stockpile", () => {
@@ -6000,8 +6009,13 @@ describe("resolve — a window with no events", () => {
 describe("resolve — discrete events", () => {
   it("stops at a fill and backpressures afterwards", () => {
     const start = base();
-    const primed: WorldState = { ...start, stored: { ...start.stored, iron_ore: D(2_900) } };
-    // Ore cap is 600 storage + 2400 quantum = 3000; net 0.98/s fills it in ~102s.
+    // Ore caps are 600 storage and 2400 quantum, so 600 + 2300 is 2900 of 3000 with
+    // storage legally full. Net 0.98/s closes the last 100 in about 102 seconds.
+    const primed: WorldState = {
+      ...start,
+      stored: { ...start.stored, iron_ore: D(600) },
+      quantum: { ...start.quantum, iron_ore: D(2_300) },
+    };
     const r = resolve(primed, content, 200_000);
     expect(r.summary.filled.some((f) => f.itemId === "iron_ore")).toBe(true);
     expect(liquid(r.state, "iron_ore").toNumber()).toBeCloseTo(3_000, 6);
@@ -6547,7 +6561,7 @@ EOF
 - Test: `packages/engine/src/actions/machines.test.ts`
 
 **Interfaces:**
-- Consumes: `D`, `DECIMAL_ZERO`, `toCanonical`, `type Dec` (Phase 0 Task 2); `type IndexedContent`, `getMark`, `laneClassKey`, `isLiveRecipe`, `POWER_ITEM`, `type ItemId`, `type LaneId`, `type MachineClassId`, `type RecipeId` (Task 2); `type WorldState`, `type PriorityEntry`, `type PriorityMode`, `type PrngState`, `installedAt`, `installedMachines`, `withInstalled`, `assignedTotal` (Task 4); `machineCostRange` (Task 5); `bestUnlockedMark` (Task 6); `spendForBuild`, `depositRefund` (Task 7)
+- Consumes: `type Dec` (Phase 0 Task 2); `type IndexedContent`, `getMark`, `laneClassKey`, `isLiveRecipe`, `type ItemId`, `type LaneId`, `type MachineClassId`, `type RecipeId` (Task 2); `type WorldState`, `type PriorityMode`, `installedAt`, `installedMachines`, `withInstalled`, `assignedTotal` (Task 4); `machineCostRange`, `ladderInput` (Task 5, `ladderInput` in the test only); `spendForBuild`, `depositRefund` (Task 7)
 - Produces, from `@manufactory/engine`:
   - `const MAX_ACTION_COUNT = 1000`
   - `type Action` — the full eleven-variant union (declared here in `types.ts`, all eleven, so Task 13 adds no new members)
@@ -8332,7 +8346,7 @@ EOF
 - Test: `packages/engine/src/properties.test.ts`, `packages/engine/src/fuzz.test.ts`
 
 **Interfaces:**
-- Consumes: `D`, `type Dec` (Phase 0 Task 2); `type IndexedContent`, `isLiveRecipe`, `laneClassKey`, `getMark`, `type ItemId`, `type LaneId`, `type MachineClassId`, `type RecipeId` (Task 2); `computeExpansion` (Task 3); `type WorldState`, `initialWorld`, `installedAt`, `withInstalled`, `installedMachines` (Task 4); `machineCostRange` (Task 5); `computeCapacity` (Task 6); `depositProduction`, `depositRefund`, `liquidCap`, `liquid`, `quantumCap`, `itemStateTag` (Task 7); `effectivePriority` (Task 8); `solveItems` (Task 9); `solve` (Task 10); `resolve` (Task 11); `applyBuyMachine`, `applyDismantle` (Task 12)
+- Consumes: `D` (Phase 0 Task 2); `type IndexedContent`, `indexContent`, `isLiveRecipe`, `getMark`, `type ItemId`, `type LaneId`, `type MachineClassId` (Task 2); `computeExpansion` (Task 3); `type WorldState`, `initialWorld`, `installedAt`, `withInstalled` (Task 4); `machineCostRange` (Task 5); `computeCapacity` (Task 6); `depositProduction`, `depositRefund`, `liquidCap`, `liquid`, `quantumCap`, `itemStateTag` (Task 7); `effectivePriority` (Task 8); `solveItems` (Task 9); `solve` (Task 10); `resolve` (Task 11); `applyBuyMachine`, `applyDismantle` (Task 12); `serializeWorld`, `deserializeWorld` (Task 4, fuzz test only)
 - Produces:
   - `packages/engine/src/testing/arbitrary.ts` exporting `interface WorldSketch { tier: number; machines: number[]; fills: number[]; storageLevels: number[]; qsLevels: number[]; reserves: number[]; tapStacks: number; refund: number; rotate: number }`, `buildWorld(content: IndexedContent, sketch: WorldSketch, nowMs: number): WorldState`, and `arbWorldSketch(): fc.Arbitrary<WorldSketch>`
   - No production exports — this task adds tests only
@@ -8958,7 +8972,7 @@ Times are reported in **collections**, not hours, per spec B.7 and 16.2: with an
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "sim": "tsx src/bin.ts",
-    "sim:ci": "tsx src/bin.ts run --policy greedy --until tier:2 --max-days 120 --report text"
+    "sim:ci": "tsx src/bin.ts run --policy greedy --until tier:2 --max-days 30 --report text"
   },
   "dependencies": {
     "@manufactory/content": "workspace:*",
@@ -8994,6 +9008,10 @@ Times are reported in **collections**, not hours, per spec B.7 and 16.2: with an
 ```
 
 `jsx` and the `DOM` lib are here for Task 16's Ink client; they are harmless for this task's modules.
+
+`sim:ci` caps the budget at 30 simulated days. Greedy reaches tier 2 in a few
+simulated hours, so the loop exits long before the cap; the cap exists so a content
+change that makes a tier unreachable fails CI in seconds rather than hanging it.
 
 Run `pnpm install`.
 
@@ -9238,7 +9256,6 @@ import {
   bestUnlockedMark,
   canAffordBuild,
   getMark,
-  laneClassKey,
   levelCostRange,
   machineCostRange,
   solve,
