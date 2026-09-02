@@ -1,0 +1,35 @@
+name: manufactory-idle
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: manufactory
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+      POSTGRES_DB: manufactory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manufactory -d manufactory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  supertokens:
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRESQL_CONNECTION_URI: postgresql://manufactory:${POSTGRES_PASSWORD}@postgres:5432/supertokens
+      API_KEYS: ${SUPERTOKENS_API_KEY:?set SUPERTOKENS_API_KEY in infra/.env}
+    ports:
+      - "3567:3567"
+
+volumes:
+  pgdata:

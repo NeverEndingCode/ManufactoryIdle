@@ -1,0 +1,4 @@
+version: fixture.v1
+lanes:
+  - { id: iron, name: Iron, order: 0, unlockTier: 0 }
+  - { id: oil, name: Oil, order: 1, unlockTier: 2 }

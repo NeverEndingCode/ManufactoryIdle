@@ -272,7 +272,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with: { version: 10 }
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -1059,7 +1058,9 @@ const Tier = z.number().int().min(0);
 // Rates are exact rationals (spec A.4 zone 1), authored as either a decimal
 // ("11.25") or a fraction ("45/4"), and parsed with @manufactory/rational at
 // load time. They are never floats.
-const Rate = z.string().regex(/^\d+(\.\d+)?(\/\d+)?$/, "rate must be a decimal or a fraction");
+const Rate = z
+  .string()
+  .regex(/^\d+\/\d+$|^\d+(\.\d+)?$/, "rate must be a decimal or a fraction, not both");
 
 export const LaneSchema = z.object({
   id: Id,
@@ -1345,9 +1346,14 @@ export function loadBundleDir(dir: string): Bundle {
   const merged: Record<string, unknown> = {};
   for (const file of files) {
     const parsed = parseYaml(readFileSync(join(dir, file), "utf8")) as unknown;
-    if (parsed && typeof parsed === "object") {
-      mergeInto(merged, parsed as Record<string, unknown>);
+    if (parsed === null || parsed === undefined) continue; // empty file, legitimate
+    if (typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(
+        `${file}: a bundle file's top level must be a mapping, but this parsed to ` +
+          `${Array.isArray(parsed) ? "a list" : typeof parsed}. Check indentation.`,
+      );
     }
+    mergeInto(merged, parsed as Record<string, unknown>);
   }
 
   // Check 1: schema conformance. Throwing here is deliberate — nothing

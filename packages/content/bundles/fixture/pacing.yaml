@@ -1,0 +1,7 @@
+pacing:
+  targetCollectionsToTier: [2, 5, 11, 24]
+  activeHoursPerDay: 2.5
+  offlineCollectionsPerDay: 3
+  purchaseIntervalEarlySeconds: 120
+  purchaseIntervalLateSeconds: 1800
+  storageBindingCadence: 12

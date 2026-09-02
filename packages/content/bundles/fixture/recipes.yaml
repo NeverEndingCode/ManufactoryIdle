@@ -1,0 +1,63 @@
+recipes:
+  - id: mine_iron
+    name: Iron Ore
+    lane: iron
+    machineClass: miner
+    inputs: []
+    outputs: [{ item: iron_ore, rate: "60" }]
+    unlockTier: 0
+
+  - id: smelt_iron
+    name: Iron Ingot
+    lane: iron
+    machineClass: smelter
+    inputs: [{ item: iron_ore, rate: "30" }]
+    outputs: [{ item: iron_ingot, rate: "30" }]
+    unlockTier: 0
+
+  - id: make_plate
+    name: Iron Plate
+    lane: iron
+    machineClass: constructor
+    inputs: [{ item: iron_ingot, rate: "30" }]
+    outputs: [{ item: iron_plate, rate: "20" }]
+    unlockTier: 0
+
+  - id: extract_oil
+    name: Crude Oil
+    lane: oil
+    machineClass: extractor
+    inputs: []
+    outputs: [{ item: crude_oil, rate: "120" }]
+    unlockTier: 2
+
+  # The byproduct triangle in miniature: this emits residue, and residual_fuel
+  # is its consume corner at the same tier, satisfying check 5.
+  - id: refine_plastic
+    name: Plastic
+    lane: oil
+    machineClass: refinery
+    inputs: [{ item: crude_oil, rate: "30" }]
+    outputs:
+      - { item: plastic, rate: "20" }
+      - { item: heavy_oil_residue, rate: "10", byproduct: true }
+    unlockTier: 2
+
+  - id: residual_fuel
+    name: Residual Fuel
+    lane: oil
+    machineClass: refinery
+    inputs: [{ item: heavy_oil_residue, rate: "60" }]
+    outputs: [{ item: fuel, rate: "40" }]
+    unlockTier: 2
+
+  # Generators are ordinary recipes that consume a fuel item and emit power
+  # (spec section 6.3), so they have no item outputs.
+  - id: burn_fuel
+    name: Fuel Generator
+    lane: oil
+    machineClass: generator
+    inputs: [{ item: fuel, rate: "20" }]
+    outputs: []
+    powerOutput: 250
+    unlockTier: 3

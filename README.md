@@ -9,7 +9,10 @@ for years.
 
 ## Status
 
-**Design phase.** The engine core design is complete and ready for an implementation plan. No code has been written yet.
+**Phase 0 complete.** The monorepo, three packages (`rational`, `content`, `engine`), CI,
+and local infra (Postgres + SuperTokens via Docker Compose) are in place, with 151 tests,
+lint, typecheck, and `pnpm content:check` all green. The engine core design (below) is
+complete and Phase 1 — the engine and simulator — is next.
 
 | Document | What it is |
 |---|---|
@@ -30,7 +33,7 @@ The original spec is decomposed into four, of which the engine core is the first
 
 | Phase | Deliverable | Ends in |
 |---|---|---|
-| 0 | Monorepo, Postgres, SuperTokens, engine skeleton, content validator, CI | Green pipeline |
+| 0 | Monorepo, Postgres, SuperTokens, engine skeleton, content validator, CI | Green pipeline — **done** |
 | 1 | Engine + simulator | A playable game in the terminal |
 | 2 | Calibrated content | A game that is *paced* |
 | 3 | Server + authority | A game with a backend |

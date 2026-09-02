@@ -1,0 +1,47 @@
+machineClasses:
+  - id: miner
+    name: Miner
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      # Bootstrap order (see machines.yaml / fixture.test.ts comments): mk1
+      # build costs must not require an item downstream of that machine
+      # class itself, or nothing is ever purchasable. iron_ore has no
+      # producer requirements (mine_iron takes no inputs), so miner mk1 is
+      # the one machine that can legitimately cost the very item it mines.
+      - { mark: 1, name: Miner Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 5,  buildCost: [{ item: iron_ore, amount: 10 }], unlockTier: 0 }
+      # Spec C.0: buildCostMultiplier equals rateMultiplier, so this mark is
+      # pace-neutral across a tier cycle. By mk2 (unlockTier 1) iron_plate is
+      # already in production, so this can safely cost the tier-1 item.
+      - { mark: 2, name: Miner Mk.2, rateMultiplier: 3, buildCostMultiplier: 3, powerDraw: 15, buildCost: [{ item: iron_plate, amount: 30 }], unlockTier: 1 }
+  - id: smelter
+    name: Smelter
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      # Costs iron_ore, not iron_ingot or iron_plate: at the point a smelter
+      # is first bought, no smelter exists yet to have made ingot, and no
+      # constructor exists yet to have made plate. Ore is the only iron-lane
+      # item producible before a smelter exists.
+      - { mark: 1, name: Smelter, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 4, buildCost: [{ item: iron_ore, amount: 15 }], unlockTier: 0 }
+  - id: constructor
+    name: Constructor
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      # Costs iron_ingot, not iron_plate: at the point a constructor is first
+      # bought, no constructor exists yet to have made plate, but a smelter
+      # (bought with ore) can already have made ingot.
+      - { mark: 1, name: Constructor, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 4, buildCost: [{ item: iron_ingot, amount: 20 }], unlockTier: 0 }
+  - id: extractor
+    name: Oil Extractor
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Oil Extractor, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 20, buildCost: [{ item: iron_plate, amount: 80 }], unlockTier: 2 }
+  - id: refinery
+    name: Refinery
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Refinery, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 30, buildCost: [{ item: iron_plate, amount: 120 }], unlockTier: 2 }
+  - id: generator
+    name: Fuel Generator
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Fuel Generator, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 0, buildCost: [{ item: iron_plate, amount: 200 }], unlockTier: 3 }
