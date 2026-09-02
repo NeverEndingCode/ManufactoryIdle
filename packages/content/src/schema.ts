@@ -87,6 +87,10 @@ export const MachineClassSchema = z
     id: Id,
     name: z.string().min(1),
     ladder: LadderSchema,
+    // Spec B.4: `r` is derived by the Phase 2 calibration script. Until then it is
+    // authored, defaulting to spec D3's stated 1.09. Cost(n) = base * r^n, and n is
+    // always an integer, so it is evaluated by exponentiation by squaring (spec E.4).
+    costRatio: z.number().gt(1).default(1.09),
     marks: z.array(MarkSchema).min(1),
   })
   .strict();
@@ -126,6 +130,76 @@ export const PacingSchema = z
   })
   .strict();
 
+// Spec B.4. Storage cap = baseStorageCap * capGrowth^level; a level costs
+// baseCostAmount * costGrowth^level of baseCostItem. Quantum Storage uses the same
+// shape but is scoped per lane, not per item, so one purchase lifts every item in
+// the lane. `s`, `sc`, `q` and the QS cost curve are all derived by Phase 2's
+// calibration; these are authored placeholders.
+//
+// baseCostItem is nullable because a schema-level default cannot name an item that
+// exists in every bundle. null means levels are free — only the fixture and
+// calibrated content set a real item.
+export const StorageCurveSchema = z.object({
+  capGrowth: z.number().gt(1),
+  costGrowth: z.number().gt(1),
+  baseCostItem: Id.nullable(),
+  baseCostAmount: z.number().positive(),
+  maxLevel: z.number().int().positive(),
+});
+
+// Spec D3: softcaps are piecewise-linear, not a power law, for the determinism
+// reason in spec E.4. Above `threshold`, each further unit of multiplier counts for
+// `slope` units. slope must be in (0, 1]: 0 would hard-cap (spec 16.6 forbids it)
+// and > 1 would amplify.
+export const SoftcapSchema = z.object({
+  threshold: z.number().positive(),
+  slope: z.number().gt(0).max(1),
+});
+
+export const SoftcapsSchema = z.object({
+  ladder: SoftcapSchema,
+  lane: SoftcapSchema,
+  tap: SoftcapSchema,
+  product: SoftcapSchema,
+});
+
+// Spec C.6: the kick is a step function, not a decaying curve, because continuously
+// varying rates would break the piecewise-constant assumption the event model rests
+// on. Stacks share one expiry timer.
+export const TapSchema = z.object({
+  kickPerStack: z.number().positive(),
+  durationSeconds: z.number().positive(),
+  maxStacks: z.number().int().positive(),
+  powerInjectionMw: z.number().nonnegative(),
+});
+
+// Spec 10.1 and ruling R7. Requirements are paid from liquid stock (stored +
+// quantum); `bound` is never touched, which is what keeps storage caps a real gate
+// on milestones (spec D4).
+export const MilestoneSchema = z.object({
+  tier: z.number().int().min(1),
+  name: z.string().min(1),
+  requires: z.array(CostEntrySchema).min(1),
+  // Spec D3 lever 3: a discrete, roughly x1.5 lane-wide multiplier granted on unlock.
+  laneMultipliers: z.record(Id, z.number().positive()).default({}),
+});
+
+export const StartSchema = z.object({
+  tier: z.number().int().min(0),
+  machines: z
+    .array(
+      z.object({
+        lane: Id,
+        machineClass: Id,
+        mark: z.number().int().min(1),
+        count: z.number().int().positive(),
+      }),
+    )
+    .default([]),
+  assignments: z.record(Id, z.number().int().nonnegative()).default({}),
+  priority: z.array(Id).default([]),
+});
+
 export const BundleSchema = z
   .object({
     version: z.string().min(1),
@@ -133,6 +207,39 @@ export const BundleSchema = z
     items: z.array(ItemSchema).min(1),
     machineClasses: z.array(MachineClassSchema).min(1),
     recipes: z.array(RecipeSchema).min(1),
+    storage: StorageCurveSchema.default({
+      capGrowth: 1.6,
+      costGrowth: 2,
+      baseCostItem: null,
+      baseCostAmount: 50,
+      maxLevel: 20,
+    }),
+    quantumStorage: StorageCurveSchema.default({
+      capGrowth: 1.6,
+      costGrowth: 2.5,
+      baseCostItem: null,
+      baseCostAmount: 500,
+      maxLevel: 15,
+    }),
+    softcaps: SoftcapsSchema.default({
+      ladder: { threshold: 1000, slope: 0.25 },
+      lane: { threshold: 50, slope: 0.25 },
+      tap: { threshold: 2, slope: 0.25 },
+      product: { threshold: 5000, slope: 0.2 },
+    }),
+    tap: TapSchema.default({
+      kickPerStack: 0.05,
+      durationSeconds: 30,
+      maxStacks: 10,
+      powerInjectionMw: 25,
+    }),
+    milestones: z.array(MilestoneSchema).default([]),
+    start: StartSchema.default({ tier: 0, machines: [], assignments: {}, priority: [] }),
+    // Spec 3.2: the HUB equivalent supplies a starting power allowance, so a fresh
+    // world is not stalled at powerRatio 0 before any generator is unlocked.
+    baseGridCapacityMw: z.number().nonnegative().default(0),
+    // Spec section 8: the offline accrual cap, default 8h.
+    offlineCapHours: z.number().positive().default(8),
     pacing: PacingSchema,
   })
   .strict();
@@ -146,4 +253,10 @@ export type MachineClass = z.infer<typeof MachineClassSchema>;
 export type RecipePart = z.infer<typeof RecipePartSchema>;
 export type Recipe = z.infer<typeof RecipeSchema>;
 export type Pacing = z.infer<typeof PacingSchema>;
+export type StorageCurve = z.infer<typeof StorageCurveSchema>;
+export type Softcap = z.infer<typeof SoftcapSchema>;
+export type Softcaps = z.infer<typeof SoftcapsSchema>;
+export type TapConfig = z.infer<typeof TapSchema>;
+export type Milestone = z.infer<typeof MilestoneSchema>;
+export type StartState = z.infer<typeof StartSchema>;
 export type Bundle = z.infer<typeof BundleSchema>;

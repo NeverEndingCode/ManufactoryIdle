@@ -2,6 +2,7 @@ machineClasses:
   - id: miner
     name: Miner
     ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
     marks:
       # Bootstrap order (see machines.yaml / fixture.test.ts comments): mk1
       # build costs must not require an item downstream of that machine
@@ -16,6 +17,7 @@ machineClasses:
   - id: smelter
     name: Smelter
     ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
     marks:
       # Costs iron_ore, not iron_ingot or iron_plate: at the point a smelter
       # is first bought, no smelter exists yet to have made ingot, and no
@@ -25,6 +27,7 @@ machineClasses:
   - id: constructor
     name: Constructor
     ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
     marks:
       # Costs iron_ingot, not iron_plate: at the point a constructor is first
       # bought, no constructor exists yet to have made plate, but a smelter
@@ -33,15 +36,18 @@ machineClasses:
   - id: extractor
     name: Oil Extractor
     ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.12
     marks:
       - { mark: 1, name: Oil Extractor, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 20, buildCost: [{ item: iron_plate, amount: 80 }], unlockTier: 2 }
   - id: refinery
     name: Refinery
     ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.12
     marks:
       - { mark: 1, name: Refinery, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 30, buildCost: [{ item: iron_plate, amount: 120 }], unlockTier: 2 }
   - id: generator
     name: Fuel Generator
     ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
     marks:
       - { mark: 1, name: Fuel Generator, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 0, buildCost: [{ item: iron_plate, amount: 200 }], unlockTier: 3 }

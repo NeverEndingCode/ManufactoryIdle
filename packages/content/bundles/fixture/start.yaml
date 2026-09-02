@@ -1,0 +1,26 @@
+# A fresh world needs enough machines to produce the items its first build costs are
+# denominated in; otherwise nothing can ever be bought.
+start:
+  tier: 0
+  machines:
+    - { lane: iron, machineClass: miner, mark: 1, count: 2 }
+    - { lane: iron, machineClass: smelter, mark: 1, count: 2 }
+    - { lane: iron, machineClass: constructor, mark: 1, count: 1 }
+  assignments:
+    mine_iron: 2
+    smelt_iron: 2
+    make_plate: 1
+  # The list carries an entry for EVERY item, because spec D.1's action set has no
+  # add-or-remove verb: REORDER_PRIORITY permutes, and spec 4.1 makes `paused` the
+  # remove verb ("Pause | Remove from allocation entirely"). A list that covered
+  # only some items would leave the rest permanently unprioritizable.
+  priority:
+    [
+      iron_plate,
+      iron_ingot,
+      iron_ore,
+      plastic,
+      fuel,
+      heavy_oil_residue,
+      crude_oil,
+    ]
