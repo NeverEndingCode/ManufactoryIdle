@@ -1,0 +1,34 @@
+machineClasses:
+  - id: miner
+    name: Miner
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Miner Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 5,  buildCost: [{ item: iron_plate, amount: 10 }], unlockTier: 0 }
+      # Spec C.0: buildCostMultiplier equals rateMultiplier, so this mark is
+      # pace-neutral across a tier cycle.
+      - { mark: 2, name: Miner Mk.2, rateMultiplier: 3, buildCostMultiplier: 3, powerDraw: 15, buildCost: [{ item: iron_plate, amount: 30 }], unlockTier: 1 }
+  - id: smelter
+    name: Smelter
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Smelter, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 4, buildCost: [{ item: iron_plate, amount: 15 }], unlockTier: 0 }
+  - id: constructor
+    name: Constructor
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Constructor, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 4, buildCost: [{ item: iron_plate, amount: 20 }], unlockTier: 0 }
+  - id: extractor
+    name: Oil Extractor
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Oil Extractor, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 20, buildCost: [{ item: iron_plate, amount: 80 }], unlockTier: 2 }
+  - id: refinery
+    name: Refinery
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Refinery, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 30, buildCost: [{ item: iron_plate, amount: 120 }], unlockTier: 2 }
+  - id: generator
+    name: Fuel Generator
+    ladder: { step: 1.5, interval: 10 }
+    marks:
+      - { mark: 1, name: Fuel Generator, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 0, buildCost: [{ item: iron_plate, amount: 200 }], unlockTier: 3 }

@@ -1,0 +1,8 @@
+items:
+  - { id: iron_ore,   lane: iron, tier: 0, name: Iron Ore,   baseStorageCap: 600, baseQuantumCap: 2400 }
+  - { id: iron_ingot, lane: iron, tier: 0, name: Iron Ingot, baseStorageCap: 400, baseQuantumCap: 1600 }
+  - { id: iron_plate, lane: iron, tier: 1, name: Iron Plate, baseStorageCap: 300, baseQuantumCap: 1200, terminal: true }
+  - { id: crude_oil,  lane: oil,  tier: 2, name: Crude Oil,  baseStorageCap: 400, baseQuantumCap: 1600, fluid: true }
+  - { id: plastic,    lane: oil,  tier: 3, name: Plastic,    baseStorageCap: 200, baseQuantumCap: 800,  terminal: true }
+  - { id: heavy_oil_residue, lane: oil, tier: 3, name: Heavy Oil Residue, baseStorageCap: 100, baseQuantumCap: 400, fluid: true }
+  - { id: fuel,       lane: oil,  tier: 3, name: Fuel,       baseStorageCap: 200, baseQuantumCap: 800,  fluid: true }
