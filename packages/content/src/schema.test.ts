@@ -70,6 +70,8 @@ describe("RecipeSchema", () => {
     const base = minimalBundle.recipes[0]!;
     expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "11.25" }] })).not.toThrow();
     expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "45/4" }] })).not.toThrow();
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "60" }] })).not.toThrow();
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "0.5" }] })).not.toThrow();
   });
 
   it("rejects a rate that is not a number or fraction", () => {
@@ -82,9 +84,32 @@ describe("RecipeSchema", () => {
     expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "11.25/4" }] })).toThrow();
   });
 
+  it("rejects a rate with a zero denominator", () => {
+    // Fix 3: the regex alone accepts "5/0"; a division by zero would
+    // otherwise first surface deep inside Phase 1's expansion-vector code.
+    const base = minimalBundle.recipes[0]!;
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "5/0" }] })).toThrow();
+  });
+
+  it("rejects a zero rate", () => {
+    const base = minimalBundle.recipes[0]!;
+    expect(() => RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "0" }] })).toThrow();
+  });
+
   it("allows empty outputs array for generators", () => {
     const base = minimalBundle.recipes[0]!;
     expect(() => RecipeSchema.parse({ ...base, outputs: [] })).not.toThrow();
+  });
+
+  it("rejects an unknown key on a recipe part (authoring typo guard)", () => {
+    // e.g. "byprodcut: true" instead of "byproduct: true" — with a non-strict
+    // schema this is silently stripped, check 5 quietly never fires, and
+    // because the checksum is computed over the stripped bundle, the typo
+    // doesn't even change the version stamp.
+    const base = minimalBundle.recipes[0]!;
+    expect(() =>
+      RecipeSchema.parse({ ...base, outputs: [{ item: "a", rate: "60", byprodcut: true }] }),
+    ).toThrow();
   });
 });
 
