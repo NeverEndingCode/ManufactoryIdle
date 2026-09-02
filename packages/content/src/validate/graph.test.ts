@@ -105,6 +105,71 @@ describe("checkByproductOutlets (check 5)", () => {
     b.recipes.find((r) => r.id === "smelt")!.outputs[1]!.byproduct = false;
     expect(checkByproductOutlets(b)).toEqual([]);
   });
+
+  // Guards the running-minimum in earliestConsumption: a byproduct emitted at
+  // tier 3 with one consumer that unlocks earlier (tier 1) and one that
+  // unlocks later (tier 10). Correct min-tracking finds the tier-1 consumer
+  // and reports no issue. A bug that tracked the maximum instead of the
+  // minimum would see tier 10 > 3 and wrongly flag it. A bug that tracked the
+  // last-seen recipe instead of a true minimum would only sometimes flag it,
+  // depending on array order — so both orderings are exercised below to make
+  // sure neither one accidentally passes under that bug.
+  function bundleWithMultiConsumerByproduct(order: "lateFirst" | "earlyFirst"): Bundle {
+    const b = bundle();
+    b.items.push({
+      id: "goop",
+      lane: "iron",
+      tier: 1,
+      name: "Goop",
+      fluid: true,
+      terminal: false,
+      baseStorageCap: 100,
+      baseQuantumCap: 400,
+    });
+    const source = {
+      id: "byproductSource",
+      name: "ByproductSource",
+      lane: "iron",
+      machineClass: "miner",
+      inputs: [{ item: "ore", rate: "5", byproduct: false }],
+      outputs: [{ item: "goop", rate: "5", byproduct: true }],
+      powerOutput: 0,
+      isAlternate: false,
+      unlockTier: 3,
+    };
+    const consumerEarly = {
+      id: "goopConsumerEarly",
+      name: "GoopConsumerEarly",
+      lane: "iron",
+      machineClass: "miner",
+      inputs: [{ item: "goop", rate: "5", byproduct: false }],
+      outputs: [{ item: "ingot", rate: "1", byproduct: false }],
+      powerOutput: 0,
+      isAlternate: false,
+      unlockTier: 1,
+    };
+    const consumerLate = {
+      id: "goopConsumerLate",
+      name: "GoopConsumerLate",
+      lane: "iron",
+      machineClass: "miner",
+      inputs: [{ item: "goop", rate: "5", byproduct: false }],
+      outputs: [{ item: "ingot", rate: "1", byproduct: false }],
+      powerOutput: 0,
+      isAlternate: false,
+      unlockTier: 10,
+    };
+    b.recipes.push(source, ...(order === "lateFirst" ? [consumerLate, consumerEarly] : [consumerEarly, consumerLate]));
+    return b;
+  }
+
+  it("multi-consumer byproduct: earliest consumer tier wins regardless of order (late consumer first)", () => {
+    expect(checkByproductOutlets(bundleWithMultiConsumerByproduct("lateFirst"))).toEqual([]);
+  });
+
+  it("multi-consumer byproduct: earliest consumer tier wins regardless of order (early consumer first)", () => {
+    expect(checkByproductOutlets(bundleWithMultiConsumerByproduct("earlyFirst"))).toEqual([]);
+  });
 });
 
 describe("checkBuildCostsSatisfiable (check 7)", () => {
@@ -119,5 +184,84 @@ describe("checkBuildCostsSatisfiable (check 7)", () => {
     expect(issues).toHaveLength(1);
     expect(issues[0]!.check).toBe(7);
     expect(issues[0]!.message).toContain("plate");
+  });
+
+  it("flags a build cost whose item nothing produces at all", () => {
+    const b = bundle();
+    b.machineClasses[0]!.marks.push({
+      mark: 2,
+      name: "Mk.2",
+      rateMultiplier: 1.5,
+      buildCostMultiplier: 1.5,
+      powerDraw: 8,
+      buildCost: [{ item: "vapor", amount: 5 }],
+      unlockTier: 1,
+    });
+    const issues = checkBuildCostsSatisfiable(b);
+    expect(issues.some((i) => i.check === 7 && i.message.includes("vapor"))).toBe(true);
+  });
+
+  // Guards the running-minimum in earliestProduction: an item produced by one
+  // recipe at an early tier (0) and one at a late tier (5), used as a build
+  // cost for a mark that unlocks between them (tier 2). Correct min-tracking
+  // finds the tier-0 producer and reports no issue. A bug that tracked the
+  // maximum instead of the minimum would see tier 5 > 2 and wrongly flag it.
+  // A bug that tracked the last-seen recipe instead of a true minimum would
+  // only sometimes flag it, depending on array order — so both orderings are
+  // exercised below to make sure neither one accidentally passes under that
+  // bug.
+  function bundleWithMultiProducerBuildCost(order: "lateFirst" | "earlyFirst"): Bundle {
+    const b = bundle();
+    b.items.push({
+      id: "widget",
+      lane: "iron",
+      tier: 0,
+      name: "Widget",
+      fluid: false,
+      terminal: true,
+      baseStorageCap: 1,
+      baseQuantumCap: 1,
+    });
+    const early = {
+      id: "widgetEarly",
+      name: "WidgetEarly",
+      lane: "iron",
+      machineClass: "miner",
+      inputs: [],
+      outputs: [{ item: "widget", rate: "10", byproduct: false }],
+      powerOutput: 0,
+      isAlternate: false,
+      unlockTier: 0,
+    };
+    const late = {
+      id: "widgetLate",
+      name: "WidgetLate",
+      lane: "iron",
+      machineClass: "miner",
+      inputs: [],
+      outputs: [{ item: "widget", rate: "10", byproduct: false }],
+      powerOutput: 0,
+      isAlternate: false,
+      unlockTier: 5,
+    };
+    b.recipes.push(...(order === "lateFirst" ? [late, early] : [early, late]));
+    b.machineClasses[0]!.marks.push({
+      mark: 2,
+      name: "Mk.2",
+      rateMultiplier: 1.5,
+      buildCostMultiplier: 1.5,
+      powerDraw: 8,
+      buildCost: [{ item: "widget", amount: 1 }],
+      unlockTier: 2,
+    });
+    return b;
+  }
+
+  it("multi-producer build cost: earliest producer tier wins regardless of order (late recipe first)", () => {
+    expect(checkBuildCostsSatisfiable(bundleWithMultiProducerBuildCost("lateFirst"))).toEqual([]);
+  });
+
+  it("multi-producer build cost: earliest producer tier wins regardless of order (early recipe first)", () => {
+    expect(checkBuildCostsSatisfiable(bundleWithMultiProducerBuildCost("earlyFirst"))).toEqual([]);
   });
 });
