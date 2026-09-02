@@ -48,6 +48,32 @@ function plain(value: number): string {
   return value.toFixed(0);
 }
 
+// Renders an already-tiered magnitude (`scaled` in [1, 1000), grouped into
+// tier `tier`) for every mode. Shared by the normal exponent>=3 path and by
+// the two carry-promotion paths in `format` below — everywhere a value has
+// to be displayed one tier up from where its raw exponent first put it.
+function renderTier(tier: number, scaled: number, mode: NotationMode): string {
+  const sci = () => `${scaled.toFixed(2)}e${tier * 3}`;
+
+  switch (mode) {
+    case "sci":
+      return sci();
+    case "eng":
+      return `${scaled.toFixed(2)}e${tier * 3}`;
+    case "names":
+      return tier < NAMES.length ? `${scaled.toFixed(2)} ${NAMES[tier]}` : sci();
+    case "hybrid":
+      return tier < SHORT.length ? `${scaled.toFixed(2)} ${SHORT[tier]}` : sci();
+    case "short":
+    case "doubled": {
+      if (tier < SHORT.length) return `${scaled.toFixed(2)} ${SHORT[tier]}`;
+      const letters = letterSuffix(tier - SHORT.length);
+      const suffix = mode === "doubled" ? letters.toUpperCase() : letters;
+      return `${scaled.toFixed(2)} ${suffix}`;
+    }
+  }
+}
+
 export function format(value: Dec, mode: NotationMode): string {
   if (value.mantissa === 0) return "0";
 
@@ -56,31 +82,35 @@ export function format(value: Dec, mode: NotationMode): string {
   const exponent = value.exponent;
   const mantissa = Math.abs(value.mantissa);
 
-  // eslint-disable-next-line no-restricted-properties -- display-only (spec E.4 exemption); do not copy into economy/
-  if (exponent < 3) return sign + plain(mantissa * Math.pow(10, exponent));
+  if (exponent < 3) {
+    // eslint-disable-next-line no-restricted-properties -- display-only (spec E.4 exemption); do not copy into economy/
+    const magnitude = mantissa * Math.pow(10, exponent);
+    const plainStr = plain(magnitude);
+    // toFixed can round the display up to 1000 even though the true value
+    // sits just under it (999.99 at 0 decimals -> "1000"). That has
+    // effectively crossed into the next tier, so render it there instead of
+    // showing a bare 4-digit number with no suffix.
+    if (Number(plainStr) < 1000) return sign + plainStr;
+    return sign + renderTier(1, magnitude / 1000, mode);
+  }
 
   // tier counts groups of three digits; scaled sits in [1, 1000).
   const tier = Math.floor(exponent / 3);
+
+  // sci mode renders from the raw mantissa/exponent, not the tier grouping
+  // below, so it never needs the boundary-carry fix that follows and is
+  // handled first.
+  if (mode === "sci") return `${sign}${mantissa.toFixed(2)}e${exponent}`;
+
   // eslint-disable-next-line no-restricted-properties -- display-only (spec E.4 exemption); do not copy into economy/
   const scaled = mantissa * Math.pow(10, exponent - tier * 3);
 
-  const sci = () => `${sign}${mantissa.toFixed(2)}e${exponent}`;
-
-  switch (mode) {
-    case "sci":
-      return sci();
-    case "eng":
-      return `${sign}${scaled.toFixed(2)}e${tier * 3}`;
-    case "names":
-      return tier < NAMES.length ? `${sign}${scaled.toFixed(2)} ${NAMES[tier]}` : sci();
-    case "hybrid":
-      return tier < SHORT.length ? `${sign}${scaled.toFixed(2)} ${SHORT[tier]}` : sci();
-    case "short":
-    case "doubled": {
-      if (tier < SHORT.length) return `${sign}${scaled.toFixed(2)} ${SHORT[tier]}`;
-      const letters = letterSuffix(tier - SHORT.length);
-      const suffix = mode === "doubled" ? letters.toUpperCase() : letters;
-      return `${sign}${scaled.toFixed(2)} ${suffix}`;
-    }
+  // Same carry, one tier up: toFixed(2) can round `scaled` up to "1000.00"
+  // right at a tier boundary (9.99999e5 -> tier 1, scaled 999.999 ->
+  // "1000.00 K" instead of "1.00 M"). Promote to the next tier instead.
+  if (Number(scaled.toFixed(2)) >= 1000) {
+    return sign + renderTier(tier + 1, scaled / 1000, mode);
   }
+
+  return sign + renderTier(tier, scaled, mode);
 }

@@ -66,6 +66,19 @@ describe("format", () => {
     expect(format(D("1e15"), "hybrid")).toBe("1.00e15");
   });
 
+  it("carries a tier-boundary rounding into the next tier's suffix", () => {
+    // mantissa ~9.99999, exponent 5 -> tier 1, scaled 999.999, which rounds
+    // to "1000.00" at 2 decimals. That must promote to tier 2 ("M"), not
+    // print "1000.00 K".
+    expect(format(D("9.99999e5"), "short")).toBe("1.00 M");
+  });
+
+  it("carries a sub-1000 rounding into the K suffix instead of a bare 4-digit number", () => {
+    // 999.99 rounds to "1000" at 0 decimals in the un-suffixed plain path;
+    // that must promote to the K tier instead of showing "1000".
+    expect(format(D(999.99), "short")).toBe("1.00 K");
+  });
+
   it("is pure — mode is an argument, not global state", () => {
     const value = D("1e15");
     expect(format(value, "short")).toBe("1.00 aa");
