@@ -83,12 +83,27 @@ describe("computeExpansion", () => {
     // above cannot tell genuine exactness from a premature float conversion that
     // happens to round-trip. 1/500 = 1/(2^2*5^3) has a factor of 5 in its reduced
     // denominator, so its binary expansion is non-terminating (0.000000010000011...
-    // repeating) — a chain composed in float64 anywhere along the way would not
-    // reliably land on the same double as computing 1/500 directly. Here it is
-    // reached by composing burn_fuel's fuel requirement (1/3 fuel/s per MW / 250 MW
-    // per unit = 1/750 fuel/s per MW) with residual_fuel's own unit cost (1.5 units
-    // per fuel/s): (1/750) * (3/2) = 1/500 exactly, carried as a Rational the whole
-    // way and converted to float64 exactly once, at the return boundary.
+    // repeating), making this a strictly stronger assertion than 1.5 or 0.75, which
+    // any implementation lands on regardless of method. It is reached by composing
+    // burn_fuel's fuel requirement (1/3 fuel/s per MW / 250 MW per unit = 1/750
+    // fuel/s per MW) with residual_fuel's own unit cost (1.5 units per fuel/s):
+    // (1/750) * (3/2) = 1/500 exactly, carried as a Rational the whole way and
+    // converted to float64 exactly once, at the return boundary.
+    //
+    // What this does NOT prove: verified empirically (a scratch replay of the same
+    // operations in plain `number`, plus several re-associations) that naive float64
+    // composition does not actually diverge on this value in this fixture — every
+    // authored rate here is a small integer over a two-or-three-recipe chain, so
+    // double-rounding has nowhere to accumulate visible drift. So this assertion
+    // does not currently catch a premature-conversion bug; it only confirms the
+    // implementation lands on the mathematically exact value, which floats also do
+    // here by luck of the numbers involved. A genuinely drift-sensitive assertion
+    // needs content with awkward rates — Satisfactory's real values like 11.25/min
+    // and 4.5/min — which is a Phase 2 carry-forward once the calibrated vertical
+    // slice content lands; add that test then. (The exact-rational composition
+    // itself is independently verified correct against a synthetic deep chain with
+    // repeating binary fractions — see the task-3 review — this fixture just isn't
+    // built to expose the failure mode.)
     expect(e.perUnit.get(POWER_ITEM)!.get("residual_fuel")).toBe(0.002);
   });
 
