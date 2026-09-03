@@ -6,36 +6,37 @@ import { fromCanonical, toCanonical, type Dec } from "../numbers/decimal.js";
 import type { ItemId, LaneId } from "../content/types.js";
 import { WORLD_SCHEMA_VERSION, type WorldState } from "./world.js";
 
-// Object.keys only returns own enumerable keys, so this is safe even when a key
-// happens to be "constructor" or another Object.prototype property name.
+// Reading a record's keys via Object.keys is safe even when a key happens to be
+// "constructor" or another Object.prototype property name: Object.keys returns
+// only own enumerable keys, never anything resolved through the prototype chain.
+//
+// Writing is a separate hazard, handled below: `out[key] = value` goes through
+// [[Set]], which for key === "__proto__" reassigns the object's prototype instead
+// of creating an own property with that name. Every helper here builds its result
+// with Object.fromEntries instead, which creates own data properties via
+// CreateDataPropertyOrThrow and is safe for "__proto__" too.
 function sortedKeys(record: Record<string, unknown>): string[] {
   return Object.keys(record).sort();
 }
 
 function encodeDecimals(record: Record<string, Dec>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const key of sortedKeys(record)) out[key] = toCanonical(record[key]!);
-  return out;
+  return Object.fromEntries(sortedKeys(record).map((key) => [key, toCanonical(record[key]!)]));
 }
 
 function decodeDecimals(record: Record<string, string>): Record<string, Dec> {
-  const out: Record<string, Dec> = {};
-  for (const key of sortedKeys(record)) out[key] = fromCanonical(record[key]!);
-  return out;
+  return Object.fromEntries(sortedKeys(record).map((key) => [key, fromCanonical(record[key]!)]));
 }
 
 function sortRecord<T>(record: Record<string, T>): Record<string, T> {
-  const out: Record<string, T> = {};
-  for (const key of sortedKeys(record)) out[key] = record[key]!;
-  return out;
+  return Object.fromEntries(sortedKeys(record).map((key) => [key, record[key]!]));
 }
 
 function sortInstalled(
   installed: WorldState["installed"],
 ): Record<string, Record<string, number[]>> {
-  const out: Record<string, Record<string, number[]>> = {};
-  for (const lane of sortedKeys(installed)) out[lane] = sortRecord(installed[lane]!);
-  return out;
+  return Object.fromEntries(
+    sortedKeys(installed).map((lane) => [lane, sortRecord(installed[lane]!)]),
+  );
 }
 
 export function serializeWorld(state: WorldState): string {

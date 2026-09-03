@@ -116,7 +116,17 @@ export function withInstalled(
   const marks = existingMarks ? [...existingMarks] : [];
   while (marks.length < mark) marks.push(0);
   marks[mark - 1] = count;
-  laneBucket[machineClass] = marks;
+  // Plain `laneBucket[machineClass] = marks` goes through [[Set]], which for
+  // machineClass === "__proto__" reassigns the object's prototype instead of
+  // creating an own property (unlike the object-literal spreads above and below,
+  // which use CreateDataProperty and are proto-safe even for that key).
+  // Object.defineProperty always creates a genuine own data property.
+  Object.defineProperty(laneBucket, machineClass, {
+    value: marks,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
   return { ...state, installed: { ...state.installed, [lane]: laneBucket } };
 }
 
@@ -134,23 +144,24 @@ export function assignedTotal(
 }
 
 export function initialWorld(content: IndexedContent, seed: number, nowMs: number): WorldState {
-  const stored: Record<ItemId, Dec> = {};
-  const quantum: Record<ItemId, Dec> = {};
-  const bound: Record<ItemId, Dec> = {};
-  const lifetime: Record<ItemId, Dec> = {};
-  const storageLevel: Record<ItemId, number> = {};
-  const reserve: Record<ItemId, number> = {};
-  for (const id of content.stockItemIds) {
-    stored[id] = DECIMAL_ZERO;
-    quantum[id] = DECIMAL_ZERO;
-    bound[id] = DECIMAL_ZERO;
-    lifetime[id] = DECIMAL_ZERO;
-    storageLevel[id] = 0;
-    reserve[id] = 0;
-  }
+  // Object.fromEntries builds properties via CreateDataPropertyOrThrow, so an item
+  // id of "__proto__" lands as a genuine own property here -- unlike a loop that
+  // assigns into `{}` via bracket notation, which would silently reassign the
+  // record's prototype instead of storing the item (see withInstalled above).
+  const zeroDec = (id: ItemId): [ItemId, Dec] => [id, DECIMAL_ZERO];
+  const zeroNum = (id: ItemId): [ItemId, number] => [id, 0];
+  const stored: Record<ItemId, Dec> = Object.fromEntries(content.stockItemIds.map(zeroDec));
+  const quantum: Record<ItemId, Dec> = Object.fromEntries(content.stockItemIds.map(zeroDec));
+  const bound: Record<ItemId, Dec> = Object.fromEntries(content.stockItemIds.map(zeroDec));
+  const lifetime: Record<ItemId, Dec> = Object.fromEntries(content.stockItemIds.map(zeroDec));
+  const storageLevel: Record<ItemId, number> = Object.fromEntries(
+    content.stockItemIds.map(zeroNum),
+  );
+  const reserve: Record<ItemId, number> = Object.fromEntries(content.stockItemIds.map(zeroNum));
 
-  const qsLevel: Record<LaneId, number> = {};
-  for (const laneId of content.lanes.keys()) qsLevel[laneId] = 0;
+  const qsLevel: Record<LaneId, number> = Object.fromEntries(
+    [...content.lanes.keys()].map((laneId): [LaneId, number] => [laneId, 0]),
+  );
 
   let state: WorldState = {
     schemaVersion: WORLD_SCHEMA_VERSION,

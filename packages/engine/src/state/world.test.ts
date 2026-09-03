@@ -16,6 +16,33 @@ import {
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
 const content = indexContent(loadBundleDir(fixtureDir));
 
+// The content schema places no restriction on ids (`z.string().min(1)`), so
+// "__proto__" is exactly as legal a lane or item id as "constructor" is a legal
+// machine class id (the fixture bundle's iron lane already exercises that one, via
+// ownOrUndefined). Built here rather than added to the shared fixture: it is
+// pathological enough to belong in a targeted test, not in content every other
+// task loads.
+function poisonedContent() {
+  const bundle = loadBundleDir(fixtureDir);
+  return indexContent({
+    ...bundle,
+    lanes: [...bundle.lanes, { id: "__proto__", name: "Proto Lane", order: 99, unlockTier: 0 }],
+    items: [
+      ...bundle.items,
+      {
+        id: "__proto__",
+        lane: "iron",
+        tier: 0,
+        name: "Proto Trap",
+        fluid: false,
+        terminal: false,
+        baseStorageCap: 500,
+        baseQuantumCap: 2000,
+      },
+    ],
+  });
+}
+
 describe("initialWorld", () => {
   it("stamps the schema and content version and the clock it was given", () => {
     const w = initialWorld(content, 42, 1_000);
@@ -112,5 +139,48 @@ describe("withInstalled", () => {
     const w = initialWorld(content, 1, 0);
     const next = withInstalled(w, "oil", "refinery", 1, 3);
     expect(installedAt(next, "oil", "refinery", 1)).toBe(3);
+  });
+});
+
+describe("prototype-pollution safety", () => {
+  it("stores an item id of \"__proto__\" as a real own entry, in every per-item record", () => {
+    const w = initialWorld(poisonedContent(), 1, 0);
+    for (const record of [
+      w.stored,
+      w.quantum,
+      w.bound,
+      w.lifetime,
+      w.storageLevel,
+      w.reserve,
+    ] as Record<string, unknown>[]) {
+      expect(Object.hasOwn(record, "__proto__")).toBe(true);
+      // The record's actual prototype must still be Object.prototype -- if the
+      // write went through plain bracket assignment instead of Object.fromEntries,
+      // this would instead equal whatever value was "assigned" to "__proto__".
+      expect(Object.getPrototypeOf(record)).toBe(Object.prototype);
+    }
+    expect(w.stored["__proto__"]!.toNumber()).toBe(0);
+    expect(w.storageLevel["__proto__"]).toBe(0);
+  });
+
+  it("stores a lane id of \"__proto__\" as a real own entry in qsLevel", () => {
+    const w = initialWorld(poisonedContent(), 1, 0);
+    expect(Object.hasOwn(w.qsLevel, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(w.qsLevel)).toBe(Object.prototype);
+    expect(w.qsLevel["__proto__"]).toBe(0);
+  });
+
+  it("installs a machine class id of \"__proto__\" as a real own entry, not the lane bucket's prototype", () => {
+    const w = initialWorld(content, 1, 0);
+    const next = withInstalled(w, "iron", "__proto__", 1, 5);
+    expect(installedAt(next, "iron", "__proto__", 1)).toBe(5);
+    const laneBucket = next.installed.iron as unknown as Record<string, unknown>;
+    expect(Object.hasOwn(laneBucket, "__proto__")).toBe(true);
+    // If the write reassigned the prototype instead of creating an own property,
+    // the lane bucket's prototype would now be the marks array, not Object.prototype.
+    expect(Object.getPrototypeOf(laneBucket)).toBe(Object.prototype);
+    // Every other machine class on the lane must still be readable -- a reassigned
+    // prototype would silently break every OTHER lookup on this object too.
+    expect(installedAt(next, "iron", "miner", 1)).toBe(2);
   });
 });
