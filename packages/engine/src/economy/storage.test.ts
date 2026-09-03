@@ -257,16 +257,21 @@ describe("spendFromLiquid (spec C.5, D4)", () => {
   });
 
   it("settles bound downward after freeing quantum room", () => {
+    // iron_plate baseQuantumCap is 1200 at qsLevel 0 (items.yaml, curves.yaml
+    // capGrowth 1.6^0 = 1). quantum starts at that cap, so bound = 5000 is legal
+    // (spec E.6: bound > 0 implies quantum == qsCap).
     const w = world({
-      stored: { ...world().stored, iron_plate: D(300) },
+      stored: { ...world().stored, iron_plate: D(100) },
       quantum: { ...world().quantum, iron_plate: D(1200) },
       bound: { ...world().bound, iron_plate: D(5000) },
     });
-    // iron_plate baseQuantumCap is 1200, so quantum is at cap and bound is legal.
+    // Cost 300 exceeds stored (100), so spendFromLiquid's stored -> quantum order
+    // must draw the remaining 200 out of quantum: quantum drops to 1000, opening
+    // 200 of room beneath its 1200 cap. settleBound then refills exactly that
+    // 200 from bound, landing quantum back at its cap and bound down by 200.
     const next = spendFromLiquid(content, w, new Map([["iron_plate", D(300)]]))!;
     expect(next.stored.iron_plate!.toNumber()).toBe(0);
-    // 300 came out of stored, quantum is still at its 1200 cap, bound unchanged.
     expect(next.quantum.iron_plate!.toNumber()).toBe(1200);
-    expect(next.bound.iron_plate!.toNumber()).toBe(5000);
+    expect(next.bound.iron_plate!.toNumber()).toBe(4800);
   });
 });
