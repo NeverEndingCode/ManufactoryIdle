@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { BundleSchema } from "./schema.js";
+import {
+  BundleSchema,
+  MilestoneSchema,
+  SoftcapSchema,
+  SoftcapsSchema,
+  StartSchema,
+  StorageCurveSchema,
+  TapSchema,
+} from "./schema.js";
 
 const minimal = {
   version: "fixture.v1",
@@ -115,6 +123,89 @@ describe("Phase 1 bundle fields", () => {
       BundleSchema.parse({
         ...minimal,
         milestones: [{ tier: 0, name: "Bad", requires: [{ item: "iron_ore", amount: 1 }], laneMultipliers: {} }],
+      }),
+    ).toThrow();
+  });
+});
+
+// Authoring-typo guards, one per Phase 1 object schema (spec of the same class as
+// the "byprodcut" guard in schema.test.ts): with a non-strict schema, an unknown
+// key is silently stripped — no error, no validation issue, and no checksum
+// change, so the typo is invisible. Every Phase 1 schema must reject it instead.
+describe("Phase 1 schemas reject unknown keys (authoring typo guard)", () => {
+  const validStorageCurve = {
+    capGrowth: 1.6,
+    costGrowth: 2,
+    baseCostItem: null,
+    baseCostAmount: 50,
+    maxLevel: 20,
+  };
+
+  it("StorageCurveSchema rejects an unrecognized key", () => {
+    expect(() => StorageCurveSchema.parse({ ...validStorageCurve, basecostItem: "ghost" })).toThrow();
+  });
+
+  const validSoftcap = { threshold: 1000, slope: 0.25 };
+
+  it("SoftcapSchema rejects an unrecognized key", () => {
+    expect(() => SoftcapSchema.parse({ ...validSoftcap, thresold: 1000 })).toThrow();
+  });
+
+  it("SoftcapsSchema rejects an unrecognized key", () => {
+    expect(() =>
+      SoftcapsSchema.parse({
+        ladder: validSoftcap,
+        lane: validSoftcap,
+        tap: validSoftcap,
+        product: validSoftcap,
+        extra: validSoftcap,
+      }),
+    ).toThrow();
+  });
+
+  it("TapSchema rejects an unrecognized key", () => {
+    expect(() =>
+      TapSchema.parse({
+        kickPerStack: 0.05,
+        durationSeconds: 30,
+        maxStacks: 10,
+        powerInjectionMw: 25,
+        poweInjectionMw: 25,
+      }),
+    ).toThrow();
+  });
+
+  it("MilestoneSchema rejects an unrecognized key", () => {
+    expect(() =>
+      MilestoneSchema.parse({
+        tier: 1,
+        name: "First",
+        requires: [{ item: "iron_ore", amount: 200 }],
+        laneMultipliers: {},
+        laneMultiplyers: { iron: 1.5 },
+      }),
+    ).toThrow();
+  });
+
+  it("StartSchema rejects an unrecognized top-level key", () => {
+    expect(() =>
+      StartSchema.parse({
+        tier: 0,
+        machines: [],
+        assignments: {},
+        priority: [],
+        priorty: [],
+      }),
+    ).toThrow();
+  });
+
+  it("StartSchema rejects an unrecognized key on a nested machines entry", () => {
+    expect(() =>
+      StartSchema.parse({
+        tier: 0,
+        machines: [{ lane: "iron", machineClass: "miner", mark: 1, count: 1, cout: 1 }],
+        assignments: {},
+        priority: [],
       }),
     ).toThrow();
   });

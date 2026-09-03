@@ -139,66 +139,80 @@ export const PacingSchema = z
 // baseCostItem is nullable because a schema-level default cannot name an item that
 // exists in every bundle. null means levels are free — only the fixture and
 // calibrated content set a real item.
-export const StorageCurveSchema = z.object({
-  capGrowth: z.number().gt(1),
-  costGrowth: z.number().gt(1),
-  baseCostItem: Id.nullable(),
-  baseCostAmount: z.number().positive(),
-  maxLevel: z.number().int().positive(),
-});
+export const StorageCurveSchema = z
+  .object({
+    capGrowth: z.number().gt(1),
+    costGrowth: z.number().gt(1),
+    baseCostItem: Id.nullable(),
+    baseCostAmount: z.number().positive(),
+    maxLevel: z.number().int().positive(),
+  })
+  .strict();
 
 // Spec D3: softcaps are piecewise-linear, not a power law, for the determinism
 // reason in spec E.4. Above `threshold`, each further unit of multiplier counts for
 // `slope` units. slope must be in (0, 1]: 0 would hard-cap (spec 16.6 forbids it)
 // and > 1 would amplify.
-export const SoftcapSchema = z.object({
-  threshold: z.number().positive(),
-  slope: z.number().gt(0).max(1),
-});
+export const SoftcapSchema = z
+  .object({
+    threshold: z.number().positive(),
+    slope: z.number().gt(0).max(1),
+  })
+  .strict();
 
-export const SoftcapsSchema = z.object({
-  ladder: SoftcapSchema,
-  lane: SoftcapSchema,
-  tap: SoftcapSchema,
-  product: SoftcapSchema,
-});
+export const SoftcapsSchema = z
+  .object({
+    ladder: SoftcapSchema,
+    lane: SoftcapSchema,
+    tap: SoftcapSchema,
+    product: SoftcapSchema,
+  })
+  .strict();
 
 // Spec C.6: the kick is a step function, not a decaying curve, because continuously
 // varying rates would break the piecewise-constant assumption the event model rests
 // on. Stacks share one expiry timer.
-export const TapSchema = z.object({
-  kickPerStack: z.number().positive(),
-  durationSeconds: z.number().positive(),
-  maxStacks: z.number().int().positive(),
-  powerInjectionMw: z.number().nonnegative(),
-});
+export const TapSchema = z
+  .object({
+    kickPerStack: z.number().positive(),
+    durationSeconds: z.number().positive(),
+    maxStacks: z.number().int().positive(),
+    powerInjectionMw: z.number().nonnegative(),
+  })
+  .strict();
 
 // Spec 10.1 and ruling R7. Requirements are paid from liquid stock (stored +
 // quantum); `bound` is never touched, which is what keeps storage caps a real gate
 // on milestones (spec D4).
-export const MilestoneSchema = z.object({
-  tier: z.number().int().min(1),
-  name: z.string().min(1),
-  requires: z.array(CostEntrySchema).min(1),
-  // Spec D3 lever 3: a discrete, roughly x1.5 lane-wide multiplier granted on unlock.
-  laneMultipliers: z.record(Id, z.number().positive()).default({}),
-});
+export const MilestoneSchema = z
+  .object({
+    tier: z.number().int().min(1),
+    name: z.string().min(1),
+    requires: z.array(CostEntrySchema).min(1),
+    // Spec D3 lever 3: a discrete, roughly x1.5 lane-wide multiplier granted on unlock.
+    laneMultipliers: z.record(Id, z.number().positive()).default({}),
+  })
+  .strict();
 
-export const StartSchema = z.object({
-  tier: z.number().int().min(0),
-  machines: z
-    .array(
-      z.object({
-        lane: Id,
-        machineClass: Id,
-        mark: z.number().int().min(1),
-        count: z.number().int().positive(),
-      }),
-    )
-    .default([]),
-  assignments: z.record(Id, z.number().int().nonnegative()).default({}),
-  priority: z.array(Id).default([]),
-});
+export const StartSchema = z
+  .object({
+    tier: z.number().int().min(0),
+    machines: z
+      .array(
+        z
+          .object({
+            lane: Id,
+            machineClass: Id,
+            mark: z.number().int().min(1),
+            count: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .default([]),
+    assignments: z.record(Id, z.number().int().nonnegative()).default({}),
+    priority: z.array(Id).default([]),
+  })
+  .strict();
 
 export const BundleSchema = z
   .object({
