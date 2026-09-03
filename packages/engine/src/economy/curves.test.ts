@@ -37,6 +37,13 @@ describe("powIntNumber", () => {
     expect(powIntNumber(1.09, 10)).toBeCloseTo(2.3673636746, 9);
   });
 
+  it("returns the base itself for exponent 1", () => {
+    // The other easy-to-break case: the squaring loop's first bit must feed
+    // `result` before `factor` is squared, or n=1 silently returns base^2 or 1.
+    expect(powIntNumber(1.09, 1)).toBe(1.09);
+    expect(powIntNumber(7, 1)).toBe(7);
+  });
+
   it("rejects a negative or non-integer exponent", () => {
     expect(() => powIntNumber(2, -1)).toThrow();
     expect(() => powIntNumber(2, 1.5)).toThrow();
@@ -53,6 +60,11 @@ describe("powIntDecimal", () => {
     // 1.09^10000 is roughly 1e371, comfortably past float64's 1.8e308.
     expect(powIntDecimal(1.09, 10000).exponent).toBeGreaterThan(350);
     expect(Number.isFinite(powIntDecimal(1.09, 10000).exponent)).toBe(true);
+  });
+
+  it("returns the base itself for exponent 1", () => {
+    expect(powIntDecimal(1.09, 1).toNumber()).toBeCloseTo(1.09, 12);
+    expect(powIntDecimal(7, 1).toNumber()).toBe(7);
   });
 
   it("is bitwise repeatable, which LIFO refund symmetry depends on", () => {
@@ -127,6 +139,22 @@ describe("ladderInput and ladderMultiplier", () => {
   it("returns 1 for a lane-class with nothing installed", () => {
     expect(ladderMultiplier(content, initialWorld(content, 1, 0), "oil", "refinery")).toBe(1);
   });
+
+  it("steps exactly at the boundary — n = interval-1, interval, interval+1", () => {
+    // Fixture ladder is x1.5 every 10. miner mk1 has rateMultiplier 1, so
+    // withInstalled's absolute count is also the ladder input directly.
+    function withMinerCount(n: number): WorldState {
+      return withInstalled(initialWorld(content, 1, 0), "iron", "miner", 1, n);
+    }
+    // n=9: floor(9/10) = 0 -> 1.5^0 = 1. One machine short of the first step.
+    expect(ladderMultiplier(content, withMinerCount(9), "iron", "miner")).toBe(1);
+    // n=10: floor(10/10) = 1 -> 1.5^1 = 1.5. The step lands exactly here, not
+    // one machine early or late -- this is the off-by-one a `<=` vs `<` or a
+    // `ceil` vs `floor` slip would silently get wrong.
+    expect(ladderMultiplier(content, withMinerCount(10), "iron", "miner")).toBeCloseTo(1.5, 12);
+    // n=11: floor(11/10) = 1 -> still 1.5, one machine into the current step.
+    expect(ladderMultiplier(content, withMinerCount(11), "iron", "miner")).toBeCloseTo(1.5, 12);
+  });
 });
 
 describe("laneMultiplier", () => {
@@ -142,6 +170,43 @@ describe("laneMultiplier", () => {
     // Tier 3 grants oil x1.5 again and nothing to iron.
     expect(laneMultiplier(content, 3, "iron")).toBeCloseTo(2.25, 12);
     expect(laneMultiplier(content, 3, "oil")).toBeCloseTo(2.25, 12);
+  });
+
+  it('treats a lane literally named "__proto__" with no grant as absent, not the prototype chain', () => {
+    // Lane ids are author-supplied content ids, same hazard as the machine
+    // class literally named "constructor" elsewhere in this fixture bundle.
+    // This milestone's laneMultipliers has no "__proto__" key at all -- exactly
+    // what real content looks like, since no author ever grants that lane.
+    // Plain `laneMultipliers["__proto__"]` on an object with no own "__proto__"
+    // property does NOT return undefined: it walks the prototype chain to
+    // Object.prototype's `__proto__` accessor and returns the object's own
+    // prototype, a truthy object. `?? 1` never fires, and multiplying by that
+    // object silently produces NaN, which then survives softcap() and poisons
+    // every downstream multiplier for the lane. Built inline; the shared
+    // fixture is left untouched.
+    //
+    // (Giving laneMultipliers an actual own "__proto__" property, e.g. via a
+    // computed key, would shadow the inherited accessor and pass even with the
+    // bug present -- it is the *absence* of the key that triggers the hazard.)
+    const poisoned = {
+      ...content,
+      bundle: {
+        ...content.bundle,
+        milestones: [
+          {
+            tier: 1,
+            name: "Poisoned",
+            requires: [],
+            laneMultipliers: { iron: 1.5 },
+          },
+        ],
+      },
+    };
+    expect(laneMultiplier(poisoned, 0, "__proto__")).toBe(1);
+    expect(laneMultiplier(poisoned, 1, "__proto__")).toBe(1);
+    expect(Number.isNaN(laneMultiplier(poisoned, 1, "__proto__"))).toBe(false);
+    // Sanity: the milestone still grants iron normally.
+    expect(laneMultiplier(poisoned, 1, "iron")).toBeCloseTo(1.5, 12);
   });
 });
 

@@ -103,7 +103,19 @@ export function laneMultiplier(content: IndexedContent, tier: number, lane: Lane
   let product = 1;
   for (const milestone of content.bundle.milestones) {
     if (milestone.tier > tier) continue;
-    product *= milestone.laneMultipliers[lane] ?? 1;
+    // `laneMultipliers` is a Record<LaneId, number> keyed by an author-supplied
+    // content id, and a lane can legitimately be named "__proto__". Plain
+    // `laneMultipliers[lane]` on an object with no own "__proto__" property
+    // resolves through the prototype chain to the prototype object itself, not
+    // undefined -- `?? 1` never fires, and multiplying by an object silently
+    // becomes NaN, which then survives softcap() and poisons every downstream
+    // multiplier for that lane. Object.hasOwn distinguishes "own property,
+    // possibly falsy" from "no own property at all", mirroring ownOrUndefined
+    // in state/world.ts.
+    const grant = Object.hasOwn(milestone.laneMultipliers, lane)
+      ? milestone.laneMultipliers[lane]
+      : undefined;
+    product *= grant ?? 1;
   }
   return softcap(product, content.bundle.softcaps.lane);
 }
