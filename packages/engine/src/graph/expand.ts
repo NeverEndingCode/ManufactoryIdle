@@ -75,6 +75,21 @@ export function computeExpansion(
     if (!isLiveRecipe(content, recipeId, tier, activeRecipe)) continue;
     const recipe = content.recipes.get(recipeId)!;
 
+    // Byproducts are free: the entire input cost of a multi-output craft is charged
+    // to the recipe's targeted (primary) output, and byproducts cost nothing to
+    // expand. This is not an explicit `.byproduct` filter here — it falls out
+    // structurally from two facts established in index-content.ts: `activeRecipe`
+    // is keyed by `recipe.primaryOutput` (spec 4.4, one active recipe per output
+    // item), and `primaryOutput` is defined as the recipe's first non-byproduct
+    // output (or POWER_ITEM for a generator). So this loop — walking `itemId` over
+    // every item and looking up `activeRecipe[itemId]` — only ever reaches a given
+    // recipe once, for `itemId === recipe.primaryOutput`; `isLiveRecipe` reconfirms
+    // that below. A byproduct output is therefore never itself expanded as a target,
+    // and the recipe's `direct` (inputs) map below is booked in full against the
+    // single `units` entry for the primary output. See spec F.1 / the fixture's
+    // `refine_plastic` (plastic primary, heavy_oil_residue byproduct) for the case
+    // this covers, and `expand.test.ts`'s byproduct-allocation test for the values.
+    //
     // Output rate of the primary item, exactly. Power is a standing megawatt figure
     // rather than a per-minute flow, so it is not divided by 60.
     let outPerUnit: Rational;

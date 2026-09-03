@@ -76,6 +76,37 @@ describe("computeExpansion", () => {
     expect(e.rawCost.get("iron_plate")!.get("iron_ore")).toBe(1.5);
   });
 
+  it("is exact on a non-binary-representable fraction — 1/500 composed through two divisions", () => {
+    const c = indexContent(fixture());
+    const e = computeExpansion(c, 9, c.defaultActiveRecipe);
+    // 1.5 is exactly representable in binary floating point (3 * 2^-1), so the test
+    // above cannot tell genuine exactness from a premature float conversion that
+    // happens to round-trip. 1/500 = 1/(2^2*5^3) has a factor of 5 in its reduced
+    // denominator, so its binary expansion is non-terminating (0.000000010000011...
+    // repeating) — a chain composed in float64 anywhere along the way would not
+    // reliably land on the same double as computing 1/500 directly. Here it is
+    // reached by composing burn_fuel's fuel requirement (1/3 fuel/s per MW / 250 MW
+    // per unit = 1/750 fuel/s per MW) with residual_fuel's own unit cost (1.5 units
+    // per fuel/s): (1/750) * (3/2) = 1/500 exactly, carried as a Rational the whole
+    // way and converted to float64 exactly once, at the return boundary.
+    expect(e.perUnit.get(POWER_ITEM)!.get("residual_fuel")).toBe(0.002);
+  });
+
+  it("charges the full input cost of a multi-output craft to the primary output, not the byproduct", () => {
+    const c = indexContent(fixture());
+    const e = computeExpansion(c, 9, c.defaultActiveRecipe);
+    // refine_plastic: 20 plastic/min + 10 heavy_oil_residue/min (byproduct) per 30
+    // crude_oil/min. plastic is the primary output, so 1 plastic/s books the full
+    // 3 refine_plastic units and the crude_oil they pull (1.5 crude_oil/s -> 0.75
+    // extract_oil units, since extract_oil makes 2 crude_oil/s per unit). The
+    // byproduct heavy_oil_residue is never itself expanded here and costs nothing.
+    const v = e.perUnit.get("plastic")!;
+    expect(v.get("refine_plastic")).toBe(3);
+    expect(v.get("extract_oil")).toBe(0.75);
+    expect(v.size).toBe(2);
+    expect(e.rawCost.get("plastic")!.get("crude_oil")).toBe(1.5);
+  });
+
   it("stops at items whose recipe is locked at the given tier", () => {
     const c = indexContent(fixture());
     const early = computeExpansion(c, 0, c.defaultActiveRecipe);
