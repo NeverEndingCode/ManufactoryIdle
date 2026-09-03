@@ -70,6 +70,9 @@ importers:
         specifier: ^2.0.0
         version: 2.2.0
     devDependencies:
+      '@manufactory/content':
+        specifier: workspace:*
+        version: link:../content
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3

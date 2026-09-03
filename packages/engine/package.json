@@ -16,6 +16,7 @@
     "break_infinity.js": "^2.0.0"
   },
   "devDependencies": {
+    "@manufactory/content": "workspace:*",
     "@types/node": "^24.0.0",
     "typescript": "^5.6.0",
     "vitest": "^4.1.10"
