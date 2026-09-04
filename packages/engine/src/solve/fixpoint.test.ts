@@ -181,4 +181,27 @@ describe("solveItems — the EMPTY fixed point (spec C.3)", () => {
       expect(clock).toBeLessThanOrEqual(1 + FLOATING_SLACK);
     }
   });
+
+  it("cascades a pin through two levels: pinning iron_ingot exposes a still-violated iron_ore (spec C.3)", () => {
+    const base = initialWorld(content, 1, 0);
+    // Constructor demand (10 units) outstrips smelter supply (4 units), which in
+    // turn outstrips miner supply (1 unit): a two-hop bottleneck chain. The first
+    // pin (iron_ingot) is not enough on its own -- discharging it correctly reduces
+    // make_plate's clock but leaves the smelters running flat out on ore they don't
+    // have, so a second pin (iron_ore) is required to reach a real fixed point.
+    const cascade: WorldState = {
+      ...base,
+      installed: {
+        iron: { miner: [1], smelter: [4], constructor: [10] },
+      },
+      assignment: { ...base.assignment, mine_iron: 1, smelt_iron: 4, make_plate: 10 },
+    };
+    const result = solveItems({ ...setup(cascade), seedPins: false });
+
+    expect(result.pinOrder).toEqual(["iron_ingot", "iron_ore"]);
+    expect(result.passes).toBe(3);
+    for (const itemId of ["iron_ore", "iron_ingot", "iron_plate"]) {
+      expect(result.pass.flows.get(itemId)!.net).toBeGreaterThanOrEqual(-FLOATING_SLACK);
+    }
+  });
 });
