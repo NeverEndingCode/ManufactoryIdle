@@ -4,3 +4,4 @@ export * from "./content/index.js";
 export * from "./graph/index.js";
 export * from "./state/index.js";
 export * from "./economy/index.js";
+export * from "./solve/index.js";
