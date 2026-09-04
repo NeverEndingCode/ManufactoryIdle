@@ -351,6 +351,35 @@ describe("runWaterfall — boundaries", () => {
     expect(result.entries[0]!.allocated).toBeCloseTo(1 / 3, 12);
     expect(result.entries[0]!.limitedBy).toBeNull();
   });
+
+  it("does not fabricate allocated for a share member whose item has no live recipe", () => {
+    // plastic's only recipe (refine_plastic) unlocks at tier 2; the world is tier 0,
+    // so plastic's requirement vector is empty even though iron_ingot's is not.
+    const state = base();
+    const capacity = computeCapacity(content, state);
+    const result = runWaterfall({
+      content,
+      vectors: vectorsFor(state),
+      activeRecipe: state.activeRecipe,
+      capacityUnits: capacity.unitsByRecipe,
+      entries: [
+        entry("iron_ingot", { mode: "share", share: 1 }),
+        entry("plastic", { mode: "share", share: 1 }),
+      ],
+      pinnedEmpty: ALL_EMPTY,
+      reserveFloor: 0,
+    });
+
+    const ingot = result.entries.find((e) => e.itemId === "iron_ingot")!;
+    const plastic = result.entries.find((e) => e.itemId === "plastic")!;
+    // Weight 0.5 each. groupVector is 0.5 * iron_ingot's own vector (smelt 1, mine
+    // 0.5), since plastic contributes nothing. Ratios: smelt 2/1 = 2, mine 2/0.5 = 4.
+    // scale = 2, so iron_ingot alone takes weight * scale = 1.
+    expect(ingot.allocated).toBeCloseTo(1, 12);
+    expect(plastic.allocated).toBe(0);
+    expect(plastic.limitedBy).toBeNull();
+    expect(plastic.limitingPerUnit).toBe(0);
+  });
 });
 
 describe("effectivePriority", () => {
@@ -370,6 +399,15 @@ describe("effectivePriority", () => {
     // Unconstrained ore production is 2 units x 1 ore/s = 2/s; 25% of it is 0.5/s.
     expect(entries[1]!.targetRate).toBeCloseTo(0.5, 12);
     expect(entries[2]!.itemId).toBe("iron_plate");
+  });
+
+  it("clamps a reserve percent above 50% (ruling R8) so it cannot starve the list", () => {
+    const state = { ...base(), reserve: { ...base().reserve, iron_ore: 0.9 } };
+    const capacity = computeCapacity(content, state);
+    const entries = effectivePriority(content, state, capacity, 0);
+    expect(entries[1]!.id).toBe("reserve:iron_ore");
+    // Clamped to 50% of the 2/s unconstrained rate, not 90% of it.
+    expect(entries[1]!.targetRate).toBeCloseTo(1, 12);
   });
 
   it("drops paused entries and adds no reserve entry at zero percent", () => {

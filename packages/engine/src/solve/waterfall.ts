@@ -242,6 +242,16 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
 
       if (entry.mode === "share") {
         if (shareHandled.size > 0) continue;
+        // `only` (phase B) can restrict this filter to a subset of the group's ids,
+        // which reads as if a share group could be split -- it can't, safely. Every
+        // member of a group is scaled by the SAME `scale` below, so within one pass a
+        // member either gets weight*scale > 0 or gets exactly 0, and it can only get
+        // 0 for two reasons: the whole group's scale is 0 (every member ends up in
+        // `only` together, so `members` still names the whole group), or that one
+        // member's own `share <= 0` (weight 0, so its absence from `only` changes
+        // nothing). A "group of one" therefore only ever arises from the share<=0
+        // case, which the totalShare<=0 check just below turns into a no-op -- it
+        // never silently drops a sibling that still deserved a slice.
         const members = shareGroup.filter((m) => only === null || only.has(m.id));
         if (members.length === 0) continue;
 
@@ -267,6 +277,10 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
           const weight = weightOf.get(member.id)!;
           if (weight > 0) scale = Math.min(scale, member.targetRate / weight);
         }
+        // Mirrors the guaranteed branch's `Math.max(0, Math.min(requested, ceiling))`
+        // floor below -- nothing currently drives scale negative, but the asymmetry
+        // is a trap for a future edit (e.g. an unvalidated negative targetRate).
+        scale = Math.max(0, scale);
         if (!Number.isFinite(scale)) scale = 0;
 
         for (const [recipeId, perUnit] of groupVector) {
@@ -274,16 +288,26 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
         }
         for (const member of members) {
           const weight = weightOf.get(member.id)!;
-          const rate = weight * scale;
-          commit(member.id, vectorOf.get(member.id)!, rate);
+          const memberVector = vectorOf.get(member.id)!;
+          // A member with no live recipe (e.g. tier-gated) contributed nothing to
+          // groupVector and cannot actually produce, so it must not share in the
+          // group's scale -- mirroring the guaranteed branch's `ceiling = 0` on an
+          // empty constraint list. Without this, `weight * scale` fabricates an
+          // `allocated` figure for an item the waterfall never actually reserved any
+          // capacity for: commit() no-ops on the empty vector, so usedUnits stays
+          // correct, but the per-entry `allocated` this function returns does not.
+          const hasRecipe = memberVector.size > 0;
+          const rate = hasRecipe ? weight * scale : 0;
+          commit(member.id, memberVector, rate);
           const previous = results.get(member.id);
           results.set(member.id, {
             entryId: member.id,
             itemId: member.itemId ?? "",
             requested: member.targetRate ?? Number.POSITIVE_INFINITY,
             allocated: (previous?.allocated ?? 0) + rate,
-            limitedBy: best?.recipeId ?? null,
-            limitingPerUnit: best === null ? 0 : (vectorOf.get(member.id)!.get(best.recipeId) ?? 0),
+            limitedBy: hasRecipe ? (best?.recipeId ?? null) : null,
+            limitingPerUnit:
+              hasRecipe && best !== null ? (memberVector.get(best.recipeId) ?? 0) : 0,
             runnerUpRate: runnerUp,
           });
           shareHandled.add(member.id);
