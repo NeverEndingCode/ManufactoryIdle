@@ -14,9 +14,24 @@
 //         iteration.
 //
 //   EMPTY (no stock, consumption must not exceed production)
-//         Enforced structurally by making the requirement walk traverse through the
-//         item. Discovered by spec C.3's loop, which pins at least one item per
-//         iteration and never unpins, so it terminates in <= |items| passes.
+//         Discovered by spec C.3's loop, which pins at least one item per iteration
+//         and never unpins, so it terminates in <= |items| passes. Pinning alone
+//         only changes what solve/waterfall.ts's requirement walk traverses through:
+//         for most items that walk reaches the item's own active (primary-output)
+//         recipe and so throttles consumers automatically as it composes the
+//         requirement vector. A byproduct-only item (e.g. the fixture's
+//         heavy_oil_residue) is never anyone's primary output, so the walk has
+//         nothing to recurse into and returns empty -- the item is pinned but
+//         nothing is constrained by it. Ruling R30 (task 10, fix round 1) closes
+//         that gap with an explicit clamp below, structurally identical to the FULL
+//         sweep but mirrored: forward topological order -- producers before
+//         consumers -- scaling each EMPTY item's CONSUMERS by production/consumption
+//         when consumption would outrun production. This is the runtime EMPTY
+//         invariant from spec C.2 ("what everything in the engine rests on") and
+//         spec 3.4 ("fluids are otherwise ordinary nodes in the solver"); it is
+//         deliberately distinct from expand.ts's rawCost cutoff, which is a
+//         cost-accounting convention (byproducts are free build-cost leaves) and is
+//         untouched by this clamp.
 import type { ItemId, RecipeId } from "../content/types.js";
 import { POWER_ITEM } from "../content/types.js";
 import type { IndexedContent } from "../graph/index-content.js";
@@ -117,6 +132,33 @@ export function solvePass(args: SolvePassArgs): SolvePassResult {
 
     const factor = flow.consumption / flow.production;
     for (const recipeId of content.producersOf.get(itemId) ?? []) {
+      const clock = clocks.get(recipeId);
+      if (clock === undefined) continue;
+      clocks.set(recipeId, clock * factor);
+    }
+  }
+
+  // Ruling R30: the EMPTY mirror of the sweep above. requirementVector's walk
+  // already enforces this for an item with an active recipe of its own (throttling
+  // falls out of composing the requirement vector), but a byproduct-only item is
+  // never anyone's primary output, so that walk cannot reach it and the pin alone
+  // enforces nothing. This clamp is the backstop: forward topological order --
+  // producers before consumers -- so throttling itemId's CONSUMERS here only ever
+  // further reduces production of items still ahead in the walk, the same
+  // relaxation argument as the FULL sweep above, mirrored.
+  for (let i = 0; i < content.topologicalItems.length; i += 1) {
+    const itemId = content.topologicalItems[i]!;
+    if (itemId === POWER_ITEM) continue;
+    if (itemStates.get(itemId) !== "EMPTY") continue;
+
+    const flows = computeFlows(content, capacityUnits, clocks);
+    const flow = flows.get(itemId);
+    if (!flow) continue;
+    if (flow.consumption <= flow.production + FLOW_TOLERANCE) continue;
+    if (flow.consumption <= 0) continue;
+
+    const factor = flow.production / flow.consumption;
+    for (const recipeId of content.consumersOf.get(itemId) ?? []) {
       const clock = clocks.get(recipeId);
       if (clock === undefined) continue;
       clocks.set(recipeId, clock * factor);

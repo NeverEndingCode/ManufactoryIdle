@@ -165,3 +165,86 @@ describe("solve — options and shape", () => {
     for (const [recipeId, clock] of a.clocks) expect(b.clocks.get(recipeId)).toBe(clock);
   });
 });
+
+/**
+ * Ruling R30 (task 10, fix round 1). fuel's raw cost stops at heavy_oil_residue
+ * (spec F.1's deliberate, unchanged byproduct cutoff), but the EMPTY invariant is a
+ * separate, unconditional runtime rule (spec C.2, spec 3.4): consumption must never
+ * exceed production for a zero-stock item, byproduct-sourced or not.
+ *
+ * 2 extractors, 3 refineries split 1 refine_plastic / 2 residual_fuel: refine_plastic
+ * (pulled only by plastic's own priority demand) produces heavy_oil_residue far
+ * slower than residual_fuel's own installed capacity could consume it. Before this
+ * fix, requirementVector's walk for the `fuel` entry could not reach
+ * heavy_oil_residue (it has no active recipe of its own -- it is never anyone's
+ * primary output) and treated it as a free leaf, so residual_fuel ran unthrottled at
+ * its own capacity: heavy_oil_residue net came out at -2.75 item/s against zero
+ * stock. fixpoint.ts's EMPTY clamp now enforces this directly on itemStates rather
+ * than through the requirement walk.
+ */
+function byproductStarvation(tier: number): WorldState {
+  let w = initialWorld(content, 1, 0);
+  w = { ...w, tier };
+  w = withInstalled(w, "oil", "extractor", 1, 2);
+  w = withInstalled(w, "oil", "refinery", 1, 3);
+  return {
+    ...w,
+    assignment: {
+      ...w.assignment,
+      extract_oil: 2,
+      refine_plastic: 1,
+      residual_fuel: 2,
+    },
+  };
+}
+
+describe("solve — the EMPTY invariant holds through a byproduct (ruling R30)", () => {
+  it("clamps residual_fuel to what heavy_oil_residue actually supplies, not to its own capacity", () => {
+    const sol = solve(byproductStarvation(2), content, NO_FLOOR);
+
+    // refine_plastic is unthrottled (nothing pulls back on it): 1 unit x 1.5 (tier-2
+    // oil lane multiplier) = 1.5 machine-units at clock 1, producing heavy_oil_residue
+    // at 1.5 x 10/60 = 0.25 item/s.
+    expect(sol.clocks.get("refine_plastic")).toBeCloseTo(1, 9);
+    const residue = sol.itemRates.get("heavy_oil_residue")!;
+    expect(residue.production).toBeCloseTo(0.25, 9);
+
+    // Before ruling R30, residual_fuel ran flat out on its own 2-unit x 1.5 = 3
+    // machine-units of capacity, consuming heavy_oil_residue at 3 item/s -- 12x what
+    // refine_plastic actually makes, against zero stock. The clamp now throttles
+    // residual_fuel to 0.25/1 = 0.25 achieved machine-units, i.e. clock 0.25/3.
+    expect(sol.clocks.get("residual_fuel")).toBeCloseTo(0.25 / 3, 9);
+
+    // The invariant itself: an EMPTY item's consumption must not exceed its
+    // production.
+    expect(residue.consumption).toBeCloseTo(residue.production, 9);
+    expect(residue.net).toBeGreaterThanOrEqual(-1e-9);
+    expect(sol.itemStates.get("heavy_oil_residue")).toBe("EMPTY");
+
+    // fuel's achievable rate now actually reflects what the starved byproduct can
+    // sustain (0.25 residual_fuel-units x 40/60 fuel/unit), not residual_fuel's own
+    // unconstrained capacity.
+    const fuel = sol.itemRates.get("fuel")!;
+    expect(fuel.production).toBeCloseTo((0.25 / 3) * 3 * (40 / 60), 9);
+    expect(fuel.production).toBeCloseTo(1 / 6, 9);
+  });
+
+  it("holds the EMPTY invariant everywhere on the fixture, not just this one item", () => {
+    const scenarios = [
+      initialWorld(content, 1, 0),
+      brownout(0),
+      brownout(3),
+      byproductStarvation(2),
+      byproductStarvation(3),
+    ];
+    for (const state of scenarios) {
+      const sol = solve(state, content, NO_FLOOR);
+      for (const [itemId, tag] of sol.itemStates) {
+        if (tag !== "EMPTY") continue;
+        const flow = sol.itemRates.get(itemId);
+        if (!flow) continue;
+        expect(flow.consumption).toBeLessThanOrEqual(flow.production + 1e-9);
+      }
+    }
+  });
+});

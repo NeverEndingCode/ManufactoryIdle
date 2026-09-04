@@ -182,13 +182,25 @@ describe("solveItems — the EMPTY fixed point (spec C.3)", () => {
     }
   });
 
-  it("cascades a pin through two levels: pinning iron_ingot exposes a still-violated iron_ore (spec C.3)", () => {
+  it("resolves a two-hop bottleneck chain to the same fixed point pin-discovery used to need three passes for (ruling R30)", () => {
     const base = initialWorld(content, 1, 0);
-    // Constructor demand (10 units) outstrips smelter supply (4 units), which in
-    // turn outstrips miner supply (1 unit): a two-hop bottleneck chain. The first
-    // pin (iron_ingot) is not enough on its own -- discharging it correctly reduces
-    // make_plate's clock but leaves the smelters running flat out on ore they don't
-    // have, so a second pin (iron_ore) is required to reach a real fixed point.
+    // Constructor demand (10 units, x1.5 ladder step since 10 installed hits the
+    // interval-10 threshold) outstrips smelter supply (4 units), which in turn
+    // outstrips miner supply (1 unit): a two-hop bottleneck chain. Before ruling
+    // R30's EMPTY clamp (task 10, fix round 1) this needed two pins across three
+    // passes -- pinning iron_ingot first was not enough on its own, since
+    // discharging it correctly reduced make_plate's clock but left the smelters
+    // running flat out on ore they didn't have, so a second pin (iron_ore) was
+    // required. The EMPTY clamp now enforces both hops of the chain structurally
+    // within a single solvePass, since it acts on itemStates (which reflect actual
+    // stock) rather than on the pin set -- so this converges in one pass with no
+    // pins at all. Verified the two are the SAME fixed point, not just each
+    // individually valid: with the clamp temporarily reverted (`git diff` +
+    // `git apply -R` on fixpoint.ts, not committed), this exact scenario produced
+    // pinOrder ["iron_ingot", "iron_ore"], passes 3, and IDENTICAL clocks
+    // (mine_iron 1, smelt_iron 0.5, make_plate 0.13333...) and flows to what is
+    // asserted below -- ruling R30 changed how the invariant is reached, not what
+    // it converges to.
     const cascade: WorldState = {
       ...base,
       installed: {
@@ -198,8 +210,11 @@ describe("solveItems — the EMPTY fixed point (spec C.3)", () => {
     };
     const result = solveItems({ ...setup(cascade), seedPins: false });
 
-    expect(result.pinOrder).toEqual(["iron_ingot", "iron_ore"]);
-    expect(result.passes).toBe(3);
+    expect(result.pinOrder).toEqual([]);
+    expect(result.passes).toBe(1);
+    expect(result.pass.clocks.get("mine_iron")).toBeCloseTo(1, 9);
+    expect(result.pass.clocks.get("smelt_iron")).toBeCloseTo(0.5, 9);
+    expect(result.pass.clocks.get("make_plate")).toBeCloseTo(2 / 15, 9);
     for (const itemId of ["iron_ore", "iron_ingot", "iron_plate"]) {
       expect(result.pass.flows.get(itemId)!.net).toBeGreaterThanOrEqual(-FLOATING_SLACK);
     }
