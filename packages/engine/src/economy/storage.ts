@@ -215,6 +215,26 @@ export function canAffordLiquid(state: WorldState, costs: ReadonlyMap<ItemId, De
   return true;
 }
 
+/**
+ * break_infinity's Decimal keeps ~14-15 significant mantissa digits and
+ * renormalizes on every op (spec A.4 zone 3's price for 1e600-scale numbers).
+ * canAffordLiquid/canAffordBuild sum a whole item's stock with one `.plus()`
+ * and compare once; spendInOrder instead walks stored -> quantum -> bound,
+ * subtracting from each field in turn. The two routes can renormalize
+ * differently: an item whose combined `stored + quantum` displays as exactly
+ * the cost -- so canAffordLiquid says yes -- can still, when the fields are
+ * drained one at a time, fall a few ULPs short of that same cost. That is
+ * exactly what happened at the milestone knife-edge (spec E.6): the two
+ * resolve() split points integrated `quantum` via different intermediate
+ * anchors, one landing on a clean 771.2, the other on 771.199999999995. Left
+ * unhandled, spendInOrder's own affordability re-derivation (below) disagreed
+ * with the caller's, and one path silently declined a spend the other made --
+ * a discrete fork, not float noise. Anything within this fraction of the
+ * requested amount is that renormalization gap; anything past it is a real
+ * bug and still fails loudly.
+ */
+export const SPEND_RESIDUAL_TOLERANCE = 1e-9;
+
 function spendInOrder(
   content: IndexedContent,
   state: WorldState,
@@ -234,9 +254,13 @@ function spendInOrder(
       next = withItem(next, field, itemId, have.minus(take));
       remaining = remaining.minus(take);
     }
-    // Guarded by the affordability check above; a residue here would mean a bug in
-    // the Decimal comparison, so fail loudly rather than silently giving it away.
-    if (remaining.gt(0)) return null;
+    // Guarded by the affordability check above. A residue here is normally
+    // impossible -- unless it's SPEND_RESIDUAL_TOLERANCE's renormalization gap
+    // (see that constant's comment), which every field in `order` has already
+    // been drained toward zero trying to close. Anything bigger is a genuine
+    // bug in the Decimal comparison, so still fail loudly rather than
+    // silently giving the cost away.
+    if (remaining.gt(amount.abs().times(SPEND_RESIDUAL_TOLERANCE))) return null;
   }
   return settleBound(content, next);
 }

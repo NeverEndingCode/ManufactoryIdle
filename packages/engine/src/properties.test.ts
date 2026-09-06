@@ -43,25 +43,23 @@ describe("resolve(s, 2t) equals resolve(resolve(s, t), t) — spec E.6's centrep
   // describe block for that counterexample, now a permanent regression test,
   // and fuzz.test.ts's guard-trip property, now fully green.
   //
-  // KNOWN FAILING again, on a DIFFERENT, unrelated counterexample task 14b
-  // found once R32 stopped masking it: a long (~1.46e6 ms in the observed
-  // case), fully uninterrupted single-segment resolve() (one "milestone"
-  // event, nothing else -- no fill/drain/timer in between) accumulates a
-  // ~6e-7 relative difference between the whole and split state, ~60x over
-  // this suite's 1e-8 budget. guardTripped is false on both sides; this is
-  // not the R32 mechanism. Confirmed pre-existing and independent of the R32
-  // fix by reverting solve/waterfall.ts and solve/fixpoint.ts and
-  // re-running the identical counterexample: bit-for-bit identical failure
-  // either way. Best current explanation: splitting one long, uninterrupted
-  // integration into two forces a fresh solve() at the split instant, and
-  // float64's non-associativity means that second solve()'s rates need not
-  // match the frozen rates the whole path integrated with to the last ULP;
-  // over a ~1.46e6 ms single step the accumulated divergence clears 1e-8.
-  // Not fixable within spec C.7's float64-clocks/Decimal-never-enters-a-solve
-  // purity rule without a materially larger change (e.g. forcing more
-  // frequent re-solves purely for numeric parity, which is a real behavior
-  // and performance change, not a bugfix) -- escalated per this task's own
-  // "escalate rather than paper over" instruction rather than weakened here.
+  // A second, unrelated counterexample (task 14c) that this same property
+  // found once R32 stopped masking it -- a long uninterrupted resolve()
+  // crossing a milestone completion -- is also gone. It was NOT float64
+  // accumulation (an earlier pass through this comment mischaracterized it as
+  // ~6e-7 accumulated error; that was wrong). canAffordLiquid sums an item's
+  // liquid stock in one break_infinity `.plus()`; spendInOrder (economy/
+  // storage.ts) decomposes the same spend field-by-field (stored -> quantum).
+  // The two split points integrate an in-progress field via different
+  // intermediate anchors, so an item whose combined stock displays as exactly
+  // the milestone's cost could, walked field-by-field, fall a few ULPs short
+  // of it -- spendInOrder's own affordability re-derivation then disagreed
+  // with canAffordLiquid's and silently declined a spend the other split
+  // arrangement made. A discrete fork triggered by float noise, not
+  // accumulated float noise itself. Fixed by SPEND_RESIDUAL_TOLERANCE in
+  // economy/storage.ts; see resolve.test.ts's "task 14c: the milestone
+  // knife-edge" describe block for the counterexample, now a permanent
+  // regression test.
   it("holds on random states for windows well under the offline cap", () => {
     fc.assert(
       fc.property(arbWorldSketch(), fc.integer({ min: 30_000, max: 900_000 }), (sketch, halfMs) => {

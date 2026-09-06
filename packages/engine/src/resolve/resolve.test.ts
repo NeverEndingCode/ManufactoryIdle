@@ -319,3 +319,80 @@ describe("task 14b: the iron_ingot/constructor knife edge", () => {
     }
   });
 });
+
+// The property suite's fast-check shrink (seed 20260904) found a second,
+// unrelated split-invariance break: a long uninterrupted resolve() crossing a
+// tier-2 milestone while iron_plate is the requirement that completes it.
+// canAffordLiquid (properties.test.ts's "holds on random states for windows
+// well under the offline cap") sums an item's `stored + quantum` in one
+// break_infinity `.plus()` and compares once; spendInOrder (economy/
+// storage.ts) instead walks stored -> quantum, subtracting from each field in
+// turn. The two split points integrate iron_plate's `quantum` via different
+// intermediate anchors -- one lands on a clean 771.2, the other on
+// 771.199999999995 -- so an item whose combined liquid stock displays as
+// exactly the milestone's cost (2000 here) can, decomposed field-by-field,
+// fall a few ULPs short of that same cost. Before the fix, spendInOrder's own
+// affordability re-derivation disagreed with canAffordLiquid's and returned
+// null, silently declining a spend the other split arrangement made -- a
+// discrete fork (the milestone fires ~1.85ms later, after the window's tier-2
+// production is otherwise fully missed), not float noise. Fixed by
+// SPEND_RESIDUAL_TOLERANCE in economy/storage.ts: a leftover after the
+// per-field walk that is within a tiny fraction of the requested amount is
+// that renormalization gap, not a genuine shortfall.
+describe("task 14c: the milestone knife-edge", () => {
+  const sketch = {
+    tier: 0,
+    machines: [1, 0, 1, 0, 0, 0, 4, 0],
+    fills: [1, 0, 0.5, 0, 0, 0, 0, 0],
+    storageLevels: [0, 0, 3, 0, 0, 0, 0, 0],
+    qsLevels: [0, 0, 0, 0, 0, 0, 0, 0],
+    reserves: [0, 0, 0, 0, 0, 0, 0, 0],
+    tapStacks: 7,
+    refund: 0,
+    rotate: 0,
+  };
+  // The counterexample's window: the tier-2 milestone completes at
+  // START + 1,460,148.148...ms, inside [0, 2*halfMs] but past halfMs -- the
+  // knife-edge itself.
+  const halfMs = 730_075;
+
+  it("agrees between one long resolve and two split resolves, milestone inside the window", () => {
+    const start = buildWorld(content, sketch, START);
+    const whole = resolve(start, content, 2 * halfMs);
+    const split = resolve(resolve(start, content, halfMs).state, content, halfMs);
+
+    expect(whole.summary.guardTripped).toBe(false);
+    expect(split.summary.guardTripped).toBe(false);
+
+    // Discrete state must be exactly equal (spec E.4): both paths must agree
+    // the milestone happened at all, not just approximately when.
+    expect(split.state.tier).toBe(whole.state.tier);
+    expect(whole.state.tier).toBe(2);
+
+    for (const itemId of content.stockItemIds) {
+      for (const field of ["stored", "quantum", "bound", "lifetime"] as const) {
+        const a = whole.state[field][itemId]!.toNumber();
+        const b = split.state[field][itemId]!.toNumber();
+        expect(Math.abs(a - b) / Math.max(1, Math.abs(a))).toBeLessThan(1e-8);
+      }
+    }
+  });
+
+  it("split-point invariant: the same total, split anywhere either side of the milestone, agrees", () => {
+    const start = buildWorld(content, sketch, START);
+    const total = 2 * halfMs;
+    const whole = resolve(start, content, total);
+
+    for (const splitPoint of [600_000, 730_075, 900_000, 1_200_000]) {
+      const split = resolve(resolve(start, content, splitPoint).state, content, total - splitPoint);
+      expect(split.state.tier).toBe(whole.state.tier);
+      for (const itemId of content.stockItemIds) {
+        for (const field of ["stored", "quantum", "bound", "lifetime"] as const) {
+          const a = whole.state[field][itemId]!.toNumber();
+          const b = split.state[field][itemId]!.toNumber();
+          expect(Math.abs(a - b) / Math.max(1, Math.abs(a))).toBeLessThan(1e-8);
+        }
+      }
+    }
+  });
+});
