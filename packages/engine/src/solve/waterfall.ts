@@ -154,6 +154,15 @@ export interface WaterfallArgs {
   entries: readonly PriorityEntry[];
   pinnedEmpty: ReadonlySet<ItemId>;
   reserveFloor: number;
+  /**
+   * Ruling R31's reconciliation pass (solve/fixpoint.ts) supplies this: recipes
+   * whose `capacityUnits` here is already an absolute, final machine-units figure
+   * (post FULL/EMPTY sweep), not a nameplate ceiling the reserve floor should tax.
+   * Taxing it again would silently shrink a recipe that was already correctly
+   * clamped -- exactly the failure mode this set exists to prevent. Every other
+   * caller omits it, so ordinary solves are untouched.
+   */
+  untaxedRecipes?: ReadonlySet<RecipeId>;
 }
 
 interface Constraint {
@@ -192,8 +201,16 @@ function bestTwo(list: readonly Constraint[]): { best: Constraint | null; runner
 }
 
 export function runWaterfall(args: WaterfallArgs): WaterfallResult {
-  const { content, vectors, activeRecipe, capacityUnits, entries, pinnedEmpty, reserveFloor } =
-    args;
+  const {
+    content,
+    vectors,
+    activeRecipe,
+    capacityUnits,
+    entries,
+    pinnedEmpty,
+    reserveFloor,
+    untaxedRecipes,
+  } = args;
 
   const live = entries.filter((entry) => !entry.paused);
   const memo = new Map<ItemId, Map<RecipeId, number>>();
@@ -343,7 +360,7 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
   // Phase A: contested recipes are taxed by the reserve floor.
   const phaseA = new Map<RecipeId, number>();
   for (const [recipeId, units] of capacityUnits) {
-    const contested = (touchCount.get(recipeId) ?? 0) >= 2;
+    const contested = (touchCount.get(recipeId) ?? 0) >= 2 && !untaxedRecipes?.has(recipeId);
     phaseA.set(recipeId, contested ? units * (1 - reserveFloor) : units);
   }
   runPass(phaseA, null);

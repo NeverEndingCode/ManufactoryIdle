@@ -118,6 +118,15 @@ export function solvePass(args: SolvePassArgs): SolvePassResult {
     itemStates.set(itemId, itemStateTag(content, state, itemId));
   }
 
+  // Ruling R31: every recipe whose clock either sweep below actually multiplies
+  // gets recorded here, so the reconciliation pass at the end of this function
+  // knows which capacityUnits it hands to a second runWaterfall call are already
+  // an absolute, final figure (must not be taxed again) versus which are still
+  // the original nameplate ceiling (must be taxed exactly as this pass taxed it,
+  // so the reconciliation reproduces this pass's own numbers on a recipe neither
+  // sweep touched).
+  const sweepTouched = new Set<RecipeId>();
+
   // Spec 3.3's backpressure, discharged in one downstream-first sweep (ruling R6).
   for (let i = content.topologicalItems.length - 1; i >= 0; i -= 1) {
     const itemId = content.topologicalItems[i]!;
@@ -135,6 +144,7 @@ export function solvePass(args: SolvePassArgs): SolvePassResult {
       const clock = clocks.get(recipeId);
       if (clock === undefined) continue;
       clocks.set(recipeId, clock * factor);
+      sweepTouched.add(recipeId);
     }
   }
 
@@ -162,10 +172,66 @@ export function solvePass(args: SolvePassArgs): SolvePassResult {
       const clock = clocks.get(recipeId);
       if (clock === undefined) continue;
       clocks.set(recipeId, clock * factor);
+      sweepTouched.add(recipeId);
     }
   }
 
-  return { clocks, waterfall, flows: computeFlows(content, capacityUnits, clocks), itemStates };
+  // Ruling R31: `waterfall` above (and therefore its `entries`/`allocations`)
+  // describes the solve BEFORE the two sweeps just ran -- the FULL sweep and the
+  // EMPTY sweep both adjust `clocks` afterward without re-deriving it, so
+  // `entries[].allocated` and `allocations` can be stale by whatever factor a
+  // clamp applied (up to 12x in the byproduct case: `fuel`'s entry reports
+  // residual_fuel's PRE-clamp throughput even though residual_fuel's actual clock
+  // was just cut by the EMPTY sweep because heavy_oil_residue -- its only input,
+  // and a byproduct nobody else produces -- ran out).
+  //
+  // Both sweeps only ever multiply a clock already in `sweepTouched` by a factor
+  // in [0, 1] -- they never raise one -- so `capacityUnits[r] * clocks[r]` for a
+  // touched recipe is an absolute, already-final figure: every entry that was
+  // ever going to draw on it already had its chance, and re-running the
+  // waterfall must not tax that number again (the reserve floor already did its
+  // job during the first pass; a recipe can end up below its nameplate cross
+  // capacity purely because phase B's leftover went unclaimed by a starved
+  // entry blocked elsewhere -- taxing the resulting, already-reduced figure a
+  // second time would shrink it further for no physical reason). A recipe
+  // neither sweep touched is fed its ORIGINAL nameplate `capacityUnits[r]` and
+  // taxed by the SAME `reserveFloor` exactly as this pass did, reproducing this
+  // pass's own split bit-for-bit. `untaxedRecipes` (waterfall.ts) is what lets
+  // one runWaterfall call treat the two kinds of recipe differently: exempt from
+  // the reserve floor's phase-A tax if touched, taxed normally if not.
+  //
+  // Re-running the waterfall (rather than uniformly scaling every entry at a
+  // touched recipe by the same factor) is also what correctly handles an entry
+  // whose OWN requirement vector spans both a touched and an untouched recipe at
+  // once -- exactly the byproduct case above, where the fuel entry's vector is
+  // {refine_plastic (untouched), residual_fuel (touched)}. Re-running finds the
+  // entry's true tightest ratio across both; a per-recipe scale would either
+  // under-count refine_plastic (never actually the bottleneck) or leave
+  // residual_fuel's share inconsistent with the entry's own reported rate.
+  const reconciledCapacityUnits = new Map<RecipeId, number>();
+  for (const [recipeId, units] of capacityUnits) {
+    reconciledCapacityUnits.set(
+      recipeId,
+      sweepTouched.has(recipeId) ? units * (clocks.get(recipeId) ?? 0) : units,
+    );
+  }
+  const reconciledWaterfall = runWaterfall({
+    content,
+    vectors,
+    activeRecipe: state.activeRecipe,
+    capacityUnits: reconciledCapacityUnits,
+    entries,
+    pinnedEmpty,
+    reserveFloor,
+    untaxedRecipes: sweepTouched,
+  });
+
+  return {
+    clocks,
+    waterfall: reconciledWaterfall,
+    flows: computeFlows(content, capacityUnits, clocks),
+    itemStates,
+  };
 }
 
 export interface SolveItemsResult {
