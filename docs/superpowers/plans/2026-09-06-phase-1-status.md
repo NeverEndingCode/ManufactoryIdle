@@ -39,7 +39,34 @@ the terminal") therefore is not met; the engine underneath it is.
 **One property test is red and should stay red until this is fixed.**
 `properties.test.ts`, "holds on random states for windows well under the offline cap".
 
-### What happens
+> **RESOLVED in `fb7ae51`, and the diagnosis below was WRONG.** It attributed the divergence
+> to the two paths computing the milestone-completion *instant* differently. They do not — the
+> instants agree, and once the real defect is fixed they coincide bit-for-bit.
+>
+> The actual cause was in `spendInOrder` (`packages/engine/src/economy/storage.ts`):
+> `canAffordLiquid` sums `stored + quantum` in one `.plus()` and compares once, while
+> `spendInOrder` decomposes the same spend field-by-field. Different split anchors integrate
+> `quantum` to values that agree in aggregate but differ by ~5e-12 per field — enough to trip
+> `spendInOrder`'s defensive residual check, making it silently **decline a spend** the other
+> arrangement completed, and deferring an entire tier's new production rate. Measured pre-fix,
+> the split path's milestone fired **1.8518ms later**; that delay is the decline-and-defer, not
+> a differently-computed instant.
+>
+> `spendForBuild` shares the same internals and was silently exposed to the identical bug for
+> machine build costs — a spurious decline there is a player pressing buy and nothing happening.
+> The same fix covers it.
+>
+> Fixed by a `SPEND_RESIDUAL_TOLERANCE` set two to three orders of magnitude above the
+> worst-case accumulation one resolve can produce (`MAX_EVENTS` plus the coarse tail caps a
+> resolve near 10,482 steps, so ~2.3e-12 relative). A review confirmed the tolerance cannot
+> manufacture value: `canAffordLiquid`/`canAffordBuild` gate entry on the same state, so only
+> renormalization noise reaches the residual check, and genuine shortfalls still reject.
+>
+> The original text is kept below because it records what the symptom looked like before it was
+> understood — and because the horizon and split-point evidence in it remains correct and was
+> what established the defect as structural rather than float noise.
+
+### What happens (as originally mis-diagnosed)
 
 `resolve(s, 2t) ≡ resolve(resolve(s, t), t)` fails when a long uninterrupted resolve
 crosses a milestone completion while an item sits near zero.
@@ -122,12 +149,25 @@ Independent of that work.
 
 ## Recommended next steps, in order
 
-1. **Fix the milestone knife-edge divergence.** Make both paths agree on the
-   milestone-completion instant and on the post-spend classification. Likely shapes: compute
-   the milestone instant canonically once, or make the EMPTY classification hysteretic
-   across a spend so a boundary balance cannot flip on arithmetic route. The red property
-   is the acceptance test.
-2. **Then Tasks 15–16**, the simulator, which depend on a trustworthy long-horizon
-   `resolve()`.
+1. ~~Fix the milestone knife-edge divergence.~~ **Done** in `fb7ae51` — see the correction
+   above. Horizon scan is now flat from 1e-15 to 8e-12 with no step at the milestone boundary,
+   the 229× case is 2.3e-14, and the split-point scan is position-invariant at ~7.5e-12.
+2. **Tasks 15–16**, the simulator — `sim run`'s four policies and report, and `sim play`,
+   the Ink terminal client. These are what make Phase 1's stated deliverable, a playable game
+   in the terminal.
 3. Phase 2's pacing gates must assert absolute tier times, never a policy ordering —
    carried forward from Phase 0.
+
+## A note on two overturned diagnoses
+
+Twice in this phase a confident root-cause was wrong, and both times the correction came from
+someone instrumenting rather than reasoning:
+
+- Task 14's report named `iron_ore` as the flapping item; it was `iron_ingot`, with the
+  imbalance being 1 smelter against 4 constructors.
+- This document attributed the knife-edge to differently-computed milestone instants; the
+  instants agreed all along, and the fork was a spuriously-declined spend.
+
+Both were plausible, both were adjacent to something true, and both would have sent the next
+person down the wrong chain. Worth remembering when a report cites a cause: the citation is
+the part to check.
