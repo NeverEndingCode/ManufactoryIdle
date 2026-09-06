@@ -15,6 +15,7 @@ import {
   liquidCap,
   quantumCap,
   settleBound,
+  SPEND_RESIDUAL_TOLERANCE,
   spendForBuild,
   spendFromLiquid,
   storageCap,
@@ -234,6 +235,58 @@ describe("spendForBuild (spec C.5)", () => {
     // 1e6 - 500 - 1200 = 998300 in bound and quantum at its 1200 cap.
     expect(next.quantum.iron_plate!.toNumber()).toBe(1200);
     expect(next.bound.iron_plate!.toNumber()).toBe(1e6 - 500 - 1200);
+  });
+
+  // Task 14c found this bug via spendFromLiquid (resolve/resolve.test.ts's
+  // "task 14c: the milestone knife-edge"), but spendForBuild shares the exact
+  // same spendInOrder internals -- just a different field order (bound ->
+  // quantum -> stored) -- so it carries the identical latent defect for the
+  // machine-purchase path. A spurious decline there is a player pressing buy
+  // and nothing happening. These values are break_infinity's own real
+  // renormalization gap, not a contrived edge case: `bound(1228.8).plus(
+  // quantum(771.199999999995))` displays as exactly 2000 (canAffordBuild says
+  // yes), but subtracting the 2000 cost from each field in turn -- 1228.8 from
+  // bound, then the remaining 771.2 from quantum's actual 771.199999999995 --
+  // leaves a ~5e-12 residue spendInOrder's per-field walk can see and the
+  // aggregate check can't.
+  describe("SPEND_RESIDUAL_TOLERANCE (task 14c)", () => {
+    it("spends cleanly to zero when the aggregate affords it but the field walk finds a sub-tolerance residue", () => {
+      const w = world({
+        stored: { ...world().stored, iron_plate: D(0) },
+        quantum: { ...world().quantum, iron_plate: D("771.199999999995") },
+        bound: { ...world().bound, iron_plate: D("1228.8") },
+      });
+      const costs = new Map([["iron_plate", D(2000)]]);
+      // The aggregate gate: stored.plus(quantum).plus(bound) rounds to exactly
+      // 2000, so this must say yes even though no single field holds it alone.
+      expect(canAffordBuild(w, costs)).toBe(true);
+
+      const next = spendForBuild(content, w, costs);
+      expect(next).not.toBeNull();
+      expect(next!.bound.iron_plate!.toNumber()).toBe(0);
+      expect(next!.quantum.iron_plate!.toNumber()).toBe(0);
+      expect(next!.stored.iron_plate!.toNumber()).toBe(0);
+    });
+
+    it("still refuses a genuine shortfall, not just one inside the tolerance", () => {
+      // Same shape, but short by 1: no amount of renormalization forgiveness
+      // should paper over a real missing unit.
+      const w = world({
+        stored: { ...world().stored, iron_plate: D(0) },
+        quantum: { ...world().quantum, iron_plate: D("771.199999999995") },
+        bound: { ...world().bound, iron_plate: D("1228.8") },
+      });
+      const costs = new Map([["iron_plate", D(2001)]]);
+      expect(canAffordBuild(w, costs)).toBe(false);
+      expect(spendForBuild(content, w, costs)).toBeNull();
+    });
+
+    it("the tolerance is a fraction of the cost, not an absolute constant", () => {
+      // Documents the derivation in storage.ts's comment: 1e-9 is a relative
+      // bound (spec A.4 zone 3's costs range over many orders of magnitude),
+      // so the forgiven residue scales with the amount being spent.
+      expect(D(2000).times(SPEND_RESIDUAL_TOLERANCE).toNumber()).toBeCloseTo(2e-6, 12);
+    });
   });
 });
 

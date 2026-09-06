@@ -232,6 +232,27 @@ export function canAffordLiquid(state: WorldState, costs: ReadonlyMap<ItemId, De
  * a discrete fork, not float noise. Anything within this fraction of the
  * requested amount is that renormalization gap; anything past it is a real
  * bug and still fails loudly.
+ *
+ * The bound is a derived engineering margin, not a round-number guess.
+ * resolve/index.ts's `MAX_EVENTS` (10,000) plus its coarse-step tail caps a
+ * single resolve() at `hardStop = MAX_EVENTS + ceil(offlineCapMs /
+ * COARSE_STEP_MS) + 2` steps -- ~10,482 with the fixture's 8-hour offline cap.
+ * Worst-case naive float64 accumulation across that many steps is bounded by
+ * `stepCount * Number.EPSILON` ~= 10,482 * 2.22e-16 ~= 2.3e-12 relative, which
+ * is what the observed ~5e-12 knife-edge residual actually was. 1e-9 sits two
+ * to three orders of magnitude above that ceiling: comfortably forgiving for
+ * the noise this fixes, comfortably tight against a genuine shortfall (a real
+ * 1% or 0.05% shortfall still rejects, in both spendFromLiquid and
+ * spendForBuild -- canAffordLiquid/canAffordBuild gate entry on the same
+ * state via one `.plus()` each, so nothing but that renormalization gap ever
+ * reaches this check).
+ *
+ * Caveat: break_infinity preserves *relative*, not absolute, precision, so
+ * the absolute forgiveness window scales with the cost's magnitude -- at a
+ * 1e600 cost this tolerance forgives residues up to ~1e591. That is only
+ * safe because the bound above is relative to the requested amount, derived
+ * from a step count that does not itself scale with magnitude; it is not a
+ * license to treat 1e591 as a small number in isolation.
  */
 export const SPEND_RESIDUAL_TOLERANCE = 1e-9;
 
