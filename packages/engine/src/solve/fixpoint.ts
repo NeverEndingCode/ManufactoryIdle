@@ -224,6 +224,15 @@ export function solvePass(args: SolvePassArgs): SolvePassResult {
     pinnedEmpty,
     reserveFloor,
     untaxedRecipes: sweepTouched,
+    // Ruling R32 (task 14b): reuse the first pass's own disqualification
+    // answer rather than let this call recompute one from
+    // `reconciledCapacityUnits` -- for a sweep-touched recipe that is
+    // deliberately a different (already-final) number than the first pass's
+    // nameplate `capacityUnits`, and recomputing from it can shift a ceiling
+    // comparison enough to disqualify a different set of entries, which is
+    // exactly the kind of cross-pass inconsistency this reconciliation exists
+    // to prevent (see WaterfallResult.disqualified's own comment).
+    forceDisqualified: waterfall.disqualified,
   });
 
   return {

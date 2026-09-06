@@ -186,9 +186,27 @@ describe("runWaterfall — one target, no reserve floor", () => {
 });
 
 describe("runWaterfall — the reserve floor", () => {
-  it("holds back 2% of contested capacity and hands it to a starved entry", () => {
+  // Ruling R32 (task 14b): this scenario used to assert that iron_ore's own
+  // entry got the reserve floor's held-back 0.04 (see git history for the
+  // original numbers). It doesn't anymore, and that is a corrected bug, not a
+  // weakened property. iron_ingot's own vector's tightest constraint here IS
+  // mine_iron (`entries[0]!.limitedBy === "mine_iron"`, confirmed below) --
+  // iron_ingot's requirement walk is genuinely, demonstrably bottlenecked on
+  // the very recipe iron_ore's own entry also draws on. Handing iron_ore's
+  // entry any nonzero share of that recipe (whether via an uncontested slice
+  // of phase A or phase B's reserve-floor top-up -- the two are the same
+  // instability, and this task confirmed both directions are reachable)
+  // manufactures a net > 0 for iron_ore while it is pinned EMPTY; empirically,
+  // resolving this exact configuration through resolve() before this fix
+  // burned the full MAX_EVENTS budget and tripped the guard, chasing the same
+  // pin/unpin limit cycle task 14b was opened to fix (iron_ore ping-pongs
+  // EMPTY/FLOWING at ever-smaller timesteps once it is ever handed that
+  // sliver). iron_ingot now correctly gets the recipe's FULL, untaxed 2 units:
+  // once iron_ore's entry is excluded, mine_iron is no longer "contested" by
+  // anyone who could ever claim a held-back slice, so nothing is withheld.
+  it("does not hand a bottlenecked recipe's owner a trickle it cannot sustain", () => {
     // 8 smelters (ladderInput 8, still under the interval of 10, so ladder x1) and
-    // the 2 starting miners. iron_ingot will consume every miner unit in phase A.
+    // the 2 starting miners. iron_ingot will consume every miner unit.
     let state = base();
     state = withInstalled(state, "iron", "smelter", 1, 8);
     state = { ...state, assignment: { ...state.assignment, smelt_iron: 8 } };
@@ -206,14 +224,43 @@ describe("runWaterfall — the reserve floor", () => {
       reserveFloor: RESERVE_FLOOR,
     });
 
-    // mine_iron is contested, so phase A sees 2 * 0.98 = 1.96 units. iron_ingot
-    // needs 1 mine unit per ingot/s and 2 smelt units, so it takes 1.96 ingot/s,
-    // consuming 3.92 smelter units and all 1.96 available miner units.
-    expect(result.entries[0]!.allocated).toBeCloseTo(1.96, 9);
+    // iron_ingot needs 1 mine unit per ingot/s and 2 smelt units, and mine_iron
+    // (2 units) is the tighter of the two -- it takes all 2 mine_iron units,
+    // consuming 4 smelter units in the process.
+    expect(result.entries[0]!.allocated).toBeCloseTo(2, 9);
     expect(result.entries[0]!.limitedBy).toBe("mine_iron");
-    // iron_ore got nothing in phase A, so phase B gives it the held-back 0.04.
-    expect(result.entries[1]!.allocated).toBeCloseTo(0.04, 9);
+    // iron_ore's own entry is genuinely, demonstrably bottlenecked out: 0, not
+    // a manufactured trickle.
+    expect(result.entries[1]!.allocated).toBeCloseTo(0, 9);
     expect(result.usedUnits.get("mine_iron")).toBeCloseTo(2, 9);
+  });
+
+  // The reserve floor itself is unaffected when nobody's requirement walk is
+  // actually bottlenecked on the shared recipe -- the ordinary "abundant
+  // upstream" shape (spec 4.2's own motivating case), unchanged bit-for-bit
+  // from before ruling R32 (verified by reverting solve/waterfall.ts's fix and
+  // re-running this exact assertion). mine_iron here (2 units, contested by
+  // all three entries' requirement walks) is never anyone's actual bottleneck
+  // -- iron_plate's tightest constraint is its own make_plate capacity and
+  // iron_ingot's is its own smelt_iron capacity -- so iron_ore's entry is left
+  // completely alone and still draws its full, real, sustainable share.
+  it("still lets an item's own entry draw its share when nobody is bottlenecked on it", () => {
+    const state = base();
+    const capacity = computeCapacity(content, state);
+    const result = runWaterfall({
+      content,
+      vectors: vectorsFor(state),
+      activeRecipe: state.activeRecipe,
+      capacityUnits: capacity.unitsByRecipe,
+      entries: [entry("iron_plate"), entry("iron_ingot"), entry("iron_ore")],
+      pinnedEmpty: ALL_EMPTY,
+      reserveFloor: RESERVE_FLOOR,
+    });
+    expect(result.entries[0]!.allocated).toBeCloseTo(1 / 3, 9);
+    expect(result.entries[0]!.limitedBy).toBe("make_plate");
+    expect(result.entries[1]!.allocated).toBeCloseTo(0.48, 9);
+    expect(result.entries[1]!.limitedBy).toBe("smelt_iron");
+    expect(result.entries[2]!.allocated).toBeCloseTo(0.98, 9);
   });
 
   it("does not tax an uncontested recipe", () => {

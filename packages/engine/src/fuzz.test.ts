@@ -1,8 +1,9 @@
 // The fuzzer: random states through solve()/resolve(), asserting no NaN, no
 // negative stock, and that the MAX_EVENTS/EPSILON guards never trip on
-// legitimate input -- see task-14-report.md for the one class of generated
-// state where that last guarantee currently does not hold (a pre-existing
-// pin/unpin flapping loop in resolve(), unrelated to ruling R31).
+// legitimate input. Task 14 found one class of generated state where that
+// last guarantee did not hold (a pin/unpin flapping loop at a knife-edge
+// EMPTY equilibrium); task 14b root-caused and fixed it in
+// solve/waterfall.ts (ruling R32) -- see that file's module comment.
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import fc from "fast-check";
@@ -69,15 +70,12 @@ describe("fuzzing resolve", () => {
     );
   }, 60_000);
 
-  // KNOWN FAILING for a narrow slice of generated states -- see
-  // task-14-report.md. A pin/unpin flapping loop at a knife-edge EMPTY
-  // equilibrium (production and consumption within float noise of each other,
-  // with a competing raw-material priority entry on the same item) burns
-  // through MAX_EVENTS worth of near-zero-duration steps before the coarse
-  // fallback engages. Reproduced with the R31 fix reverted too, so it predates
-  // this task and is not part of the R31 family; escalated rather than
-  // papered over per this task's own instructions. The assertion is left
-  // exactly as spec E.6/C.7 state it.
+  // Used to fail on a narrow slice of generated states (task 14; fixed in
+  // task 14b, ruling R32 in solve/waterfall.ts): a pin/unpin flapping loop at
+  // a knife-edge EMPTY equilibrium burned through MAX_EVENTS worth of
+  // near-zero-duration steps before the coarse fallback engaged. See
+  // resolve.test.ts's "task 14b: the iron_ingot/constructor knife edge"
+  // describe block for the concrete counterexample this generator surfaced.
   it(
     "does not trip the spec C.7 guards on legitimate input",
     () => {

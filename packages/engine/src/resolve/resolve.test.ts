@@ -5,6 +5,8 @@ import { D, fromCanonical } from "../numbers/decimal.js";
 import { indexContent } from "../graph/index-content.js";
 import { liquid, liquidCap } from "../economy/storage.js";
 import { initialWorld, type WorldState } from "../state/world.js";
+import { solve } from "../solve/solve.js";
+import { buildWorld } from "../testing/arbitrary.js";
 import { COARSE_STEP_MS, EPSILON_MS, MAX_EVENTS, resolve } from "./index.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
@@ -249,5 +251,71 @@ describe("resolve — invariants", () => {
     const r = resolve(base(), content, 8 * 60 * 60 * 1000);
     expect(r.summary.guardTripped).toBe(false);
     expect(r.summary.events).toBeLessThan(MAX_EVENTS);
+  });
+});
+
+// Task 14 surfaced a pin/unpin limit cycle in resolve() via the fuzz/property
+// suites; task 14b root-caused it and fixed it in solve/waterfall.ts (ruling
+// R32). Permanent regression coverage for the exact counterexample, so a
+// future edit that reopens it fails loudly here rather than only inside a
+// seeded fast-check shrink.
+describe("task 14b: the iron_ingot/constructor knife edge", () => {
+  // tier 0, 4 miners, 4 smelters, 1 constructor, 4 oil extractors, 4
+  // refineries -- 1 smelter is badly outnumbered by 4 constructors. The
+  // fixture's default priority list carries iron_plate and iron_ingot as
+  // separate entries (packages/content/bundles/fixture/start.yaml), and
+  // iron_plate's requirement walk is genuinely bottlenecked on smelt_iron
+  // (constructor capacity vastly exceeds it): before the fix, handing
+  // iron_ingot's own entry any nonzero share of smelt_iron (the reserve
+  // floor's 2%) manufactured a net > 0 for iron_ingot while pinned EMPTY. The
+  // instant that trickle lifted iron_ingot's liquid off zero, iron_plate's
+  // walk stopped routing through smelt_iron (iron_ingot was no longer pinned
+  // EMPTY) and instead drew on iron_ingot's tiny stock directly at the
+  // constructors' full unconstrained rate, draining it back to exactly zero
+  // within the same instant and re-pinning -- forever, at
+  // dtMs ~ EPSILON_MS, burning the whole MAX_EVENTS budget every call.
+  const sketch = {
+    tier: 0,
+    machines: [4, 4, 1, 0, 0, 0, 4, 4],
+    fills: [0, 0, 0, 0, 0, 0, 0, 0],
+    storageLevels: [0, 0, 0, 0, 0, 0, 0, 0],
+    qsLevels: [0, 0, 0, 0, 0, 0, 0, 0],
+    reserves: [0, 0, 0, 0, 0, 0, 0, 0],
+    tapStacks: 0,
+    refund: 0,
+    rotate: 0,
+  };
+
+  it("does not trip the guard on a single resolve()", () => {
+    const start = buildWorld(content, sketch, START);
+    const r = resolve(start, content, 1);
+    expect(r.summary.guardTripped).toBe(false);
+    expect(r.summary.events).toBe(0);
+  });
+
+  it("holds iron_ingot's net at exactly zero instead of a manufactured trickle", () => {
+    const start = buildWorld(content, sketch, START);
+    const solution = solve(start, content);
+    const ingotFlow = solution.itemRates.get("iron_ingot")!;
+    expect(ingotFlow.net).toBe(0);
+    expect(ingotFlow.consumption).toBeLessThanOrEqual(ingotFlow.production);
+  });
+
+  it("agrees bit-for-bit between one 60s resolve and two 30s resolves", () => {
+    const start = buildWorld(content, sketch, START);
+    const halfMs = 30_000;
+    const whole = resolve(start, content, 2 * halfMs);
+    const split = resolve(resolve(start, content, halfMs).state, content, halfMs);
+
+    expect(whole.summary.guardTripped).toBe(false);
+    expect(split.summary.guardTripped).toBe(false);
+
+    for (const itemId of content.stockItemIds) {
+      for (const field of ["stored", "quantum", "bound", "lifetime"] as const) {
+        const a = whole.state[field][itemId]!.toNumber();
+        const b = split.state[field][itemId]!.toNumber();
+        expect(Math.abs(a - b) / Math.max(1, Math.abs(a))).toBeLessThan(1e-8);
+      }
+    }
   });
 });
