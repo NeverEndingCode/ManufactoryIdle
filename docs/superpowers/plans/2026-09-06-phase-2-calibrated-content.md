@@ -103,7 +103,36 @@ the design doc in the same commit.
 
 ---
 
-## Task 1 — Validator checks 7 through 10
+## Task 1 — Validator checks 7 through 10 — **DONE**
+
+All eleven checks now exist. Content 79 → 94 tests; 568 green overall.
+
+**Check 7 was rewritten and it found a live defect in our own test suite.** The shared
+bundle factory in `graph.test.ts` was itself an unbootstrappable deadlock — no starting
+machines, miner mk1 costing plate, and every recipe that makes plate needing a miner —
+and its first test asserted that bundle validated clean. That is the Phase 0 fixture bug,
+encoded as an expectation. The factory now carries a starting machine, and a test removes
+it to assert the deadlock is caught.
+
+The strongest guard is on real content: `fixture.test.ts` now empties the real fixture's
+`start.machines` and asserts check 7 fires. That bundle *was* the Phase 0 deadlock, so
+this is the actual historical defect, reproduced and caught.
+
+**Check 9 deliberately stays silent on the Phase 1 stall, and that is correct.** It
+compares against the *maximum attainable* cap, so it flags only genuine permanent walls.
+2000 iron_plate against a 1500 base cap is recoverable by buying levels — the player had
+the money and the option and was simply never told, which was Task 0's bug, not a content
+bug. Widening check 9 to flag every requirement above a base cap would fail bundles that
+are merely paced and would not have caught the real defect. This is written into the
+function's own doc comment so the next person does not "fix" it.
+
+**Check 8 covers the static half only.** `r_eff = r / m` with the uncapped per-machine
+ratio is the worst case, because a softcap can only bend `m` down and so only raises
+`r_eff`. The maxed-multiplier half of B.6's wording is E.5's simulator gate. Documented
+in place rather than left implicit — an approximation labelled as the real thing is
+exactly how check 7 shipped broken.
+
+### Original task notes
 
 Checks 8, 9 and 10 were deferred out of Phase 0 for needing calibration machinery that
 arrives now. Check 7 is a different problem: **it does not do what its spec says.**

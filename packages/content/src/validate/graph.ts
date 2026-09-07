@@ -89,27 +89,82 @@ export function checkByproductOutlets(bundle: Bundle): ValidationIssue[] {
   return issues;
 }
 
-// What this does and does not model (spec B.6 check 7), same style of note
-// as checks 8/9/10 below: this only checks tier ordering — that a machine's
-// build-cost item is produced by *some* recipe at or before the mark's own
-// unlock tier. It does NOT check the spec's stated failure mode, "a machine
-// whose build cost needs an item only that machine can make" — i.e. a
-// genuine circularity where the sole producer of the cost item is gated
-// behind owning one of the very machines being bought. `iron_plate`'s only
-// producer runs on a `constructor`, so a constructor mk1 costing iron_plate
-// would pass this check (constructor unlocks at tier 0, iron_plate is first
-// produced at tier 0) while being unbuildable in practice. Real reachability
-// analysis — start from zero, or from the world's authored starting
-// machines, and prove every build cost is reachable without begging the
-// question — is deferred to Phase 2.
+/**
+ * Spec B.6 check 7's stated failure mode: "a machine whose build cost needs an item
+ * only that machine can make." A fixed-point bootstrap analysis, replacing the
+ * tier-ordering approximation this check shipped with in Phase 0.
+ *
+ * Seeded from the world's authored starting machines, it alternates
+ * "classes I can build" and "items I can produce" until neither grows. Because an
+ * item only enters the set once some ALREADY-available class produces it, a
+ * circularity cannot bootstrap itself into the answer — which is precisely what the
+ * tier comparison could not see. The Phase 0 fixture was such a deadlock and
+ * validated clean.
+ *
+ * The analysis subsumes the tier ordering it replaces: an item first produced above
+ * the mark's tier is absent from that tier's producible set for exactly that reason.
+ * The three messages below tell the three cases apart, because "unreachable" and
+ * "not yet unlocked" call for different fixes.
+ *
+ * Both sets grow monotonically and are bounded by the bundle, so the loop terminates.
+ */
+function producibleAtTier(
+  bundle: Bundle,
+  tier: number,
+  startingClasses: ReadonlySet<string>,
+): Set<string> {
+  const items = new Set<string>();
+  const classes = new Set<string>(startingClasses);
+
+  for (;;) {
+    let changed = false;
+
+    for (const recipe of bundle.recipes) {
+      if (recipe.unlockTier > tier) continue;
+      if (!classes.has(recipe.machineClass)) continue;
+      if (!recipe.inputs.every((input) => items.has(input.item))) continue;
+      for (const output of recipe.outputs) {
+        if (!items.has(output.item)) {
+          items.add(output.item);
+          changed = true;
+        }
+      }
+    }
+
+    for (const cls of bundle.machineClasses) {
+      if (classes.has(cls.id)) continue;
+      const buildable = cls.marks.some(
+        (mark) =>
+          mark.unlockTier <= tier && mark.buildCost.every((cost) => items.has(cost.item)),
+      );
+      if (buildable) {
+        classes.add(cls.id);
+        changed = true;
+      }
+    }
+
+    if (!changed) return items;
+  }
+}
+
 export function checkBuildCostsSatisfiable(bundle: Bundle): ValidationIssue[] {
   const produced = earliestProduction(bundle);
+  const startingClasses = new Set(bundle.start.machines.map((m) => m.machineClass));
+  const producibleByTier = new Map<number, Set<string>>();
   const issues: ValidationIssue[] = [];
 
   for (const cls of bundle.machineClasses) {
     for (const mark of cls.marks) {
+      let producible = producibleByTier.get(mark.unlockTier);
+      if (producible === undefined) {
+        producible = producibleAtTier(bundle, mark.unlockTier, startingClasses);
+        producibleByTier.set(mark.unlockTier, producible);
+      }
+
       for (const cost of mark.buildCost) {
+        if (producible.has(cost.item)) continue;
         const producedAt = produced.get(cost.item);
+
         if (producedAt === undefined) {
           issues.push(
             issue(7, `"${cls.id}" mk${mark.mark} costs "${cost.item}", which nothing produces`),
@@ -119,6 +174,13 @@ export function checkBuildCostsSatisfiable(bundle: Bundle): ValidationIssue[] {
             issue(
               7,
               `"${cls.id}" mk${mark.mark} unlocks at tier ${mark.unlockTier} but costs "${cost.item}", first produced at tier ${producedAt}`,
+            ),
+          );
+        } else {
+          issues.push(
+            issue(
+              7,
+              `"${cls.id}" mk${mark.mark} costs "${cost.item}", which is unreachable at tier ${mark.unlockTier}: every recipe producing it needs a machine that cannot be built first. Grant a starting machine, or denominate the cost in something reachable`,
             ),
           );
         }

@@ -44,7 +44,16 @@ function bundle(): Bundle {
     },
     tap: { kickPerStack: 0.05, durationSeconds: 30, maxStacks: 10, powerInjectionMw: 25 },
     milestones: [],
-    start: { tier: 0, machines: [], assignments: {}, priority: [] },
+    // A bundle is not self-starting: check 7's bootstrap analysis needs an
+    // externally-granted machine or nothing is ever buildable. Without this the
+    // factory below is itself a deadlock — miner mk1 costs plate, and every recipe
+    // that could make plate needs a miner.
+    start: {
+      tier: 0,
+      machines: [{ lane: "iron", machineClass: "miner", mark: 1, count: 1 }],
+      assignments: {},
+      priority: [],
+    },
     baseGridCapacityMw: 0,
     offlineCapHours: 8,
     pacing: {
@@ -189,6 +198,93 @@ describe("checkByproductOutlets (check 5)", () => {
 describe("checkBuildCostsSatisfiable (check 7)", () => {
   it("passes when the build cost item is produced at or below the mark's tier", () => {
     expect(checkBuildCostsSatisfiable(bundle())).toEqual([]);
+  });
+
+  // Spec B.6's actual wording for check 7 — "a machine whose build cost needs an
+  // item only that machine can make". The tier-ordering approximation this check
+  // shipped with in Phase 0 could not see this: miner mk1 unlocks at tier 1 and
+  // plate is first produced at tier 1, so the tier comparison is satisfied while
+  // the bundle is unbuildable in practice. The Phase 0 fixture was exactly this
+  // shape and validated clean.
+  it("flags the circular bootstrap that tier ordering cannot see", () => {
+    const b = bundle();
+    b.start.machines = [];
+    const issues = checkBuildCostsSatisfiable(b);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.check).toBe(7);
+    expect(issues[0]!.message).toContain("unreachable");
+    expect(issues[0]!.message).toContain("plate");
+  });
+
+  it("accepts a class bootstrapped by another class's starting machine", () => {
+    const b = bundle();
+    // A second class that makes nothing anyone needs first: it is buildable
+    // because the seeded miner can reach `plate`, not because it seeds itself.
+    b.machineClasses.push({
+      id: "presser",
+      name: "Presser",
+      ladder: { step: 1.5, interval: 10 },
+      costRatio: 1.09,
+      marks: [
+        {
+          mark: 1,
+          name: "Mk.1",
+          rateMultiplier: 1,
+          buildCostMultiplier: 1,
+          powerDraw: 5,
+          buildCost: [{ item: "plate", amount: 4 }],
+          unlockTier: 1,
+        },
+      ],
+    });
+    expect(checkBuildCostsSatisfiable(b)).toEqual([]);
+  });
+
+  it("does not let a class bootstrap itself out of its own output", () => {
+    const b = bundle();
+    b.start.machines = [];
+    b.items.push({
+      id: "cog",
+      lane: "iron",
+      tier: 0,
+      name: "Cog",
+      fluid: false,
+      terminal: true,
+      baseStorageCap: 1,
+      baseQuantumCap: 1,
+    });
+    // A class whose only cost item is made solely by itself, from nothing. Reading
+    // the graph alone this looks satisfiable at tier 0; it is a closed loop.
+    b.machineClasses.push({
+      id: "cogger",
+      name: "Cogger",
+      ladder: { step: 1.5, interval: 10 },
+      costRatio: 1.09,
+      marks: [
+        {
+          mark: 1,
+          name: "Mk.1",
+          rateMultiplier: 1,
+          buildCostMultiplier: 1,
+          powerDraw: 5,
+          buildCost: [{ item: "cog", amount: 1 }],
+          unlockTier: 0,
+        },
+      ],
+    });
+    b.recipes.push({
+      id: "makeCog",
+      name: "MakeCog",
+      lane: "iron",
+      machineClass: "cogger",
+      inputs: [],
+      outputs: [{ item: "cog", rate: "1", byproduct: false }],
+      powerOutput: 0,
+      isAlternate: false,
+      unlockTier: 0,
+    });
+    const issues = checkBuildCostsSatisfiable(b);
+    expect(issues.some((i) => i.message.includes("cogger") && i.message.includes("unreachable"))).toBe(true);
   });
 
   it("flags a build cost whose item is only produced at a later tier", () => {
