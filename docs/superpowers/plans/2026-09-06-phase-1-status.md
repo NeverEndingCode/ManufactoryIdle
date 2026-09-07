@@ -1,10 +1,11 @@
 # Phase 1 — status and open findings
 
-**Status:** Engine complete and property-tested. 14 of 16 planned tasks done, plus one
-unplanned Critical fix. One test red, deliberately, on a real defect described below.
+**Status:** Complete. All 16 planned tasks done, plus two unplanned fixes (R32, and the
+milestone knife-edge). Phase 1's stated deliverable — a playable game in the terminal —
+is met. One design gap found by the simulator, described below.
 **Branch:** `worktree-phase-1-engine`
-**Tests:** rational 67/67 · engine 326/327 · content 79/79 · lint, typecheck and
-`content:check` all clean.
+**Tests:** rational 67/67 · engine 332/332 · content 79/79 · sim 69/69 (547 total) ·
+lint, typecheck and `content:check` all clean.
 **Date:** 2026-09-06
 
 ---
@@ -27,10 +28,11 @@ The whole engine, per spec Section C:
 | All eleven action reducers and the `apply` dispatcher | Tasks 12–13 |
 | Spec E.6 property suite and fuzzer (`fast-check`, seed 20260904) | Task 14 |
 | Pin/unpin limit-cycle fix (unplanned, ruling R32) | Task 14b |
+| Milestone knife-edge fix (unplanned, see below) | Task 14c |
+| `apps/sim`, `sim run`, the four policies and the report | Task 15 |
+| `sim play` — the Ink terminal client, with `explain` and `assert` | Task 16 |
 
-**Not built:** Tasks 15–16, `apps/sim` — `sim run`'s four policies and report, and
-`sim play`, the Ink terminal client. Phase 1's stated deliverable ("a playable game in
-the terminal") therefore is not met; the engine underneath it is.
+Phase 1's stated deliverable, a playable game in the terminal, is met.
 
 ---
 
@@ -114,6 +116,64 @@ Independent of that work.
 
 ---
 
+## The open finding — the bottleneck report cannot say "your storage is full"
+
+**The `bottleneck` policy exists to test whether the game's own advice is any good. It
+found that the advice is wrong, in a state every player will reach.**
+
+`sim run --policy bottleneck --until tier:2` never finishes. It reaches tier 1 in 5m46s
+and then sits for the entire remaining budget — **19d 23h of dead time**, against
+`greedy`'s 3h26m to tier 2 and `optimal`'s 1h46m.
+
+### The mechanism, confirmed by probe rather than by reading
+
+After 400 decision rounds the stuck state is exact:
+
+| | |
+|---|---|
+| `stored.iron_plate` | 300 — exactly `baseStorageCap` |
+| `quantum.iron_plate` | 1200 — exactly `baseQuantumCap` |
+| liquid total | **1500**, against tier 2's requirement of **2000** |
+| `storageLevel`, `qsLevel` | all `0` — the policy bought no upgrade, ever |
+| `iron_plate` entry | `allocated: 0`, `limitedBy: "make_plate"` |
+| report | `{ recipe, make_plate, machinesToClear: 1 }` |
+
+Production has stopped dead, storage is exactly full, the tier is unreachable without a
+storage purchase — and the game says *buy another constructor*.
+
+Two separate causes compound:
+
+1. **`Bottleneck` has no vocabulary for this.** Its two kinds are `recipe` and `power`
+   (`packages/engine/src/solve/bottleneck.ts:16-21`). A storage cap is the binding
+   constraint here and the type cannot name it, so the reporter falls through to the
+   recipe it *can* name.
+2. **The `max(1, ...)` floor manufactures a recommendation from nothing.**
+   `machinesToClearRecipe` computes `target = allocated * 1.1` for an unbounded entry;
+   with `allocated` at 0 that is 0, the shortfall is 0, and `Math.max(1, 0)` turns "no
+   machine would help" into "buy 1 machine" (`bottleneck.ts:50`).
+
+`greedy` escapes only incidentally: storage and QS are ordinary "cheapest affordable"
+candidates for it, so it buys them without ever being advised to.
+
+### Why this matters more than a policy losing a race
+
+This is not the sim being pessimistic. It is the engine's advice channel — the thing
+`sim play`'s `explain` prints and the future UI will surface — being confidently wrong
+at the exact moment a player is stuck and looking for guidance. A player following it
+buys constructors forever.
+
+**It is a design gap, not a regression.** Spec 4.5 defines the report as recipe-or-power;
+nothing was broken by Tasks 15–16. Fixing it means extending the `Bottleneck` type with a
+storage kind, which is a spec change and therefore a Phase 2 decision, not a quiet
+Phase 1 edit.
+
+**Recommended:** add a `{ kind: "storage" }` variant naming the capped item and the
+upgrade that would clear it, and drop the `max(1, ...)` floor in favour of returning "no
+machine helps" honestly. Then re-run the four-policy comparison; `bottleneck` should
+land near `greedy` or better, and if it does not, the advice still needs work.
+
+---
+
 ## Deferred, with reasons
 
 | Item | Why deferred |
@@ -152,11 +212,13 @@ Independent of that work.
 1. ~~Fix the milestone knife-edge divergence.~~ **Done** in `fb7ae51` — see the correction
    above. Horizon scan is now flat from 1e-15 to 8e-12 with no step at the milestone boundary,
    the 229× case is 2.3e-14, and the split-point scan is position-invariant at ~7.5e-12.
-2. **Tasks 15–16**, the simulator — `sim run`'s four policies and report, and `sim play`,
-   the Ink terminal client. These are what make Phase 1's stated deliverable, a playable game
-   in the terminal.
-3. Phase 2's pacing gates must assert absolute tier times, never a policy ordering —
-   carried forward from Phase 0.
+2. ~~Tasks 15–16, the simulator.~~ **Done** in `ac58fc6` and `ba79ea0`.
+3. **Give the bottleneck report a storage kind** — see the open finding above. This is the
+   first thing Phase 2 should do, because every balance number measured before it is
+   measured against advice known to be wrong.
+4. Phase 2's pacing gates must assert absolute tier times, never a policy ordering —
+   carried forward from Phase 0, and now doubly relevant: `bottleneck` losing to `greedy`
+   is a real finding, not a test to be tuned away.
 
 ## A note on two overturned diagnoses
 
