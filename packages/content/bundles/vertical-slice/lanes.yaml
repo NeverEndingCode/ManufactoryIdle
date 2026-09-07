@@ -1,0 +1,13 @@
+version: slice.v1
+
+# Spec B.5's vertical slice. Four production lanes plus a power lane.
+#
+# B.5's table reads "Four lanes, 31 items" but lists five rows, the fifth being
+# Power/biomass. Power is a lane here: lanes carry Quantum Storage levels and lane
+# multipliers, and generators need both.
+lanes:
+  - { id: iron,   name: Iron,   order: 0, unlockTier: 0 }
+  - { id: power,  name: Power,  order: 1, unlockTier: 0 }
+  - { id: copper, name: Copper, order: 2, unlockTier: 2 }
+  - { id: coal,   name: Coal,   order: 3, unlockTier: 3 }
+  - { id: oil,    name: Oil,    order: 4, unlockTier: 6 }

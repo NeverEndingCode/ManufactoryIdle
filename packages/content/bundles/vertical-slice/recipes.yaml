@@ -1,0 +1,94 @@
+# 44 recipes. Satisfactory-shaped topology -- which items feed which, and where
+# byproducts emerge -- with rates tuned for pacing rather than copied from any
+# particular game version (amends spec B.5's "real Satisfactory ratios throughout";
+# see the Phase 2 plan for the decision).
+#
+# Load-bearing structure, per spec B.5:
+#   * Cross-lane contention -- make_steel_ingot draws iron_ore AND coal, so the Iron
+#     and Coal lanes compete for the same solver capacity. Encased Industrial Beam
+#     needs concrete plus steel.
+#   * The byproduct triangle -- refine_plastic and refine_rubber both emit heavy oil
+#     residue; refine_residual_fuel is the consume corner and feeds Fuel Generators;
+#     alt_coated_cable is the second consume corner, turning a byproduct into a
+#     mainline input. Check 5 requires every byproduct's consumer to unlock at or
+#     BELOW the byproduct's own tier, which is what pins residual fuel to tier 6.
+#   * Fluids and packaging -- water gates coal generators, and packaged fuel exists
+#     because fluids cannot be sunk directly.
+#   * A deliberate cycle -- alt_recycled_plastic and alt_recycled_rubber form a
+#     genuine SCC. Check 6 warns rather than failing, and ruling R6 keeps both
+#     recipes permanently unselectable, so the cost of forbidding cycles can be
+#     measured instead of guessed.
+recipes:
+  # === Tier 0 -- the iron bootstrap and biomass power =========================
+  - { id: mine_iron_ore,   name: Mine Iron Ore,   lane: iron,  machineClass: miner,       inputs: [], outputs: [{ item: iron_ore, rate: "60" }], unlockTier: 0 }
+  - { id: smelt_iron_ingot, name: Smelt Iron Ingot, lane: iron, machineClass: smelter,    inputs: [{ item: iron_ore, rate: "30" }], outputs: [{ item: iron_ingot, rate: "30" }], unlockTier: 0 }
+  - { id: make_iron_plate, name: Iron Plate,      lane: iron,  machineClass: constructor, inputs: [{ item: iron_ingot, rate: "30" }], outputs: [{ item: iron_plate, rate: "20" }], unlockTier: 0 }
+  - { id: make_iron_rod,   name: Iron Rod,        lane: iron,  machineClass: constructor, inputs: [{ item: iron_ingot, rate: "15" }], outputs: [{ item: iron_rod, rate: "15" }], unlockTier: 0 }
+  - { id: collect_biomass, name: Collect Biomass, lane: power, machineClass: collector,   inputs: [], outputs: [{ item: biomass, rate: "20" }], unlockTier: 0 }
+  - { id: burn_biomass,    name: Burn Biomass,    lane: power, machineClass: biomass_burner, inputs: [{ item: biomass, rate: "20" }], outputs: [], powerOutput: 30, unlockTier: 0 }
+
+  # === Tier 1 -- screws and the first assembler product =======================
+  - { id: make_screw, name: Screw, lane: iron, machineClass: constructor, inputs: [{ item: iron_rod, rate: "10" }], outputs: [{ item: screw, rate: "40" }], unlockTier: 1 }
+  - { id: make_reinforced_iron_plate, name: Reinforced Iron Plate, lane: iron, machineClass: assembler, inputs: [{ item: iron_plate, rate: "30" }, { item: screw, rate: "60" }], outputs: [{ item: reinforced_iron_plate, rate: "5" }], unlockTier: 1 }
+
+  # === Tier 2 -- the copper lane ==============================================
+  - { id: mine_copper_ore,    name: Mine Copper Ore,  lane: copper, machineClass: miner,       inputs: [], outputs: [{ item: copper_ore, rate: "60" }], unlockTier: 2 }
+  - { id: smelt_copper_ingot, name: Smelt Copper Ingot, lane: copper, machineClass: smelter,   inputs: [{ item: copper_ore, rate: "30" }], outputs: [{ item: copper_ingot, rate: "30" }], unlockTier: 2 }
+  - { id: make_wire,          name: Wire,             lane: copper, machineClass: constructor, inputs: [{ item: copper_ingot, rate: "15" }], outputs: [{ item: wire, rate: "30" }], unlockTier: 2 }
+  - { id: make_cable,         name: Cable,            lane: copper, machineClass: constructor, inputs: [{ item: wire, rate: "60" }], outputs: [{ item: cable, rate: "30" }], unlockTier: 2 }
+
+  # === Tier 3 -- limestone, sheet, rotor ======================================
+  - { id: mine_limestone,   name: Mine Limestone, lane: coal,   machineClass: miner,       inputs: [], outputs: [{ item: limestone, rate: "60" }], unlockTier: 3 }
+  - { id: make_concrete,    name: Concrete,       lane: coal,   machineClass: constructor, inputs: [{ item: limestone, rate: "45" }], outputs: [{ item: concrete, rate: "15" }], unlockTier: 3 }
+  - { id: make_copper_sheet, name: Copper Sheet,  lane: copper, machineClass: constructor, inputs: [{ item: copper_ingot, rate: "20" }], outputs: [{ item: copper_sheet, rate: "10" }], unlockTier: 3 }
+  - { id: make_rotor,       name: Rotor,          lane: iron,   machineClass: assembler,   inputs: [{ item: iron_rod, rate: "20" }, { item: screw, rate: "100" }], outputs: [{ item: rotor, rate: "4" }], unlockTier: 3 }
+
+  # === Tier 4 -- coal, steel, water, coal power ===============================
+  # make_steel_ingot is the cross-lane contention point: iron ore and coal at once.
+  - { id: mine_coal,        name: Mine Coal,      lane: coal,  machineClass: miner,           inputs: [], outputs: [{ item: coal, rate: "60" }], unlockTier: 4 }
+  - { id: extract_water,    name: Extract Water,  lane: oil,   machineClass: water_extractor, inputs: [], outputs: [{ item: water, rate: "120" }], unlockTier: 4 }
+  - { id: make_steel_ingot, name: Steel Ingot,    lane: coal,  machineClass: foundry,         inputs: [{ item: iron_ore, rate: "45" }, { item: coal, rate: "45" }], outputs: [{ item: steel_ingot, rate: "45" }], unlockTier: 4 }
+  - { id: burn_coal,        name: Burn Coal,      lane: power, machineClass: coal_generator,  inputs: [{ item: coal, rate: "15" }, { item: water, rate: "45" }], outputs: [], powerOutput: 75, unlockTier: 4 }
+
+  # === Tier 5 -- steel products and the modular frame =========================
+  - { id: make_steel_beam,  name: Steel Beam,     lane: coal, machineClass: constructor, inputs: [{ item: steel_ingot, rate: "60" }], outputs: [{ item: steel_beam, rate: "15" }], unlockTier: 5 }
+  - { id: make_steel_pipe,  name: Steel Pipe,     lane: coal, machineClass: constructor, inputs: [{ item: steel_ingot, rate: "30" }], outputs: [{ item: steel_pipe, rate: "20" }], unlockTier: 5 }
+  - { id: make_encased_industrial_beam, name: Encased Industrial Beam, lane: coal, machineClass: assembler, inputs: [{ item: steel_beam, rate: "24" }, { item: concrete, rate: "30" }], outputs: [{ item: encased_industrial_beam, rate: "6" }], unlockTier: 5 }
+  - { id: make_modular_frame, name: Modular Frame, lane: iron, machineClass: assembler, inputs: [{ item: reinforced_iron_plate, rate: "3" }, { item: iron_rod, rate: "12" }], outputs: [{ item: modular_frame, rate: "2" }], unlockTier: 5 }
+
+  # === Tier 6 -- the oil lane and the byproduct triangle ======================
+  # refine_residual_fuel MUST unlock here, not later: check 5 requires a byproduct's
+  # consumer at or below the byproduct's own tier, and both refining recipes emit HOR.
+  - { id: extract_crude_oil,    name: Extract Crude Oil, lane: oil, machineClass: oil_extractor, inputs: [], outputs: [{ item: crude_oil, rate: "120" }], unlockTier: 6 }
+  - { id: refine_plastic,       name: Plastic,           lane: oil, machineClass: refinery, inputs: [{ item: crude_oil, rate: "30" }], outputs: [{ item: plastic, rate: "20" }, { item: heavy_oil_residue, rate: "10", byproduct: true }], unlockTier: 6 }
+  - { id: refine_rubber,        name: Rubber,            lane: oil, machineClass: refinery, inputs: [{ item: crude_oil, rate: "30" }], outputs: [{ item: rubber, rate: "20" }, { item: heavy_oil_residue, rate: "20", byproduct: true }], unlockTier: 6 }
+  - { id: refine_residual_fuel, name: Residual Fuel,     lane: oil, machineClass: refinery, inputs: [{ item: heavy_oil_residue, rate: "60" }], outputs: [{ item: fuel, rate: "40" }], unlockTier: 6 }
+
+  # === Tier 7 -- packaging and fuel power =====================================
+  - { id: make_empty_canister, name: Empty Canister, lane: oil,   machineClass: constructor,    inputs: [{ item: plastic, rate: "30" }], outputs: [{ item: empty_canister, rate: "60" }], unlockTier: 7 }
+  - { id: package_fuel,        name: Packaged Fuel,  lane: oil,   machineClass: packager,       inputs: [{ item: fuel, rate: "40" }, { item: empty_canister, rate: "40" }], outputs: [{ item: packaged_fuel, rate: "40" }], unlockTier: 7 }
+  - { id: burn_fuel,           name: Burn Fuel,      lane: power, machineClass: fuel_generator, inputs: [{ item: fuel, rate: "20" }], outputs: [], powerOutput: 150, unlockTier: 7 }
+
+  # === Tier 8 -- smart plating and the resin branch ===========================
+  - { id: make_smart_plating,      name: Smart Plating,    lane: iron, machineClass: manufacturer, inputs: [{ item: reinforced_iron_plate, rate: "2" }, { item: rotor, rate: "2" }], outputs: [{ item: smart_plating, rate: "2" }], unlockTier: 8 }
+  - { id: refine_polymer_resin,    name: Polymer Resin,    lane: oil,  machineClass: refinery, inputs: [{ item: crude_oil, rate: "60" }], outputs: [{ item: polymer_resin, rate: "130" }, { item: heavy_oil_residue, rate: "20", byproduct: true }], unlockTier: 8 }
+  - { id: refine_residual_plastic, name: Residual Plastic, lane: oil,  machineClass: refinery, inputs: [{ item: polymer_resin, rate: "60" }, { item: water, rate: "20" }], outputs: [{ item: plastic, rate: "20" }], unlockTier: 8 }
+  - { id: refine_residual_rubber,  name: Residual Rubber,  lane: oil,  machineClass: refinery, inputs: [{ item: polymer_resin, rate: "40" }, { item: water, rate: "40" }], outputs: [{ item: rubber, rate: "20" }], unlockTier: 8 }
+
+  # === Tier 9 -- the alternate recipes ========================================
+  # alt_coated_cable is the one that matters most: it turns heavy oil residue, a
+  # byproduct, into a mainline input, giving the triangle a second consume corner.
+  - { id: alt_cast_screw,          name: Cast Screw,          lane: iron,   machineClass: constructor, inputs: [{ item: iron_ingot, rate: "12.5" }], outputs: [{ item: screw, rate: "50" }], isAlternate: true, unlockTier: 9 }
+  - { id: alt_steel_rod,           name: Steel Rod,           lane: iron,   machineClass: constructor, inputs: [{ item: steel_ingot, rate: "12" }], outputs: [{ item: iron_rod, rate: "48" }], isAlternate: true, unlockTier: 9 }
+  - { id: alt_solid_steel_ingot,   name: Solid Steel Ingot,   lane: coal,   machineClass: foundry,     inputs: [{ item: iron_ingot, rate: "40" }, { item: coal, rate: "40" }], outputs: [{ item: steel_ingot, rate: "60" }], isAlternate: true, unlockTier: 9 }
+  - { id: alt_coated_cable,        name: Coated Cable,        lane: copper, machineClass: refinery,    inputs: [{ item: wire, rate: "37.5" }, { item: heavy_oil_residue, rate: "15" }], outputs: [{ item: cable, rate: "67.5" }], isAlternate: true, unlockTier: 9 }
+  - { id: alt_stitched_iron_plate, name: Stitched Iron Plate, lane: iron,   machineClass: assembler,   inputs: [{ item: iron_plate, rate: "18.75" }, { item: wire, rate: "37.5" }], outputs: [{ item: reinforced_iron_plate, rate: "5.625" }], isAlternate: true, unlockTier: 9 }
+  - { id: alt_bolted_frame,        name: Bolted Frame,        lane: iron,   machineClass: assembler,   inputs: [{ item: reinforced_iron_plate, rate: "7.5" }, { item: screw, rate: "140" }], outputs: [{ item: modular_frame, rate: "5" }], isAlternate: true, unlockTier: 9 }
+  - { id: alt_wet_concrete,        name: Wet Concrete,        lane: coal,   machineClass: refinery,    inputs: [{ item: limestone, rate: "120" }, { item: water, rate: "100" }], outputs: [{ item: concrete, rate: "80" }], isAlternate: true, unlockTier: 9 }
+
+  # === Tier 10 -- the deliberate cycle ========================================
+  # plastic -> rubber -> plastic. A genuine SCC, included per spec B.5 so cycle
+  # detection has something real to catch. Both are permanently unselectable under
+  # ruling R6; what they cost the player is the evidence the SCC-solver decision needs.
+  - { id: alt_recycled_plastic, name: Recycled Plastic, lane: oil, machineClass: refinery, inputs: [{ item: rubber, rate: "30" }, { item: fuel, rate: "30" }], outputs: [{ item: plastic, rate: "60" }], isAlternate: true, unlockTier: 10 }
+  - { id: alt_recycled_rubber,  name: Recycled Rubber,  lane: oil, machineClass: refinery, inputs: [{ item: plastic, rate: "30" }, { item: fuel, rate: "30" }], outputs: [{ item: rubber, rate: "60" }], isAlternate: true, unlockTier: 10 }

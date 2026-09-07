@@ -3,14 +3,14 @@
 // Ruling R5 pools machines per (lane, machineClass), so a purchase adds to the pool
 // and an assignment distributes it. Making the player assign after every purchase
 // would be exactly the management surface pillar 3 rules out, so BUY_MACHINE
-// auto-assigns into the busiest recipe of the lane-class and DISMANTLE clamps back
-// down from the largest assignment first.
+// auto-assigns by the player's priority list (see autoAssignTarget) and DISMANTLE
+// clamps back down from the largest assignment first.
 //
 // Spec D4 makes refunds LIFO: dismantling the nth machine returns cost(n), so
 // rebuilding costs exactly what was refunded. Both directions call
 // machineCostRange with the same arguments, which makes the two Decimals bitwise
 // equal rather than merely close.
-import type { LaneId, MachineClassId, RecipeId } from "../content/types.js";
+import type { ItemId, LaneId, MachineClassId, RecipeId } from "../content/types.js";
 import {
   getMark,
   isLiveRecipe,
@@ -94,7 +94,24 @@ export function clampAssignments(
   return { ...state, assignment: Object.fromEntries(merged) };
 }
 
-/** The recipe a fresh purchase should join: busiest first, else the first live one. */
+/**
+ * Where a newly bought machine goes. Pillar 3 says there is no management surface,
+ * so the engine assigns rather than asking — but it must assign somewhere the player
+ * actually wants.
+ *
+ * The rule is the priority list (spec 4.1), which is exactly where the player states
+ * what they want most. A machine goes to the live recipe in this lane-class whose
+ * output sits highest in that list, skipping paused entries because pausing IS the
+ * remove verb.
+ *
+ * It used to go to whichever recipe already had the most machines. That is
+ * indistinguishable from this rule while a lane-class has ONE live recipe, which is
+ * true everywhere in the fixture's iron lane and false as soon as real content
+ * arrives: on the vertical slice it sent every iron constructor to `make_iron_plate`
+ * forever, so `make_iron_rod` never got a machine and a tier requiring 300 iron rods
+ * was unreachable. Existing assignment survives only as a tie-break, which keeps the
+ * old single-recipe behaviour byte-identical.
+ */
 function autoAssignTarget(
   content: IndexedContent,
   state: WorldState,
@@ -105,9 +122,40 @@ function autoAssignTarget(
     isLiveRecipe(content, recipeId, state.tier, state.activeRecipe),
   );
   if (recipeIds.length === 0) return null;
+  if (recipeIds.length === 1) return recipeIds[0]!;
+
+  // A Map, not a Record: priority entries are keyed by author-supplied item ids,
+  // which can collide with Object.prototype members.
+  const rankByItem = new Map<ItemId, number>();
+  state.priority.forEach((entry, index) => {
+    if (entry.paused || entry.itemId === null) return;
+    if (!rankByItem.has(entry.itemId)) rankByItem.set(entry.itemId, index);
+  });
+
+  // `primaryOutput` is already "the output this recipe is selected for" -- the first
+  // non-byproduct output, or POWER_ITEM for a generator. A byproduct is never what a
+  // machine is bought for, so ranking on it would be wrong.
+  const rankOf = (recipeId: RecipeId): number => {
+    const recipe = content.recipes.get(recipeId);
+    if (!recipe) return Number.POSITIVE_INFINITY;
+    return rankByItem.get(recipe.primaryOutput) ?? Number.POSITIVE_INFINITY;
+  };
+
   let best = recipeIds[0]!;
+  let bestRank = rankOf(best);
   for (const recipeId of recipeIds) {
-    if (assignmentOf(state, recipeId) > assignmentOf(state, best)) best = recipeId;
+    const rank = rankOf(recipeId);
+    if (rank < bestRank) {
+      best = recipeId;
+      bestRank = rank;
+      continue;
+    }
+    // Equal priority (or both unranked) falls back to the busiest recipe, so a
+    // lane-class the player has expressed no opinion about still concentrates
+    // rather than spreading thin.
+    if (rank === bestRank && assignmentOf(state, recipeId) > assignmentOf(state, best)) {
+      best = recipeId;
+    }
   }
   return best;
 }

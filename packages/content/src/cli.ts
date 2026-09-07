@@ -21,10 +21,19 @@ try {
 }
 
 const issues = validateBundle(bundle);
+const errors = issues.filter((i) => i.severity === "error");
+const warnings = issues.filter((i) => i.severity === "warning");
 
-if (issues.length > 0) {
-  stderr.write(`${issues.length} problem(s) in ${dir}:\n`);
-  for (const i of issues) stderr.write(`  [check ${i.check}] ${i.message}\n`);
+// Warnings print but do not fail: a cyclic recipe is unselectable, not broken
+// content (spec B.6 check 6). They go to stderr so a green build still surfaces them.
+if (warnings.length > 0) {
+  stderr.write(`${warnings.length} warning(s) in ${dir}:\n`);
+  for (const i of warnings) stderr.write(`  [check ${i.check}] ${i.message}\n`);
+}
+
+if (errors.length > 0) {
+  stderr.write(`${errors.length} problem(s) in ${dir}:\n`);
+  for (const i of errors) stderr.write(`  [check ${i.check}] ${i.message}\n`);
   exit(1);
 }
 

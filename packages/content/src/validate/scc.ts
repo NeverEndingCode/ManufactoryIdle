@@ -109,9 +109,12 @@ export function buildRecipeDependencyGraph(bundle: Bundle): {
 
 export function checkCycles(bundle: Bundle): ValidationIssue[] {
   const { nodes, edges } = buildRecipeDependencyGraph(bundle);
+  // A warning, not an error: spec B.6 flags cycles "unselectable in v1" rather than
+  // rejecting the bundle, and ruling R6 already makes every recipe in a non-trivial
+  // SCC permanently non-live in the engine. See ValidationIssue.severity.
   return findStronglyConnectedComponents(nodes, edges).map((component) => ({
     check: 6,
-    severity: "error" as const,
-    message: `recipe cycle: ${[...component].sort().join(" -> ")}`,
+    severity: "warning" as const,
+    message: `recipe cycle (unselectable in v1): ${[...component].sort().join(" -> ")}`,
   }));
 }

@@ -1,0 +1,116 @@
+# Spec B.2/C.0: the purchase ladder is scoped to (lane, class, mark) and marks are
+# mark-weighted, so a class used in several lanes pools separately per lane.
+#
+# Every costRatio here sits above the runaway floor (check 8): with the default
+# ladder, m = 1.5^(1/10) = 1.0414, so costRatio 1.09 gives r_eff 1.047 and 1.12
+# gives 1.076. Nothing is authored near the knife edge.
+#
+# Build costs are denominated in items reachable at the mark's own unlock tier --
+# check 7's bootstrap analysis proves that rather than trusting the ordering.
+machineClasses:
+  - id: miner
+    name: Miner
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
+    marks:
+      - { mark: 1, name: Miner Mk.1, rateMultiplier: 1,   buildCostMultiplier: 1,   powerDraw: 5,  buildCost: [{ item: iron_ore, amount: 15 }], unlockTier: 0 }
+      - { mark: 2, name: Miner Mk.2, rateMultiplier: 2,   buildCostMultiplier: 3,   powerDraw: 12, buildCost: [{ item: iron_plate, amount: 50 }], unlockTier: 3 }
+      - { mark: 3, name: Miner Mk.3, rateMultiplier: 4,   buildCostMultiplier: 9,   powerDraw: 30, buildCost: [{ item: modular_frame, amount: 20 }], unlockTier: 6 }
+
+  - id: smelter
+    name: Smelter
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
+    marks:
+      - { mark: 1, name: Smelter Mk.1, rateMultiplier: 1, buildCostMultiplier: 1,   powerDraw: 4,  buildCost: [{ item: iron_ore, amount: 15 }], unlockTier: 0 }
+      - { mark: 2, name: Smelter Mk.2, rateMultiplier: 2, buildCostMultiplier: 3,   powerDraw: 10, buildCost: [{ item: iron_plate, amount: 60 }], unlockTier: 3 }
+      - { mark: 3, name: Smelter Mk.3, rateMultiplier: 4, buildCostMultiplier: 9,   powerDraw: 26, buildCost: [{ item: steel_beam, amount: 30 }], unlockTier: 7 }
+
+  - id: constructor
+    name: Constructor
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
+    marks:
+      - { mark: 1, name: Constructor Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 4,  buildCost: [{ item: iron_ingot, amount: 20 }], unlockTier: 0 }
+      - { mark: 2, name: Constructor Mk.2, rateMultiplier: 2, buildCostMultiplier: 3, powerDraw: 10, buildCost: [{ item: iron_plate, amount: 40 }], unlockTier: 2 }
+      - { mark: 3, name: Constructor Mk.3, rateMultiplier: 4, buildCostMultiplier: 9, powerDraw: 24, buildCost: [{ item: steel_pipe, amount: 25 }], unlockTier: 5 }
+
+  - id: assembler
+    name: Assembler
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.1
+    marks:
+      - { mark: 1, name: Assembler Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 15, buildCost: [{ item: iron_plate, amount: 60 }, { item: iron_rod, amount: 30 }], unlockTier: 1 }
+      - { mark: 2, name: Assembler Mk.2, rateMultiplier: 2, buildCostMultiplier: 3, powerDraw: 34, buildCost: [{ item: reinforced_iron_plate, amount: 25 }, { item: cable, amount: 40 }], unlockTier: 5 }
+
+  - id: foundry
+    name: Foundry
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.1
+    marks:
+      - { mark: 1, name: Foundry Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 16, buildCost: [{ item: concrete, amount: 30 }, { item: copper_sheet, amount: 20 }], unlockTier: 4 }
+      - { mark: 2, name: Foundry Mk.2, rateMultiplier: 2, buildCostMultiplier: 3, powerDraw: 36, buildCost: [{ item: modular_frame, amount: 15 }, { item: steel_pipe, amount: 40 }], unlockTier: 7 }
+
+  - id: manufacturer
+    name: Manufacturer
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.12
+    marks:
+      - { mark: 1, name: Manufacturer Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 55, buildCost: [{ item: modular_frame, amount: 10 }, { item: cable, amount: 50 }, { item: plastic, amount: 50 }], unlockTier: 8 }
+
+  - id: collector
+    name: Biomass Collector
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
+    marks:
+      - { mark: 1, name: Collector Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 2, buildCost: [{ item: iron_ingot, amount: 10 }], unlockTier: 0 }
+      - { mark: 2, name: Collector Mk.2, rateMultiplier: 3, buildCostMultiplier: 4, powerDraw: 6, buildCost: [{ item: reinforced_iron_plate, amount: 15 }], unlockTier: 2 }
+
+  - id: water_extractor
+    name: Water Extractor
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.1
+    marks:
+      - { mark: 1, name: Water Extractor Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 20, buildCost: [{ item: copper_sheet, amount: 20 }, { item: cable, amount: 30 }], unlockTier: 4 }
+
+  - id: oil_extractor
+    name: Oil Extractor
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.12
+    marks:
+      - { mark: 1, name: Oil Extractor Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 40, buildCost: [{ item: modular_frame, amount: 10 }, { item: cable, amount: 30 }, { item: concrete, amount: 60 }], unlockTier: 6 }
+
+  - id: refinery
+    name: Refinery
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.12
+    marks:
+      - { mark: 1, name: Refinery Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 30, buildCost: [{ item: modular_frame, amount: 10 }, { item: encased_industrial_beam, amount: 10 }, { item: copper_sheet, amount: 30 }], unlockTier: 6 }
+
+  - id: packager
+    name: Packager
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.1
+    marks:
+      - { mark: 1, name: Packager Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 10, buildCost: [{ item: steel_beam, amount: 20 }, { item: rubber, amount: 20 }], unlockTier: 7 }
+
+  - id: biomass_burner
+    name: Biomass Burner
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.09
+    marks:
+      - { mark: 1, name: Biomass Burner Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 0, buildCost: [{ item: iron_plate, amount: 25 }], unlockTier: 0 }
+
+  - id: coal_generator
+    name: Coal Generator
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.1
+    marks:
+      - { mark: 1, name: Coal Generator Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 0, buildCost: [{ item: concrete, amount: 40 }, { item: cable, amount: 20 }], unlockTier: 4 }
+
+  - id: fuel_generator
+    name: Fuel Generator
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 1.12
+    marks:
+      - { mark: 1, name: Fuel Generator Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 0, buildCost: [{ item: modular_frame, amount: 15 }, { item: rubber, amount: 50 }], unlockTier: 7 }

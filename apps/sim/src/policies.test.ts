@@ -123,11 +123,47 @@ describe("getPolicy", () => {
     }
   });
 
-  it("greedy and bottleneck check in at the authored early purchase interval", () => {
-    const ctx = rich();
-    const expected = content.bundle.pacing.purchaseIntervalEarlySeconds * 1000;
-    expect(getPolicy("greedy").intervalMs(ctx)).toBe(expected);
-    expect(getPolicy("bottleneck").intervalMs(ctx)).toBe(expected);
+  // Spec B.7 authors both a tier-start and a tier-end interval. Until this ramp
+  // existed `purchaseIntervalLateSeconds` was authored, schema'd and typed but read
+  // by nothing, so every policy checked in at the tier-start rate forever.
+  describe("the spec B.7 purchase-interval ramp", () => {
+    const early = content.bundle.pacing.purchaseIntervalEarlySeconds * 1000;
+    const late = content.bundle.pacing.purchaseIntervalLateSeconds * 1000;
+
+    it("starts a tier at the early interval", () => {
+      // Fixture tier 1 wants 200 iron_plate; a fresh world has none.
+      const ctx = context();
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(early);
+      expect(getPolicy("bottleneck").intervalMs(ctx)).toBe(early);
+    });
+
+    it("reaches the late interval once the requirement is met", () => {
+      const base = newWorld(content, 1);
+      const ctx = context({ stored: { ...base.stored, iron_plate: D(200) } });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(late);
+    });
+
+    it("interpolates in between", () => {
+      const base = newWorld(content, 1);
+      const ctx = context({ stored: { ...base.stored, iron_plate: D(100) } });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBeCloseTo(early + (late - early) * 0.5, 6);
+    });
+
+    it("tracks the LEAST-satisfied requirement, not the average", () => {
+      // Fixture tier 3 wants 20000 iron_plate AND 500 plastic. Banking all the plate
+      // and none of the plastic is 0% progress, not 50%: the tier is not nearly over.
+      const base = newWorld(content, 1);
+      const ctx = context({
+        tier: 2,
+        stored: { ...base.stored, iron_plate: D(20_000) },
+      });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(early);
+    });
+
+    it("holds at the late interval past the last authored milestone", () => {
+      const ctx = context({ tier: 99 });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(late);
+    });
   });
 
   // `rich()` funds every item past its cap, so the binding constraint there is

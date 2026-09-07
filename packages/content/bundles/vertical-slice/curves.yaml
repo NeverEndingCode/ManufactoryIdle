@@ -1,0 +1,36 @@
+# Spec B.4. Placeholders, as in milestones.yaml: the calibration script solves
+# storage `s`/`sc` and quantum `q` and its cost curve against the pacing targets.
+storage:
+  capGrowth: 1.6
+  costGrowth: 2.0
+  baseCostItem: iron_plate
+  baseCostAmount: 50
+  maxLevel: 20
+
+quantumStorage:
+  capGrowth: 1.6
+  costGrowth: 2.5
+  baseCostItem: iron_plate
+  baseCostAmount: 500
+  maxLevel: 15
+
+# Spec D3: applied per multiplier category and again on the product, so neither one
+# system nor the four stacking can drive r_eff below 1. Piecewise-linear (spec E.4).
+softcaps:
+  ladder: { threshold: 1000, slope: 0.25 }
+  lane: { threshold: 50, slope: 0.25 }
+  tap: { threshold: 2, slope: 0.25 }
+  product: { threshold: 5000, slope: 0.2 }
+
+# Spec C.6 and 16.4: 10 stacks at +5% is x1.5 at full stack, inside the stated
+# 1.5-2x active-versus-idle target.
+tap:
+  kickPerStack: 0.05
+  durationSeconds: 30
+  maxStacks: 10
+  powerInjectionMw: 25
+
+# The HUB allowance. A biomass burner unlocks at tier 0, so generation is expandable
+# from the start and check 10 has an outlet at every tier.
+baseGridCapacityMw: 200
+offlineCapHours: 8

@@ -160,7 +160,77 @@ B.6 rather than assumed.
 
 ---
 
-## Task 2 — The B.5 vertical slice
+## Task 2 — The B.5 vertical slice — **DONE (content authored; numbers are Task 3's)**
+
+`packages/content/bundles/vertical-slice`, alongside the fixture rather than replacing
+it: the fixture is a test artifact with hand-verified numbers and the deliberate
+`constructor`-named prototype canary (R23), and dozens of tests assert its values.
+
+**5 lanes, 31 items, 44 recipes, 14 machine classes** — B.5's shape exactly. Ten tiers,
+matching the ten `targetCollectionsToTier` entries. Every milestone amount and curve is a
+placeholder; Task 3 solves them.
+
+Two authoring decisions, both recorded as spec amendments rather than silent divergence:
+
+- **Ratios are Satisfactory-*shaped*, not Satisfactory-exact** (amends B.5's "real
+  Satisfactory ratios throughout"). Topology — what feeds what, where byproducts emerge —
+  is faithful; rates are tunable. Calibration tunes the economy around ratios, never the
+  ratios themselves, so this costs nothing structural.
+- **Check 6 now warns instead of erroring.** B.6 says cycles are "flagged unselectable in
+  v1", and ruling R6 already makes every SCC recipe permanently non-live in the engine —
+  but the validator returned `severity: "error"`, which would have made B.5's *required*
+  deliberate cycle unauthorable. `ValidationIssue.severity` gained `"warning"`, and the
+  CLI exits non-zero only on errors.
+
+### What the slice found — three defects the 7-recipe fixture could not expose
+
+This is the return on building real content, and all three were invisible before it.
+
+**1. Auto-assignment starved every recipe but the incumbent.** `autoAssignTarget` sent each
+new machine to whichever recipe already had the most — indistinguishable from correct while
+a lane-class has ONE live recipe, which is true throughout the fixture's iron lane. The
+slice has several per class, so every iron constructor ever bought piled onto
+`make_iron_plate`; `make_iron_rod` never received a machine and a tier needing 300 iron
+rods was unreachable. Now assigns by the player's priority list (spec 4.1's stated intent),
+with the old busiest-recipe rule surviving as a tie-break so single-recipe behaviour is
+byte-identical.
+
+**2. `resolve` burned 10,000 events per call on a zero-progress fill loop.** An item parked
+a hair under its cap — `have = cap − 1e-10`, a **1.76e-15 relative gap**, pure Decimal
+round-off — failed `itemStateTag`'s exact `have >= cap` test, so it read FLOWING, was never
+pinned, kept a positive net rate, and scheduled a fill 1.4e-10 ms out. `resolve` floored
+the step at `EPSILON_MS`, integrated nothing measurable, and re-fired the same event until
+the `MAX_EVENTS` guard tripped — ~3 seconds per call, on every call. Fixed with
+`FULL_TOLERANCE = 1e-9` relative, the same bound and derivation as
+`SPEND_RESIDUAL_TOLERANCE`. **Same defect class as the Phase 1 knife-edge:** an exact
+Decimal comparison between two values reached by different arithmetic paths. A 30-day run
+went from hanging to 23 seconds.
+
+**3. `purchaseIntervalLateSeconds` was authored, schema'd, typed — and read by nothing.**
+B.7 defines purchases slowing from 120s at tier start to 1800s at tier end; every policy
+used the early value as a constant. Now ramps on progress toward the next milestone,
+measured as its *least*-satisfied requirement.
+
+The ramp changed the fixture's four-policy numbers, correctly — policies check in less often
+near a milestone:
+
+| policy | before | after |
+|---|---|---|
+| bottleneck | 0.07 | **0.25** |
+| optimal | 0.22 | 2.28 |
+| casual | 4.00 | 4.00 (uses the offline cap, not the ramp) |
+| greedy | 0.43 | 5.23 |
+
+**greedy is now slower than casual**, which is exactly the Phase 0 carry-forward's warning
+made concrete. No test asserts an ordering, so nothing broke — that guidance earned its keep.
+
+### Still open, and it belongs to Task 3
+
+`greedy` does not reach tier 2 on the slice inside 30 days, bound on `storage:iron_plate`
+for 29 of them. That is placeholder milestone amounts, not a defect — the content validates,
+solves, and runs. Calibrating it is the next task, and this is its before-number.
+
+### Original task notes
 
 Four lanes, 31 items, ~44 recipes, real Satisfactory ratios. The largest authoring job in
 the phase. What each piece is load-bearing for is specified in B.5 and must survive:
