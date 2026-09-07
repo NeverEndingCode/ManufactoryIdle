@@ -167,10 +167,22 @@ export function renderStatus(session: Session): string[] {
       `BOTTLENECK  ${bottleneck.recipeId} limiting ${bottleneck.limitingTarget} — ` +
         `${bottleneck.machinesToClear} more clears it`,
     );
-  } else {
+  } else if (bottleneck.kind === "power") {
     lines.push(
       `BOTTLENECK  power limiting ${bottleneck.limitingTarget} — ` +
         `${bottleneck.machinesToClear} more ${bottleneck.generatorRecipeId ?? "generator"} clears it`,
+    );
+  } else if (bottleneck.upgrade === null) {
+    // Both curves maxed. Naming no fix is the honest answer; check 9 is what should
+    // keep a bundle from ever reaching this state.
+    lines.push(
+      `BOTTLENECK  ${bottleneck.itemId} is at its cap and both storage curves are maxed`,
+    );
+  } else {
+    const what = bottleneck.upgrade === "storage" ? "storage" : "quantum storage";
+    lines.push(
+      `BOTTLENECK  ${bottleneck.itemId} is at its cap limiting ${bottleneck.limitingTarget} — ` +
+        `one more ${what} level clears it`,
     );
   }
   return lines;

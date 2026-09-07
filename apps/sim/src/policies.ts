@@ -174,6 +174,28 @@ const bottleneck: Policy = {
     const report = ctx.solution.bottleneck;
     if (report === null) return [];
 
+    // A cap binds where no machine helps. Before the reporter could say so, this
+    // policy bought constructors into a full warehouse and never reached tier 2.
+    if (report.kind === "storage") {
+      if (report.upgrade === null) return [];
+      const item = ctx.content.items.get(report.itemId);
+      if (!item) return [];
+
+      const buyingStorage = report.upgrade === "storage";
+      const curve = buyingStorage ? ctx.content.bundle.storage : ctx.content.bundle.quantumStorage;
+      const levels = buyingStorage ? ctx.state.storageLevel : ctx.state.qsLevel;
+      const key = buyingStorage ? report.itemId : item.lane;
+      const level = Object.hasOwn(levels, key) ? levels[key]! : 0;
+
+      const costs = levelCostRange(curve, level, 1);
+      if (!canAffordBuild(ctx.state, costs)) return [];
+      return [
+        buyingStorage
+          ? { type: "BUY_STORAGE", itemId: report.itemId, levels: 1 }
+          : { type: "BUY_QS", lane: item.lane, levels: 1 },
+      ];
+    }
+
     const recipeId = report.kind === "recipe" ? report.recipeId : report.generatorRecipeId;
     if (recipeId === null) return [];
     const recipe = ctx.content.recipes.get(recipeId);

@@ -24,7 +24,36 @@ a before-number to move.
 
 ---
 
-## Task 0 — Give the bottleneck report a storage kind (blocking)
+## Task 0 — Give the bottleneck report a storage kind (blocking) — **DONE**
+
+**Outcome:** `bottleneck` goes from never reaching tier 2 in 365 days to reaching it in
+**0.07 collections (34 minutes) on 8 purchases** — the fastest of all four policies, and by
+a wide margin the cheapest. Max dead time falls from 19d 23h to 18m. 553 tests green.
+
+| policy | before | after | purchases |
+|---|---|---|---|
+| bottleneck | never | **0.07** (34m) | 8 |
+| optimal | 0.22 (1h46m) | 0.22 | 52 |
+| greedy | 0.43 (3h26m) | 0.43 | 102 |
+| casual | 4.00 (1d8h) | 4.00 | 121 |
+
+Two things this result says, which should not be conflated:
+
+1. **The advice mechanism is now sound.** Following the game's own recommendation is the
+   best available strategy rather than a trap. That was the acceptance criterion.
+2. **It also says the fixture is badly uncalibrated** — and that is not a bug in this task.
+   `bottleneck` wins by buying almost nothing: three storage levels and a handful of
+   machines, then waiting. A game where "buy storage and idle" dominates "build a factory"
+   has its costs and its milestone requirements in the wrong ratio. That is exactly what
+   Tasks 2–4 exist to fix, and this is the before-number.
+
+**`optimal` being beaten is a real finding, not noise.** It is a rate-greedy heuristic
+("pick a candidate that does not lower the top target's rate"), not a true optimum, and it
+buys 52 machines to `bottleneck`'s 8. The name oversells it. Worth revisiting during
+calibration — a policy called `optimal` that is 3× off the best observed line will be
+misread as an upper bound.
+
+### What was found and fixed
 
 **This must land before anything else in the phase, and it is not optional.**
 

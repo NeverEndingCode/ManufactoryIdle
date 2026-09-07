@@ -130,17 +130,43 @@ describe("getPolicy", () => {
     expect(getPolicy("bottleneck").intervalMs(ctx)).toBe(expected);
   });
 
-  it("bottleneck buys exactly what the reporter recommends (spec 4.5, E.2)", () => {
-    const ctx = rich();
+  // `rich()` funds every item past its cap, so the binding constraint there is
+  // storage, not capacity. Buying a machine into a full warehouse is exactly the
+  // stall that kept this policy off tier 2, so the machine path needs a state that
+  // can afford a constructor without being at cap.
+  function funded(): PolicyContext {
+    const base = newWorld(content, 1);
+    // Caps are ore 3000, ingot 2000, plate 1500. A constructor mk1 costs 20 ingot.
+    return context({
+      stored: { ...base.stored, iron_ore: D(1000), iron_ingot: D(1000) },
+    });
+  }
+
+  it("bottleneck buys the machine the reporter names (spec 4.5, E.2)", () => {
+    const ctx = funded();
+    expect(ctx.solution.itemStates.get("iron_plate")).not.toBe("FULL");
     expect(ctx.solution.bottleneck).toEqual({
       kind: "recipe",
       recipeId: "make_plate",
       limitingTarget: "item:iron_plate",
       machinesToClear: 1,
     });
-    const actions = getPolicy("bottleneck").decide(ctx);
-    expect(actions).toEqual([
+    expect(getPolicy("bottleneck").decide(ctx)).toEqual([
       { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+    ]);
+  });
+
+  it("bottleneck buys storage when a cap is what binds, not another machine", () => {
+    const ctx = rich();
+    expect(ctx.solution.itemStates.get("iron_plate")).toBe("FULL");
+    expect(ctx.solution.bottleneck).toEqual({
+      kind: "storage",
+      itemId: "iron_plate",
+      limitingTarget: "item:iron_plate",
+      upgrade: "storage",
+    });
+    expect(getPolicy("bottleneck").decide(ctx)).toEqual([
+      { type: "BUY_STORAGE", itemId: "iron_plate", levels: 1 },
     ]);
   });
 
