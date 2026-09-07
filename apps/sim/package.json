@@ -1,0 +1,28 @@
+{
+  "name": "@manufactory/sim",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/bin.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "sim": "tsx src/bin.ts",
+    "sim:ci": "tsx src/bin.ts run --policy greedy --until tier:2 --max-days 30 --report text"
+  },
+  "dependencies": {
+    "@manufactory/content": "workspace:*",
+    "@manufactory/engine": "workspace:*",
+    "ink": "^5.1.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}
