@@ -19,3 +19,4 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm content:check
+      - run: pnpm --filter @manufactory/sim run sim:ci

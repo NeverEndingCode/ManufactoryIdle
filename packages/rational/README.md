@@ -21,5 +21,14 @@ transcendental functions in state-affecting paths (`packages/engine` may import
 this package unconditionally, and `powerAtClock` calls `Math.pow`). `power.ts`
 and its tests are unchanged and still on disk, just no longer exported.
 
+**Modified on 2026-09-02 (later the same day).** `toApproximateNumber` re-added to
+the barrel export. Phase 1 Task 2's content indexer
+(`packages/engine/src/graph/index-content.ts`) is the one place a bundle's exact
+per-minute rational rates become per-second `number`s, and needs this exact
+function to do it. Unlike `powerAtClock`, `toApproximateNumber` is a plain
+`Number(numerator) / Number(denominator)` division with no transcendental call, so
+re-exporting it does not reopen the `Math.pow` bypass the previous change closed —
+`powerAtClock` itself stays unexported.
+
 Manufactory Idle is a derivative work and is likewise licensed GPL-3.0. See the
 repository root `LICENSE`.

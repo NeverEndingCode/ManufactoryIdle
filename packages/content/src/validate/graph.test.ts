@@ -22,6 +22,7 @@ function bundle(): Bundle {
         id: "miner",
         name: "Miner",
         ladder: { step: 1.5, interval: 10 },
+        costRatio: 1.09,
         marks: [
           { mark: 1, name: "Mk.1", rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 5, buildCost: [{ item: "plate", amount: 10 }], unlockTier: 1 },
         ],
@@ -33,6 +34,19 @@ function bundle(): Bundle {
       { id: "plate", name: "Plate", lane: "iron", machineClass: "miner", inputs: [{ item: "ingot", rate: "30", byproduct: false }], outputs: [{ item: "plate", rate: "20", byproduct: false }], powerOutput: 0, isAlternate: false, unlockTier: 1 },
       { id: "reslag", name: "Reslag", lane: "iron", machineClass: "miner", inputs: [{ item: "slag", rate: "10", byproduct: false }], outputs: [{ item: "ingot", rate: "1", byproduct: false }], powerOutput: 0, isAlternate: false, unlockTier: 1 },
     ],
+    storage: { capGrowth: 1.6, costGrowth: 2, baseCostItem: null, baseCostAmount: 50, maxLevel: 20 },
+    quantumStorage: { capGrowth: 1.6, costGrowth: 2.5, baseCostItem: null, baseCostAmount: 500, maxLevel: 15 },
+    softcaps: {
+      ladder: { threshold: 1000, slope: 0.25 },
+      lane: { threshold: 50, slope: 0.25 },
+      tap: { threshold: 2, slope: 0.25 },
+      product: { threshold: 5000, slope: 0.2 },
+    },
+    tap: { kickPerStack: 0.05, durationSeconds: 30, maxStacks: 10, powerInjectionMw: 25 },
+    milestones: [],
+    start: { tier: 0, machines: [], assignments: {}, priority: [] },
+    baseGridCapacityMw: 0,
+    offlineCapHours: 8,
     pacing: {
       targetCollectionsToTier: [2, 5],
       activeHoursPerDay: 2.5,

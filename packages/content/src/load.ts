@@ -100,5 +100,45 @@ export function checkReferences(bundle: Bundle): ValidationIssue[] {
     }
   }
 
+  const recipeIds = new Set(bundle.recipes.map((r) => r.id));
+
+  for (const [label, curve] of [
+    ["storage", bundle.storage],
+    ["quantumStorage", bundle.quantumStorage],
+  ] as const) {
+    if (curve.baseCostItem !== null && !itemIds.has(curve.baseCostItem)) {
+      add(`${label} curve references missing item "${curve.baseCostItem}"`);
+    }
+  }
+
+  for (const milestone of bundle.milestones) {
+    for (const requirement of milestone.requires) {
+      if (!itemIds.has(requirement.item)) {
+        add(`milestone tier ${milestone.tier} requires missing item "${requirement.item}"`);
+      }
+    }
+    for (const lane of Object.keys(milestone.laneMultipliers)) {
+      if (!laneIds.has(lane)) {
+        add(`milestone tier ${milestone.tier} multiplies missing lane "${lane}"`);
+      }
+    }
+  }
+
+  for (const machine of bundle.start.machines) {
+    if (!laneIds.has(machine.lane)) add(`start machine references missing lane "${machine.lane}"`);
+    const cls = bundle.machineClasses.find((c) => c.id === machine.machineClass);
+    if (!cls) {
+      add(`start machine references missing machine class "${machine.machineClass}"`);
+    } else if (!cls.marks.some((m) => m.mark === machine.mark)) {
+      add(`start machine "${machine.machineClass}" has no mk${machine.mark}`);
+    }
+  }
+  for (const recipeId of Object.keys(bundle.start.assignments)) {
+    if (!recipeIds.has(recipeId)) add(`start assignment references missing recipe "${recipeId}"`);
+  }
+  for (const itemId of bundle.start.priority) {
+    if (!itemIds.has(itemId)) add(`start priority references missing item "${itemId}"`);
+  }
+
   return issues;
 }

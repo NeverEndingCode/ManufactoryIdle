@@ -1,0 +1,15 @@
+# Ruling R7: delivered automatically by `resolve` out of liquid stock. Numbers are
+# placeholders; Phase 2's calibration solves them against `pacing`.
+milestones:
+  - tier: 1
+    name: Iron Foundations
+    requires: [{ item: iron_plate, amount: 200 }]
+    laneMultipliers: { iron: 1.5 }
+  - tier: 2
+    name: Oil Access
+    requires: [{ item: iron_plate, amount: 2000 }]
+    laneMultipliers: { iron: 1.5, oil: 1.5 }
+  - tier: 3
+    name: Refining
+    requires: [{ item: iron_plate, amount: 20000 }, { item: plastic, amount: 500 }]
+    laneMultipliers: { oil: 1.5 }

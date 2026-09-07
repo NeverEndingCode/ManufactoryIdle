@@ -21,7 +21,7 @@ export default tseslint.config(
   },
   {
     files: ["packages/engine/**/*.ts"],
-    ignores: ["packages/engine/**/*.test.ts"],
+    ignores: ["packages/engine/**/*.test.ts", "packages/engine/src/testing/**"],
     rules: {
       "@typescript-eslint/no-restricted-imports": [
         "error",
