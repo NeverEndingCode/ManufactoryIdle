@@ -6,7 +6,19 @@ import { BundleSchema, type Bundle } from "./schema.js";
 
 export interface ValidationIssue {
   check: number;
-  severity: "error";
+  /**
+   * `error` fails the build. `warning` reports and continues.
+   *
+   * Only check 6 (cycles) warns. Spec B.6 defines it as flagging cyclic recipes
+   * "unselectable in v1", not as rejecting the bundle, and the engine already
+   * enforces exactly that (ruling R6: every recipe in a non-trivial SCC is marked
+   * cyclic and is never live). Spec B.5 then *requires* the vertical slice to
+   * contain a genuine SCC — Recycled Plastic and Recycled Rubber — so that the
+   * detection has something real to catch and so the decision to ship or forbid an
+   * SCC solver can be made from evidence. An erroring check 6 would make that
+   * content unauthorable.
+   */
+  severity: "error" | "warning";
   message: string;
 }
 

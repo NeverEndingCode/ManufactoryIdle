@@ -1,0 +1,50 @@
+# A bundle is not self-starting. Check 7's bootstrap analysis proves reachability
+# from these machines outward, so without them nothing is ever buildable -- the
+# Phase 0 fixture was exactly that deadlock and validated clean under the old check.
+start:
+  tier: 0
+  machines:
+    - { lane: iron, machineClass: miner, mark: 1, count: 2 }
+    - { lane: iron, machineClass: smelter, mark: 1, count: 2 }
+    - { lane: iron, machineClass: constructor, mark: 1, count: 1 }
+  assignments:
+    mine_iron_ore: 2
+    smelt_iron_ingot: 2
+    make_iron_plate: 1
+  # Spec D.1's action set has no add-or-remove verb: REORDER_PRIORITY permutes and
+  # spec 4.1 makes `paused` the remove verb, so the list must carry EVERY item or the
+  # rest would be permanently unprioritizable. Ordered roughly by progression.
+  priority:
+    [
+      iron_plate,
+      iron_rod,
+      screw,
+      reinforced_iron_plate,
+      iron_ingot,
+      iron_ore,
+      biomass,
+      cable,
+      wire,
+      copper_sheet,
+      copper_ingot,
+      copper_ore,
+      concrete,
+      limestone,
+      rotor,
+      steel_ingot,
+      coal,
+      steel_beam,
+      steel_pipe,
+      encased_industrial_beam,
+      modular_frame,
+      water,
+      crude_oil,
+      plastic,
+      rubber,
+      fuel,
+      heavy_oil_residue,
+      empty_canister,
+      packaged_fuel,
+      polymer_resin,
+      smart_plating,
+    ]

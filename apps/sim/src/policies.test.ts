@@ -123,24 +123,86 @@ describe("getPolicy", () => {
     }
   });
 
-  it("greedy and bottleneck check in at the authored early purchase interval", () => {
-    const ctx = rich();
-    const expected = content.bundle.pacing.purchaseIntervalEarlySeconds * 1000;
-    expect(getPolicy("greedy").intervalMs(ctx)).toBe(expected);
-    expect(getPolicy("bottleneck").intervalMs(ctx)).toBe(expected);
+  // Spec B.7 authors both a tier-start and a tier-end interval. Until this ramp
+  // existed `purchaseIntervalLateSeconds` was authored, schema'd and typed but read
+  // by nothing, so every policy checked in at the tier-start rate forever.
+  describe("the spec B.7 purchase-interval ramp", () => {
+    const early = content.bundle.pacing.purchaseIntervalEarlySeconds * 1000;
+    const late = content.bundle.pacing.purchaseIntervalLateSeconds * 1000;
+
+    it("starts a tier at the early interval", () => {
+      // Fixture tier 1 wants 200 iron_plate; a fresh world has none.
+      const ctx = context();
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(early);
+      expect(getPolicy("bottleneck").intervalMs(ctx)).toBe(early);
+    });
+
+    it("reaches the late interval once the requirement is met", () => {
+      const base = newWorld(content, 1);
+      const ctx = context({ stored: { ...base.stored, iron_plate: D(200) } });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(late);
+    });
+
+    it("interpolates in between", () => {
+      const base = newWorld(content, 1);
+      const ctx = context({ stored: { ...base.stored, iron_plate: D(100) } });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBeCloseTo(early + (late - early) * 0.5, 6);
+    });
+
+    it("tracks the LEAST-satisfied requirement, not the average", () => {
+      // Fixture tier 3 wants 20000 iron_plate AND 500 plastic. Banking all the plate
+      // and none of the plastic is 0% progress, not 50%: the tier is not nearly over.
+      const base = newWorld(content, 1);
+      const ctx = context({
+        tier: 2,
+        stored: { ...base.stored, iron_plate: D(20_000) },
+      });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(early);
+    });
+
+    it("holds at the late interval past the last authored milestone", () => {
+      const ctx = context({ tier: 99 });
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(late);
+    });
   });
 
-  it("bottleneck buys exactly what the reporter recommends (spec 4.5, E.2)", () => {
-    const ctx = rich();
+  // `rich()` funds every item past its cap, so the binding constraint there is
+  // storage, not capacity. Buying a machine into a full warehouse is exactly the
+  // stall that kept this policy off tier 2, so the machine path needs a state that
+  // can afford a constructor without being at cap.
+  function funded(): PolicyContext {
+    const base = newWorld(content, 1);
+    // Caps are ore 3000, ingot 2000, plate 1500. A constructor mk1 costs 20 ingot.
+    return context({
+      stored: { ...base.stored, iron_ore: D(1000), iron_ingot: D(1000) },
+    });
+  }
+
+  it("bottleneck buys the machine the reporter names (spec 4.5, E.2)", () => {
+    const ctx = funded();
+    expect(ctx.solution.itemStates.get("iron_plate")).not.toBe("FULL");
     expect(ctx.solution.bottleneck).toEqual({
       kind: "recipe",
       recipeId: "make_plate",
       limitingTarget: "item:iron_plate",
       machinesToClear: 1,
     });
-    const actions = getPolicy("bottleneck").decide(ctx);
-    expect(actions).toEqual([
+    expect(getPolicy("bottleneck").decide(ctx)).toEqual([
       { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+    ]);
+  });
+
+  it("bottleneck buys storage when a cap is what binds, not another machine", () => {
+    const ctx = rich();
+    expect(ctx.solution.itemStates.get("iron_plate")).toBe("FULL");
+    expect(ctx.solution.bottleneck).toEqual({
+      kind: "storage",
+      itemId: "iron_plate",
+      limitingTarget: "item:iron_plate",
+      upgrade: "storage",
+    });
+    expect(getPolicy("bottleneck").decide(ctx)).toEqual([
+      { type: "BUY_STORAGE", itemId: "iron_plate", levels: 1 },
     ]);
   });
 

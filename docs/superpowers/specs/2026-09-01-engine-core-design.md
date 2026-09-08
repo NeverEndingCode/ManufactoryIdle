@@ -644,6 +644,25 @@ of those.
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
 grid is binding.
 
+**Amended 2026-09-06 (Phase 2 task 0): a third, storage-shaped kind.**
+`{ kind: "storage", itemId, limitingTarget, upgrade }`, where `upgrade` is `"storage"`,
+`"quantum"`, or `null` when both curves are already at `maxLevel`.
+
+A FULL item is throttled by backpressure rather than by capacity: its producing recipe is
+limited because there is nowhere to put the output, so no machine purchase can move it.
+With only the two original kinds the reporter had no way to say this and fell through to
+the recipe it *could* name. The `bottleneck` policy — which exists precisely to test
+whether this advice is worth following (E.2) — consequently bought machines into a full
+warehouse and never reached tier 2 on the fixture, stalling for 19d 23h of simulated time
+with production at exactly zero.
+
+The check is ordered ahead of the recipe branch and behind the power branch, so a browning
+grid still wins. Only one level is ever recommended: the caller re-solves after buying, and
+an iterative honest answer beats a "levels to clear" count derived from the same 10%-lift
+heuristic that produced the bad machine advice. `upgrade: null` is deliberately an empty
+recommendation rather than an invented one — that state is the permanent wall validator
+check 9 exists to make unreachable.
+
 ### C.4 Power
 
 Grid per §6.1: `powerRatio = min(1, capacity / demand)`, demand scales with clock, clock

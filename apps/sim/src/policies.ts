@@ -11,6 +11,7 @@ import {
   canAffordBuild,
   getMark,
   levelCostRange,
+  liquid,
   machineCostRange,
   solve,
   type Action,
@@ -43,6 +44,38 @@ export interface Policy {
   intervalMs(ctx: PolicyContext): number;
   /** Actions to attempt now. The runner skips any the engine rejects. */
   decide(ctx: PolicyContext): Action[];
+}
+
+/**
+ * Spec B.7 authors TWO purchase intervals — 120s "at tier start" and 1800s "at tier
+ * end, before the staircase resets". Until now only the first was ever read;
+ * `purchaseIntervalLateSeconds` was authored, schema'd and typed but consumed by
+ * nothing, so every policy checked in at the tier-start rate forever.
+ *
+ * That is unfaithful — a real player's cadence stretches as the next milestone gets
+ * further away — and on a ten-tier bundle it is also ruinously expensive: 120s
+ * decisions across a 2100-collection tier is millions of solves. The ramp is what
+ * makes a full calibration run tractable.
+ *
+ * Progress is the LEAST-satisfied requirement of the next milestone, so a tier counts
+ * as nearly over only once its slowest requirement is nearly met.
+ */
+export function tierProgress(ctx: PolicyContext): number {
+  const next = ctx.content.bundle.milestones.find((m) => m.tier === ctx.state.tier + 1);
+  if (next === undefined) return 1;
+
+  let worst = 1;
+  for (const requirement of next.requires) {
+    if (!(requirement.amount > 0)) continue;
+    worst = Math.min(worst, liquid(ctx.state, requirement.item).toNumber() / requirement.amount);
+  }
+  return Math.max(0, Math.min(1, worst));
+}
+
+export function purchaseIntervalMs(ctx: PolicyContext): number {
+  const { purchaseIntervalEarlySeconds: early, purchaseIntervalLateSeconds: late } =
+    ctx.content.bundle.pacing;
+  return (early + (late - early) * tierProgress(ctx)) * 1000;
 }
 
 export interface Candidate {
@@ -136,7 +169,7 @@ function cheapest(candidates: readonly Candidate[]): Candidate | null {
 
 const greedy: Policy = {
   name: "greedy",
-  intervalMs: (ctx) => ctx.content.bundle.pacing.purchaseIntervalEarlySeconds * 1000,
+  intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
     const pick = cheapest(affordableCandidates(ctx));
     return pick === null ? [] : [pick.action];
@@ -169,10 +202,32 @@ const casual: Policy = {
 
 const bottleneck: Policy = {
   name: "bottleneck",
-  intervalMs: (ctx) => ctx.content.bundle.pacing.purchaseIntervalEarlySeconds * 1000,
+  intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
     const report = ctx.solution.bottleneck;
     if (report === null) return [];
+
+    // A cap binds where no machine helps. Before the reporter could say so, this
+    // policy bought constructors into a full warehouse and never reached tier 2.
+    if (report.kind === "storage") {
+      if (report.upgrade === null) return [];
+      const item = ctx.content.items.get(report.itemId);
+      if (!item) return [];
+
+      const buyingStorage = report.upgrade === "storage";
+      const curve = buyingStorage ? ctx.content.bundle.storage : ctx.content.bundle.quantumStorage;
+      const levels = buyingStorage ? ctx.state.storageLevel : ctx.state.qsLevel;
+      const key = buyingStorage ? report.itemId : item.lane;
+      const level = Object.hasOwn(levels, key) ? levels[key]! : 0;
+
+      const costs = levelCostRange(curve, level, 1);
+      if (!canAffordBuild(ctx.state, costs)) return [];
+      return [
+        buyingStorage
+          ? { type: "BUY_STORAGE", itemId: report.itemId, levels: 1 }
+          : { type: "BUY_QS", lane: item.lane, levels: 1 },
+      ];
+    }
 
     const recipeId = report.kind === "recipe" ? report.recipeId : report.generatorRecipeId;
     if (recipeId === null) return [];
@@ -213,7 +268,7 @@ const bottleneck: Policy = {
  */
 const optimal: Policy = {
   name: "optimal",
-  intervalMs: (ctx) => ctx.content.bundle.pacing.purchaseIntervalEarlySeconds * 1000,
+  intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
     const target = topTargetItem(ctx);
     const candidates = affordableCandidates(ctx);

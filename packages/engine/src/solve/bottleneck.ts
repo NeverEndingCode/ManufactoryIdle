@@ -9,6 +9,10 @@
 import { POWER_ITEM, type ItemId, type RecipeId } from "../content/types.js";
 import { isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
 import type { CapacityTable } from "../economy/capacity.js";
+import type { ItemStateTag } from "../economy/storage.js";
+import { levelCostRange } from "../economy/curves.js";
+import { D, type Dec } from "../numbers/decimal.js";
+import type { WorldState } from "../state/world.js";
 import type { EntryAllocation } from "./waterfall.js";
 import type { PowerReport } from "./power.js";
 
@@ -20,7 +24,15 @@ export type Bottleneck =
       generatorRecipeId: RecipeId | null;
       machinesToClear: number;
     }
+  // A cap is a constraint no machine can clear, and before this kind existed the
+  // reporter fell through to the recipe it could name -- telling a player at cap,
+  // with production at zero, to buy another machine. `upgrade` is null only when
+  // both curves are maxed, which is the permanent wall validator check 9 exists to
+  // make unreachable; saying so beats inventing a purchase that cannot be made.
+  | { kind: "storage"; itemId: ItemId; limitingTarget: string; upgrade: StorageUpgrade | null }
   | null;
+
+export type StorageUpgrade = "storage" | "quantum";
 
 /**
  * `activeRecipe` is a Record<ItemId, RecipeId> keyed by an author-supplied content
@@ -50,14 +62,52 @@ function machinesToClearRecipe(capacity: CapacityTable, entry: EntryAllocation):
   return Math.max(1, Math.ceil(shortfallUnits / perMachine));
 }
 
+function levelOf(record: Readonly<Record<string, number>>, key: string): number {
+  return Object.hasOwn(record, key) ? record[key]! : 0;
+}
+
+/**
+ * Which container to buy when a cap is what binds. Cheaper next level wins; a curve
+ * already at maxLevel is not a candidate. Only one level is ever recommended -- the
+ * caller re-solves after buying, so an iterative honest answer beats quoting a
+ * "levels to clear" count derived from the same 10%-lift heuristic that produced the
+ * bad machine advice in the first place.
+ */
+function cheaperUpgrade(
+  content: IndexedContent,
+  state: WorldState,
+  itemId: ItemId,
+): StorageUpgrade | null {
+  const item = content.items.get(itemId);
+  if (!item) return null;
+
+  const storageLevel = levelOf(state.storageLevel, itemId);
+  const qsLevel = levelOf(state.qsLevel, item.lane);
+  const storageOpen = storageLevel < content.bundle.storage.maxLevel;
+  const qsOpen = qsLevel < content.bundle.quantumStorage.maxLevel;
+  if (!storageOpen && !qsOpen) return null;
+  if (!qsOpen) return "storage";
+  if (!storageOpen) return "quantum";
+
+  // Both open: compare what one more level costs. Each curve names a single cost
+  // item, and they need not be the same one, so compare the amounts that are there.
+  const storageCost = levelCostRange(content.bundle.storage, storageLevel, 1);
+  const qsCost = levelCostRange(content.bundle.quantumStorage, qsLevel, 1);
+  const total = (costs: Map<ItemId, Dec>): Dec =>
+    [...costs.values()].reduce((sum, amount) => sum.plus(amount), D(0));
+  return total(qsCost).lt(total(storageCost)) ? "quantum" : "storage";
+}
+
 export function computeBottleneck(
   content: IndexedContent,
   capacity: CapacityTable,
   entries: readonly EntryAllocation[],
   power: PowerReport,
-  tier: number,
-  activeRecipe: Readonly<Record<ItemId, RecipeId>>,
+  state: WorldState,
+  itemStates: ReadonlyMap<ItemId, ItemStateTag>,
 ): Bottleneck {
+  const tier = state.tier;
+  const activeRecipe = state.activeRecipe;
   const firstLimited = entries.find((entry) => entry.limitedBy !== null) ?? null;
 
   // Spec 4.5: when the grid is what binds, the bottleneck surfaces on the power bar
@@ -85,6 +135,19 @@ export function computeBottleneck(
   }
 
   if (firstLimited === null || firstLimited.limitedBy === null) return null;
+
+  // A FULL item is throttled by backpressure, not by capacity: its producing recipe
+  // is limited because there is nowhere to put the output. Adding machines cannot
+  // move it, so the cap must be named before the recipe branch gets the chance.
+  if (itemStates.get(firstLimited.itemId) === "FULL") {
+    return {
+      kind: "storage",
+      itemId: firstLimited.itemId,
+      limitingTarget: firstLimited.entryId,
+      upgrade: cheaperUpgrade(content, state, firstLimited.itemId),
+    };
+  }
+
   return {
     kind: "recipe",
     recipeId: firstLimited.limitedBy,

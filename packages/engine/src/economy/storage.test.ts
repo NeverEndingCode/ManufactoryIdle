@@ -77,6 +77,32 @@ describe("itemStateTag (spec C.2)", () => {
     expect(liquid(w, "iron_ore").toNumber()).toBe(3000);
     expect(itemStateTag(content, w, "iron_ore")).toBe("FULL");
   });
+
+  // Phase 2. `have` is accumulated by integration while `cap` comes from
+  // capAtLevel's base * growth^level -- two different arithmetic paths, so they
+  // agree only to about 1e-15 relative. Demanding `have >= cap` exactly left an
+  // item parked a hair under its cap reading FLOWING forever: the solver never
+  // pinned it, net stayed positive, and `resolve` scheduled a fill 1.4e-10 ms out,
+  // floored the step at EPSILON_MS, integrated nothing, and re-fired -- 10,000
+  // times per call until the guard tripped. Same defect class as the Phase 1
+  // knife-edge, same shape of fix.
+  it("is FULL a hair under the cap, where Decimal round-off lands", () => {
+    const w = world({
+      stored: { ...world().stored, iron_ore: D(600) },
+      quantum: { ...world().quantum, iron_ore: D(2400).minus(D("1e-10")) },
+    });
+    expect(liquid(w, "iron_ore").lt(liquidCap(content, w, "iron_ore"))).toBe(true);
+    expect(itemStateTag(content, w, "iron_ore")).toBe("FULL");
+  });
+
+  it("is still FLOWING at a gap far wider than round-off", () => {
+    // 1e-6 relative is a thousand times the tolerance: real headroom, not noise.
+    const w = world({
+      stored: { ...world().stored, iron_ore: D(600) },
+      quantum: { ...world().quantum, iron_ore: D(2400).minus(D(3000).times(1e-6)) },
+    });
+    expect(itemStateTag(content, w, "iron_ore")).toBe("FLOWING");
+  });
 });
 
 describe("depositProduction (spec C.5 fill order)", () => {

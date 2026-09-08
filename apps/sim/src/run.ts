@@ -90,10 +90,15 @@ export function runSimulation(options: RunOptions): RunReport {
     if (stepMs <= 0) break;
 
     if (settled.bottleneck !== null) {
+      const bottleneck = settled.bottleneck;
+      // Storage-bound time is reported under the item rather than a recipe: time
+      // spent at cap is not time a machine purchase would have shortened.
       const id =
-        settled.bottleneck.kind === "recipe"
-          ? settled.bottleneck.recipeId
-          : `power:${settled.bottleneck.generatorRecipeId ?? "none"}`;
+        bottleneck.kind === "recipe"
+          ? bottleneck.recipeId
+          : bottleneck.kind === "storage"
+            ? `storage:${bottleneck.itemId}`
+            : `power:${bottleneck.generatorRecipeId ?? "none"}`;
       boundMsByRecipe.set(id, (boundMsByRecipe.get(id) ?? 0) + stepMs);
     }
 

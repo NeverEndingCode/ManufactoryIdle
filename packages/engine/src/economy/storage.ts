@@ -80,9 +80,32 @@ export function liquidCap(
 }
 
 /**
+ * How close to its cap an item counts as FULL, relative to the cap.
+ *
+ * `have` is accumulated by integrating a rate over many steps; `cap` is
+ * `capAtLevel`'s base * growth^level. Two different arithmetic paths reaching the
+ * same quantity agree only to about 1e-15 relative, so an exact `have >= cap` test
+ * leaves an item parked a hair below its cap reading FLOWING forever.
+ *
+ * That is not cosmetic. A FLOWING item is never pinned, so its net rate stays
+ * positive, so `resolve` schedules a fill event ~1e-10 ms out, floors the step at
+ * EPSILON_MS, integrates nothing measurable, and fires the same event again --
+ * 10,000 times per call until the MAX_EVENTS guard trips, at ~3 seconds a call. The
+ * vertical slice hit exactly this on `biomass`; the 7-recipe fixture never did.
+ *
+ * The bound is the same one the spend path uses (SPEND_RESIDUAL_TOLERANCE): a
+ * resolve caps near 10,482 steps, so worst-case accumulation is about
+ * 10,482 * 2.22e-16 ~= 2.3e-12 relative, and 1e-9 sits two to three orders above
+ * it. Observed round-off here was 1.76e-15. The same magnitude caveat applies --
+ * this forgives a window that scales with the cap -- and is safe for the same
+ * reason: the bound is relative, and the step count does not scale with magnitude.
+ */
+export const FULL_TOLERANCE = 1e-9;
+
+/**
  * Spec C.2. FULL means storage AND Quantum Storage are both at cap; because the fill
- * order always tops up `stored` before `quantum` takes anything, `liquid >= liquidCap`
- * expresses exactly that.
+ * order always tops up `stored` before `quantum` takes anything, comparing the
+ * combined liquid against the combined cap expresses exactly that.
  */
 export function itemStateTag(
   content: IndexedContent,
@@ -91,7 +114,8 @@ export function itemStateTag(
 ): ItemStateTag {
   const have = liquid(state, itemId);
   if (have.lte(0)) return "EMPTY";
-  if (have.gte(liquidCap(content, state, itemId))) return "FULL";
+  const cap = liquidCap(content, state, itemId);
+  if (have.gte(cap.minus(cap.times(FULL_TOLERANCE)))) return "FULL";
   return "FLOWING";
 }
 

@@ -57,6 +57,85 @@ describe("BUY_MACHINE", () => {
     expect(liquid(next, "iron_ingot").toNumber()).toBeCloseTo(100 - 45.562, 6);
   });
 
+  // Phase 2. The old rule sent every new machine to whichever recipe already had
+  // the most, which is stable only while a lane-class has ONE live recipe -- true
+  // throughout the fixture's iron lane and false the moment real content arrives.
+  // On the vertical slice it starved `make_iron_rod` permanently: every iron
+  // constructor ever bought piled onto `make_iron_plate`, and a tier needing 300
+  // iron rods could never be reached. The player's priority list is the stated
+  // intent (spec 4.1), so it is what decides.
+  describe("auto-assignment follows the priority list", () => {
+    /** Tier 3 makes oil/refinery live with TWO recipes: refine_plastic and residual_fuel. */
+    function refineryWorld(): WorldState {
+      const w = { ...rich(), tier: 3 };
+      return { ...w, installed: { ...w.installed }, assignment: { ...w.assignment } };
+    }
+
+    it("sends the machine to the higher-priority recipe, not the incumbent", () => {
+      const w = refineryWorld();
+      // The fixture's priority order puts plastic above fuel.
+      const next = expectAccepted(
+        applyBuyMachine(w, content, {
+          type: "BUY_MACHINE",
+          lane: "oil",
+          machineClass: "refinery",
+          mark: 1,
+          count: 1,
+        }),
+      );
+      expect(next.assignment.refine_plastic).toBe(1);
+    });
+
+    it("follows the list when it is reordered, rather than the existing assignment", () => {
+      const base = refineryWorld();
+      // Put fuel above plastic and give plastic a head start, so the busiest-recipe
+      // rule and the priority rule disagree and the assertion can tell them apart.
+      const order = ["fuel", "plastic"];
+      const w: WorldState = {
+        ...base,
+        assignment: { ...base.assignment, refine_plastic: 3 },
+        priority: [...base.priority].sort((a, b) => {
+          const rank = (e: (typeof base.priority)[number]): number => {
+            const i = order.indexOf(e.itemId ?? "");
+            return i === -1 ? order.length : i;
+          };
+          return rank(a) - rank(b);
+        }),
+      };
+      const next = expectAccepted(
+        applyBuyMachine(w, content, {
+          type: "BUY_MACHINE",
+          lane: "oil",
+          machineClass: "refinery",
+          mark: 1,
+          count: 1,
+        }),
+      );
+      expect(next.assignment.residual_fuel).toBe(1);
+      expect(next.assignment.refine_plastic).toBe(3);
+    });
+
+    it("ignores a paused entry when ranking", () => {
+      const base = refineryWorld();
+      const w: WorldState = {
+        ...base,
+        priority: base.priority.map((e) =>
+          e.itemId === "plastic" ? { ...e, paused: true } : e,
+        ),
+      };
+      const next = expectAccepted(
+        applyBuyMachine(w, content, {
+          type: "BUY_MACHINE",
+          lane: "oil",
+          machineClass: "refinery",
+          mark: 1,
+          count: 1,
+        }),
+      );
+      expect(next.assignment.residual_fuel).toBe(1);
+    });
+  });
+
   it("auto-assigns the new machines to the busiest recipe in the lane-class (R5)", () => {
     const next = expectAccepted(
       applyBuyMachine(rich(), content, {

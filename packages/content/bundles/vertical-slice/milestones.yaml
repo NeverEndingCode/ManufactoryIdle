@@ -1,0 +1,60 @@
+# Ten tiers, matching the ten entries in `pacing.targetCollectionsToTier`.
+#
+# Every amount here is a PLACEHOLDER. Phase 2's calibration script solves these
+# against the pacing targets by running the simulator and binary-searching -- there
+# is exactly one implementation of "how long does this take", so calibrated numbers
+# cannot disagree with measured ones (spec B.7). Do not hand-tune these; re-run the
+# calibrator.
+#
+# Lane multipliers are D3 lever 3: a discrete, roughly x1.5 lane-wide boost granted
+# on unlock, layered on top of the ladder rather than replacing it.
+milestones:
+  - tier: 1
+    name: Iron Foundations
+    requires: [{ item: iron_plate, amount: 200 }]
+    laneMultipliers: { iron: 1.5 }
+
+  - tier: 2
+    name: Copper Prospecting
+    requires: [{ item: reinforced_iron_plate, amount: 50 }, { item: iron_rod, amount: 300 }]
+    laneMultipliers: { iron: 1.4, copper: 1.5 }
+
+  - tier: 3
+    name: Limestone Survey
+    requires: [{ item: cable, amount: 200 }, { item: reinforced_iron_plate, amount: 150 }]
+    laneMultipliers: { copper: 1.4, coal: 1.5 }
+
+  - tier: 4
+    name: Coal Seams
+    requires: [{ item: concrete, amount: 400 }, { item: rotor, amount: 100 }]
+    laneMultipliers: { coal: 1.4, power: 1.5 }
+
+  - tier: 5
+    name: Basic Steelworks
+    requires: [{ item: steel_ingot, amount: 800 }, { item: copper_sheet, amount: 300 }]
+    laneMultipliers: { coal: 1.4, iron: 1.3 }
+
+  - tier: 6
+    name: Oil Access
+    requires: [{ item: modular_frame, amount: 200 }, { item: encased_industrial_beam, amount: 120 }]
+    laneMultipliers: { oil: 1.5, coal: 1.3 }
+
+  - tier: 7
+    name: Petrochemistry
+    requires: [{ item: plastic, amount: 900 }, { item: rubber, amount: 900 }]
+    laneMultipliers: { oil: 1.4, power: 1.4 }
+
+  - tier: 8
+    name: Fuel Logistics
+    requires: [{ item: packaged_fuel, amount: 600 }, { item: modular_frame, amount: 800 }]
+    laneMultipliers: { oil: 1.35, iron: 1.3 }
+
+  - tier: 9
+    name: Aeronautical Engineering
+    requires: [{ item: smart_plating, amount: 500 }, { item: polymer_resin, amount: 2000 }]
+    laneMultipliers: { iron: 1.3, oil: 1.3 }
+
+  - tier: 10
+    name: Industrial Synthesis
+    requires: [{ item: smart_plating, amount: 4000 }, { item: encased_industrial_beam, amount: 3000 }]
+    laneMultipliers: { iron: 1.3, coal: 1.3, copper: 1.3, oil: 1.3, power: 1.3 }
