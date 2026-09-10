@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "content:check": "tsx src/cli.ts bundles/fixture"
+    "content:check": "tsx src/cli.ts"
   },
   "dependencies": {
     "@manufactory/rational": "workspace:*",
