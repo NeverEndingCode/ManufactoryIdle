@@ -375,3 +375,128 @@ describe("checkBuildCostsSatisfiable (check 7)", () => {
     expect(checkBuildCostsSatisfiable(bundleWithMultiProducerBuildCost("earlyFirst"))).toEqual([]);
   });
 });
+
+// Ruling R6 makes every recipe inside a non-trivial SCC permanently unselectable,
+// so a cyclic recipe cannot produce or consume anything a player can reach.
+// Checks 3, 4 and 5 read `bundle.recipes` directly, which means a forbidden cycle
+// counted as a producer, a consumer, and a byproduct outlet. Each of those is the
+// stuck-save class of defect B.6 says is worth failing the build over.
+describe("checks 3, 4 and 5 over the selectable graph", () => {
+  const item = (id: string, extra: Partial<Bundle["items"][number]> = {}) => ({
+    id,
+    lane: "iron",
+    tier: 1,
+    name: id,
+    fluid: false,
+    terminal: false,
+    baseStorageCap: 100,
+    baseQuantumCap: 400,
+    ...extra,
+  });
+
+  const recipe = (
+    id: string,
+    inputs: string[],
+    outputs: string[],
+    extra: Partial<Bundle["recipes"][number]> = {},
+  ) => ({
+    id,
+    name: id,
+    lane: "iron",
+    machineClass: "miner",
+    inputs: inputs.map((i) => ({ item: i, rate: "10", byproduct: false })),
+    outputs: outputs.map((o) => ({ item: o, rate: "10", byproduct: false })),
+    powerOutput: 0,
+    isAlternate: false,
+    unlockTier: 1,
+    ...extra,
+  });
+
+  // recycled_a needs b and makes a; recycled_b needs a and makes b. Neither can
+  // ever run, so neither produces anything.
+  function withCycle(): Bundle {
+    const b = bundle();
+    b.items.push(item("a"), item("b"));
+    b.recipes.push(recipe("recycled_a", ["b"], ["a"]), recipe("recycled_b", ["a"], ["b"]));
+    return b;
+  }
+
+  it("does not count a cyclic recipe as a producer", () => {
+    const issues = checkProducers(withCycle());
+    expect(issues.map((i) => i.message).join("\n")).toContain('"a"');
+    expect(issues.map((i) => i.message).join("\n")).toContain('"b"');
+  });
+
+  it("still accepts an item that a selectable recipe also produces", () => {
+    // The slice's real case: plastic sits in the cycle but has acyclic producers
+    // at t6 and t8, so it is reachable and must not be reported.
+    const b = withCycle();
+    b.recipes.push(recipe("make_a", ["ore"], ["a"]));
+    expect(checkProducers(b).map((i) => i.message).join("\n")).not.toContain('"a"');
+  });
+
+  it("does not count a cyclic recipe as a consumer", () => {
+    const b = bundle();
+    b.items.push(item("a"), item("b"), item("waste"));
+    b.recipes.push(
+      recipe("make_waste", ["ore"], ["waste"]),
+      recipe("recycled_a", ["b", "waste"], ["a"]),
+      recipe("recycled_b", ["a"], ["b"]),
+    );
+    expect(checkConsumers(b).map((i) => i.message).join("\n")).toContain('"waste"');
+  });
+
+  it("does not count a cyclic recipe as a byproduct outlet", () => {
+    // `reslag` is the only consumer of the `slag` byproduct. Put it in a cycle
+    // and the byproduct has no reachable outlet — a hard stall, per section 3.4.
+    const b = bundle();
+    b.items.push(item("sludge"));
+    b.recipes.push(recipe("resludge", ["ingot"], ["sludge"]));
+    const reslag = b.recipes.find((r) => r.id === "reslag")!;
+    reslag.inputs.push({ item: "sludge", rate: "1", byproduct: false });
+    resludgeInputsFrom(b);
+    expect(checkByproductOutlets(b).map((i) => i.message).join("\n")).toContain('"slag"');
+  });
+
+  it("does not let check 7's bootstrap fire a cyclic recipe", () => {
+    // The subtle case: `gadget` is reachable acyclically, so the fixed point can
+    // fire `cyc_widget` and add `widget` — even though R6 means the player can
+    // never select it. Without the selectable filter the build cost below looks
+    // satisfiable and the save is stuck on arrival.
+    const b = bundle();
+    b.items.push(item("gadget"), item("widget"));
+    b.recipes.push(
+      recipe("make_gadget", ["ore"], ["gadget"]),
+      recipe("cyc_widget", ["gadget"], ["widget"]),
+      recipe("cyc_gadget", ["widget"], ["gadget"]),
+    );
+    b.machineClasses.push({
+      id: "presser",
+      name: "Presser",
+      ladder: { step: 1.5, interval: 10 },
+      costRatio: 1.09,
+      marks: [
+        {
+          mark: 1,
+          name: "Mk.1",
+          rateMultiplier: 1,
+          buildCostMultiplier: 1,
+          powerDraw: 5,
+          buildCost: [{ item: "widget", amount: 10 }],
+          unlockTier: 1,
+        },
+      ],
+    });
+
+    const messages = checkBuildCostsSatisfiable(b).map((i) => i.message).join("\n");
+    expect(messages).toContain('"presser"');
+    expect(messages).toContain('"widget"');
+  });
+
+  // Close the loop: `resludge` consumes an item `reslag` produces, and `reslag`
+  // now consumes `sludge`, so the two form an SCC.
+  function resludgeInputsFrom(b: Bundle): void {
+    const resludge = b.recipes.find((r) => r.id === "resludge")!;
+    resludge.inputs = [{ item: "ingot", rate: "1", byproduct: false }];
+  }
+});

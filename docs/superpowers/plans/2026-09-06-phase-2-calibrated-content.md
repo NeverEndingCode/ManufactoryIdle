@@ -336,7 +336,7 @@ the duplication should be resolved rather than left to drift.
 
 ---
 
-## Task 7 — Producibility must be evaluated over the *selectable* graph
+## Task 7 — Producibility must be evaluated over the *selectable* graph — **DONE**
 
 Found while gathering the SCC evidence below, and it is the reason that decision needed to
 come first.
@@ -358,6 +358,28 @@ content where a cycle is the sole route to an item.
 recipe set the solver uses, so "unselectable" means the same thing to the validator as it
 does to the player. Do it before Task 3 — a calibration run over content the validator has
 mis-cleared would be calibrating a game the player cannot actually play.
+
+**Outcome.** `scc.ts` now owns the notion — `cyclicRecipeIds` and `selectableRecipes` —
+and four checks read it, one more than this task was written for:
+
+- **Check 3** distinguishes its two cases. "Nothing produces it" and "produced only by
+  recipes inside a cycle, which ruling R6 makes unselectable" call for different fixes, the
+  same reason check 7 already told its three messages apart.
+- **Check 4** counts only selectable consumers.
+- **Check 5** reads the selectable graph on *both* sides: an unselectable recipe is neither
+  an outlet for a byproduct nor a source of one. Not in the original write-up, and the same
+  stuck-save defect — a byproduct whose only consumer sits in a cycle is a hard stall under
+  section 3.4.
+- **Check 7** was assumed immune, and is not. The reasoning that its fixed point cannot
+  bootstrap a circularity holds only when the *whole* cycle is unreachable. If a cyclic
+  recipe's inputs happen to be reachable acyclically, the fixed point fires it and adds
+  outputs the player can never make — marking a build cost satisfiable when it is not. Both
+  `producibleAtTier` and its message-selection map now take the selectable set.
+
+Nine tests. The check 7 test was run against the pre-fix code to confirm it discriminates
+rather than merely passing — assuming immunity is what put the hole there in the first place.
+
+The slice is unaffected: still one warning, same checksum.
 
 ---
 
@@ -405,6 +427,8 @@ the full catalog lands and we can see whether any item there is cycle-only.
 | `fireDueTimers` comparator not antisymmetric for duplicate ids | Phase 1 |
 | `ValidationIssue` defined in `load.ts` — pure validation importing from the I/O module | Phase 0 |
 | Three test-bundle factories to reconcile | Phase 0 |
+| Ruling R6 is implemented twice — engine `findCyclicRecipes`, content `findStronglyConnectedComponents`. Same semantics today; if they drift the validator clears content the engine refuses to run | Task 7 |
+| Check 10's generator-unlock scan still reads every recipe. Over-strict rather than stuck-save, so it can wait | Task 7 |
 | Spec B.5 prose says "Four lanes" while its own table lists five and the bundle has five (Power is a lane) — a spec fix, not a content one | Task 6 |
 | `build` and `typecheck` now run identical `tsc --noEmit` commands in every package | Task 6 |
 | `README.md` hardcodes a test count — **delete the number rather than updating it**; it has drifted twice already | Phase 0 |

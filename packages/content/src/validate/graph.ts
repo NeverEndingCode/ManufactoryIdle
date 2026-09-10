@@ -3,15 +3,16 @@
 // bad balance, which is why they fail the build rather than warn.
 import type { ValidationIssue } from "../load.js";
 import type { Bundle } from "../schema.js";
+import { selectableRecipes } from "./scc.js";
 
 function issue(check: number, message: string): ValidationIssue {
   return { check, severity: "error", message };
 }
 
 // Lowest unlockTier at which each item can be produced at all.
-function earliestProduction(bundle: Bundle): Map<string, number> {
+function earliestProduction(recipes: Bundle["recipes"]): Map<string, number> {
   const earliest = new Map<string, number>();
-  for (const recipe of bundle.recipes) {
+  for (const recipe of recipes) {
     for (const output of recipe.outputs) {
       const current = earliest.get(output.item);
       if (current === undefined || recipe.unlockTier < current) {
@@ -23,15 +24,26 @@ function earliestProduction(bundle: Bundle): Map<string, number> {
 }
 
 export function checkProducers(bundle: Bundle): ValidationIssue[] {
-  const produced = earliestProduction(bundle);
+  const produced = earliestProduction(selectableRecipes(bundle));
+  const producedAnywhere = earliestProduction(bundle.recipes);
   return bundle.items
     .filter((item) => !produced.has(item.id))
-    .map((item) => issue(3, `item "${item.id}" has no recipe that produces it`));
+    .map((item) =>
+      // "unreachable" and "reachable only through a forbidden cycle" call for
+      // different fixes, so they get different messages — the same reason
+      // check 7 below tells its three cases apart.
+      producedAnywhere.has(item.id)
+        ? issue(
+            3,
+            `item "${item.id}" is only produced by recipes inside a cycle, which ruling R6 makes unselectable`,
+          )
+        : issue(3, `item "${item.id}" has no recipe that produces it`),
+    );
 }
 
 export function checkConsumers(bundle: Bundle): ValidationIssue[] {
   const consumed = new Set<string>();
-  for (const recipe of bundle.recipes) {
+  for (const recipe of selectableRecipes(bundle)) {
     for (const input of recipe.inputs) consumed.add(input.item);
   }
   // Build costs are a legitimate sink: spec section 3.2 pays for machines out
@@ -54,8 +66,11 @@ export function checkConsumers(bundle: Bundle): ValidationIssue[] {
 
 export function checkByproductOutlets(bundle: Bundle): ValidationIssue[] {
   // Earliest tier at which each item is consumed by something.
+  // Both halves read the selectable graph: an unselectable recipe is neither an
+  // outlet for a byproduct nor a source of one.
+  const selectable = selectableRecipes(bundle);
   const earliestConsumption = new Map<string, number>();
-  for (const recipe of bundle.recipes) {
+  for (const recipe of selectable) {
     for (const input of recipe.inputs) {
       const current = earliestConsumption.get(input.item);
       if (current === undefined || recipe.unlockTier < current) {
@@ -65,7 +80,7 @@ export function checkByproductOutlets(bundle: Bundle): ValidationIssue[] {
   }
 
   const issues: ValidationIssue[] = [];
-  for (const recipe of bundle.recipes) {
+  for (const recipe of selectable) {
     for (const output of recipe.outputs) {
       if (!output.byproduct) continue;
       const consumedAt = earliestConsumption.get(output.item);
@@ -110,6 +125,7 @@ export function checkByproductOutlets(bundle: Bundle): ValidationIssue[] {
  */
 function producibleAtTier(
   bundle: Bundle,
+  recipes: Bundle["recipes"],
   tier: number,
   startingClasses: ReadonlySet<string>,
 ): Set<string> {
@@ -119,7 +135,7 @@ function producibleAtTier(
   for (;;) {
     let changed = false;
 
-    for (const recipe of bundle.recipes) {
+    for (const recipe of recipes) {
       if (recipe.unlockTier > tier) continue;
       if (!classes.has(recipe.machineClass)) continue;
       if (!recipe.inputs.every((input) => items.has(input.item))) continue;
@@ -148,7 +164,12 @@ function producibleAtTier(
 }
 
 export function checkBuildCostsSatisfiable(bundle: Bundle): ValidationIssue[] {
-  const produced = earliestProduction(bundle);
+  // The bootstrap is not immune to ruling R6 on its own. A cyclic recipe whose
+  // inputs happen to be reachable acyclically will fire in the fixed point and
+  // add outputs the player can never actually make, marking a build cost
+  // satisfiable when it is not.
+  const selectable = selectableRecipes(bundle);
+  const produced = earliestProduction(selectable);
   const startingClasses = new Set(bundle.start.machines.map((m) => m.machineClass));
   const producibleByTier = new Map<number, Set<string>>();
   const issues: ValidationIssue[] = [];
@@ -157,7 +178,7 @@ export function checkBuildCostsSatisfiable(bundle: Bundle): ValidationIssue[] {
     for (const mark of cls.marks) {
       let producible = producibleByTier.get(mark.unlockTier);
       if (producible === undefined) {
-        producible = producibleAtTier(bundle, mark.unlockTier, startingClasses);
+        producible = producibleAtTier(bundle, selectable, mark.unlockTier, startingClasses);
         producibleByTier.set(mark.unlockTier, producible);
       }
 

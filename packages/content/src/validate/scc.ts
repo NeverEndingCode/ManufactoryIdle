@@ -107,6 +107,20 @@ export function buildRecipeDependencyGraph(bundle: Bundle): {
   return { nodes: bundle.recipes.map((r) => r.id), edges };
 }
 
+// Ruling R6: every recipe inside a non-trivial SCC is permanently unselectable —
+// the engine's `findCyclicRecipes` excludes exactly this set from the live graph.
+// Anything that reasons about what a player can actually reach has to agree, or
+// the validator clears content the game cannot run.
+export function cyclicRecipeIds(bundle: Bundle): Set<string> {
+  const { nodes, edges } = buildRecipeDependencyGraph(bundle);
+  return new Set(findStronglyConnectedComponents(nodes, edges).flat());
+}
+
+export function selectableRecipes(bundle: Bundle): Bundle["recipes"] {
+  const cyclic = cyclicRecipeIds(bundle);
+  return bundle.recipes.filter((recipe) => !cyclic.has(recipe.id));
+}
+
 export function checkCycles(bundle: Bundle): ValidationIssue[] {
   const { nodes, edges } = buildRecipeDependencyGraph(bundle);
   // A warning, not an error: spec B.6 flags cycles "unselectable in v1" rather than
