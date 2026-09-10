@@ -281,7 +281,7 @@ test to tune away.
 
 ---
 
-## Task 5 — The dropped formatter carry-forward
+## Task 5 — The dropped formatter carry-forward — **DONE**
 
 `plain()` in `packages/engine/src/numbers/format.ts:44-48` caps at two decimals, so
 `plain(0.004)` renders `"0.00"`. Phase 0 flagged this as "an early Phase 1 fix, not a
@@ -294,18 +294,104 @@ reads `0.00`, which during calibration is indistinguishable from "stalled."
 Small, and it should go in early — a calibration run misread because the display lies is
 an expensive way to rediscover it.
 
+**Outcome.** `plain()` now keeps three significant figures below 1 — the same three the
+`[1, 1000)` branches above it already gave — and trims the zeros `toPrecision` pads with,
+so `0.004` renders `0.004` rather than `0.00`. Below 1e-4 `format` renders straight from
+mantissa/exponent instead: a fixed-point rendering there is all leading zeros, and the
+float magnitude the plain path computes underflows to 0 at very negative exponents, which
+would have printed a confident `0.00` for a nonzero rate at any scale.
+
+Five tests, written red first. No caller changed behaviour above 1, so nothing else moved.
+
+---
+
+## Task 6 — Gate the vertical slice — **DONE** (unplanned; found while starting Task 5)
+
+`pnpm content:check` was hardcoded to `bundles/fixture` — 7 items, 7 recipes. The 44-recipe
+slice Task 2 authored was referenced **nowhere** in the repo: no test loaded it, no script
+validated it, nothing imported it. Task 4's first CI gate is `content:check` running all
+eleven checks, so shipping it as-was would have given a green gate over content nobody
+checked, and the only reason we knew the slice validated at all was one hand-run of the CLI.
+
+**Outcome.**
+
+- `src/cli.ts` takes any number of bundle directories and, given none, discovers every
+  directory under `bundles/`. Discovery rather than an explicit list is the point: a new
+  bundle cannot now be added without being checked. Every bundle is validated before the
+  process exits, so one broken bundle does not mask the others.
+- `src/validate/slice.test.ts` — nine tests pinning B.5's *load-bearing properties* rather
+  than its size: the five lanes, cross-lane contention through Steel Ingot and Encased
+  Industrial Beam, both byproduct emitters and both consume corners, fluids and packaging,
+  generation at three power tiers, alternates and machine marks. Authoring more content
+  stays free; losing a shape the solver is meant to exercise does not.
+- The warning assertion is deliberately exact — one warning, check 6, naming both recycled
+  recipes. If that assertion ever changes, the v1 SCC decision changed with it.
+- `turbo.json` declared `"outputs": ["dist/**"]` on `build` while every package builds with
+  `tsc --noEmit`. Now `[]`. Only two of four packages warned, because the other two were
+  cached — the noise would have grown as caches turned over.
+
+Worth recording: `build` and `typecheck` now run identical commands. `build` earned its
+keep immediately (it caught a strict-mode error in the new test that `vitest` did not), but
+the duplication should be resolved rather than left to drift.
+
+---
+
+## Task 7 — Producibility must be evaluated over the *selectable* graph
+
+Found while gathering the SCC evidence below, and it is the reason that decision needed to
+come first.
+
+`checkProducers` in `src/validate/graph.ts` builds `earliestProduction` from
+`bundle.recipes` — **every** recipe, including recipes inside a non-trivial SCC that Phase 1
+made unselectable. `checkConsumers` reads the graph the same way. So an item whose only
+producer is a forbidden cycle passes check 3 and is then permanently unobtainable in game.
+
+That is precisely the class of defect check 5 exists for: a *permanently stuck save* rather
+than merely bad balance, which B.6 says is worth failing the build over.
+
+It does not bite on the slice today — pruning both recycled recipes yields zero validation
+issues (evidence below) — so this is latent, not live. It will bite when the full catalog
+lands, since Satisfactory's recycling loops are numerous, or the first time someone authors
+content where a cycle is the sole route to an item.
+
+**The fix is one idea, not one line:** checks 3 and 4 must run over the same selectable
+recipe set the solver uses, so "unselectable" means the same thing to the validator as it
+does to the player. Do it before Task 3 — a calibration run over content the validator has
+mis-cleared would be calibrating a game the player cannot actually play.
+
 ---
 
 ## Open decisions
 
-**The SCC question is the one that needs a call, and it needs evidence first.** B.5
-includes Recycled Plastic and Recycled Rubber as a genuine cycle specifically so we can
-"decide from evidence whether to ship §4.3's SCC solver or forbid cycles in v1." Phase 1
-forbade cycles (any recipe in a non-trivial SCC is unselectable) and the outer waterfall
-was built so that adding an SCC solver later does not change it.
+**The SCC question — DECIDED: forbid cycles in v1.** Phase 1's behaviour stands.
 
-Decide **after** Task 2 authors the cycle and we can see what forbidding it actually costs
-the player. Deciding before then is guessing.
+The plan said to decide after Task 2 authored the cycle. It also has to be decided *before*
+Task 3: if the cycle became selectable, `greedy` and `casual` would gain a recipe, tier
+times would move, and every number the calibration solved for would be void. Calibrate
+first and you calibrate twice.
+
+**The evidence.** Pruning `alt_recycled_plastic` and `alt_recycled_rubber` from the slice
+entirely — which is what "unselectable" means to a player — produces **zero** validation
+issues. Nothing depends on them:
+
+| item | acyclic producers |
+|---|---|
+| plastic | `refine_plastic` @ t6, `refine_residual_plastic` @ t8 |
+| rubber | `refine_rubber` @ t6, `refine_residual_rubber` @ t8 |
+| fuel | `refine_residual_fuel` @ t6 |
+
+So forbidding costs the player exactly one tier-10 efficiency alt pair — the last tier of
+the slice, the least-exercised content, and the part most likely to be re-authored when the
+full catalog arrives. Against that, shipping §4.3's SCC solver would put new solver
+semantics underneath the calibration run, which is the one thing Task 3 needs to hold still.
+
+The two recipes stay in the bundle. They are the cycle detector's only real fixture, they
+document the intent, and the warning plus the Task 6 assertion make their status explicit
+rather than silent.
+
+**What this decision obliges us to do:** Task 7. Forbidding cycles is only honest if the
+validator agrees that a forbidden recipe is not a producer. Revisit the decision itself when
+the full catalog lands and we can see whether any item there is cycle-only.
 
 ---
 
@@ -319,6 +405,8 @@ the player. Deciding before then is guessing.
 | `fireDueTimers` comparator not antisymmetric for duplicate ids | Phase 1 |
 | `ValidationIssue` defined in `load.ts` — pure validation importing from the I/O module | Phase 0 |
 | Three test-bundle factories to reconcile | Phase 0 |
+| Spec B.5 prose says "Four lanes" while its own table lists five and the bundle has five (Power is a lane) — a spec fix, not a content one | Task 6 |
+| `build` and `typecheck` now run identical `tsc --noEmit` commands in every package | Task 6 |
 | `README.md` hardcodes a test count — **delete the number rather than updating it**; it has drifted twice already | Phase 0 |
 
 ---
