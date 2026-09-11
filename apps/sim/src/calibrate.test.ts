@@ -184,3 +184,35 @@ describe("calibrate", () => {
     expect(result.derived.run!.policy).toBe("greedy");
   }, 300_000);
 });
+
+describe("a requirement nobody could ever deliver", () => {
+  // Ruling R7 pays deliveries from liquid stock, so a requirement above what storage
+  // and Quantum Storage can hold at maximum level can never be met -- not slowly, not
+  // ever. Learning that by simulating to the overrun budget and giving up cost minutes
+  // per step, and bracketing overshoots deliberately, so it happens on most tiers.
+  //
+  // This is a feasibility test, not a second estimate of how long something takes:
+  // it answers "is this satisfiable at all", which is exactly check 9's question and
+  // is exact. B.7's one-implementation rule is about durations, and no duration is
+  // being guessed here.
+  it("is rejected without simulating it", () => {
+    const seen: string[] = [];
+    // A target no requirement could ever reach, so the search brackets upward past
+    // what storage and Quantum Storage can hold and has to deal with the infeasible
+    // half. Tier 1's real target of 2 converges long before it gets there.
+    const unreachable: typeof slice = {
+      ...slice,
+      pacing: { ...slice.pacing, targetCollectionsToTier: [1e6, ...slice.pacing.targetCollectionsToTier.slice(1)] },
+    };
+    calibrate({
+      bundle: unreachable,
+      maxTier: 1,
+      tolerance: 0.05,
+      onProgress: (line) => seen.push(line),
+    });
+    const overCap = seen.filter((l) => l.includes("above the maximum"));
+    expect(overCap.length).toBeGreaterThan(0);
+    // And it costs no measurable time, which is the entire point.
+    for (const line of overCap) expect(line).toMatch(/ 0s /);
+  }, 300_000);
+});

@@ -61,7 +61,17 @@ export function checkRunawayGrowth(bundle: Bundle): ValidationIssue[] {
  * `maxLevel`. Spec B.4: storage is per item, Quantum Storage is per lane, and the two
  * add.
  */
-function maxAttainableCap(bundle: Bundle, item: Item): number {
+/**
+ * The most of an item a player can ever hold liquid: storage and Quantum Storage both
+ * at maximum level. Exported because it is not only check 9's notion — the calibration
+ * script needs the same number to know that a delivery requirement above it can never
+ * be met (ruling R7 pays deliveries from liquid stock), which it must not learn by
+ * simulating for a year and giving up.
+ *
+ * Sound only when check 12 passes: if the level ladder self-terminates, `maxLevel` is
+ * not reachable and this overstates what a player can hold.
+ */
+export function maxAttainableCap(bundle: Bundle, item: Item): number {
   const storage = item.baseStorageCap * Math.pow(bundle.storage.capGrowth, bundle.storage.maxLevel);
   const quantum =
     item.baseQuantumCap *

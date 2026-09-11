@@ -54,6 +54,7 @@ export {
   checkRunawayGrowth,
   checkStorageLadderClimbable,
   checkStorageReachesCosts,
+  maxAttainableCap,
   RUNAWAY_EPSILON,
 } from "./economy.js";
 export { buildRecipeDependencyGraph, checkCycles, findStronglyConnectedComponents } from "./scc.js";

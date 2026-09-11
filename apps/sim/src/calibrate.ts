@@ -23,7 +23,7 @@
 // Step 2 is then re-measured after step 3 and reported rather than re-solved: the
 // two do interact, and a number that has drifted should be visible rather than
 // chased round a loop that may not terminate.
-import type { Bundle, Derived, MachineClass } from "@manufactory/content";
+import { maxAttainableCap, type Bundle, type Derived, type MachineClass } from "@manufactory/content";
 import { indexContent, type ContentBundle } from "@manufactory/engine";
 import type { PolicyName } from "./policies.js";
 import { runSimulation, type RunCheckpoint } from "./run.js";
@@ -309,6 +309,31 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     const deadlineMs =
       (checkpoint?.nowMs ?? 0) + (target - previousTarget) * overrunBudget * offlineCapMs;
 
+    const items = new Map(options.bundle.items.map((item) => [item.id, item]));
+
+    /**
+     * A requirement above the most a player can ever hold liquid can never be
+     * delivered -- ruling R7 pays deliveries out of liquid stock -- so the answer is
+     * "never" with certainty and without running anything.
+     *
+     * This is a feasibility test, not a second estimate of how long something takes.
+     * It answers check 9's question, which is exact; B.7's one-implementation rule is
+     * about durations, and no duration is being guessed. It matters because the search
+     * brackets by overshooting, so most tiers try at least one infeasible candidate,
+     * and finding out by simulation costs the whole overrun budget every time.
+     */
+    const unsatisfiable = (candidate: Bundle): string | null => {
+      for (const requirement of candidate.milestones.find((m) => m.tier === tier)!.requires) {
+        const item = items.get(requirement.item);
+        if (item === undefined) continue;
+        const cap = maxAttainableCap(options.bundle, item);
+        if (requirement.amount > cap) {
+          return `${requirement.item} ${requirement.amount} is above the maximum ${cap.toFixed(0)} a player can hold`;
+        }
+      }
+      return null;
+    };
+
     const runAt = (factor: number): { collections: number | null; checkpoint?: RunCheckpoint } => {
       const candidate = withMilestoneAmounts(working, tier, factor);
       const run = runSimulation({
@@ -332,11 +357,22 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       (factor) => {
         step += 1;
         const started = Date.now();
-        const { collections } = runAt(factor);
-        const amounts = withMilestoneAmounts(working, tier, factor)
-          .milestones.find((m) => m.tier === tier)!
+        const candidate = withMilestoneAmounts(working, tier, factor);
+        const amounts = candidate.milestones
+          .find((m) => m.tier === tier)!
           .requires.map((r) => `${r.item} ${r.amount}`)
           .join(", ");
+
+        const impossible = unsatisfiable(candidate);
+        if (impossible !== null) {
+          report(
+            `  tier ${String(tier).padStart(2)} try ${String(step).padStart(2)}  ` +
+              `${"never".padStart(8)} of ${target.toFixed(2)}  0s  ${impossible}`,
+          );
+          return Number.POSITIVE_INFINITY;
+        }
+
+        const { collections } = runAt(factor);
         // Per step, not per tier. One tier can take tens of minutes -- every step is
         // a real run, and an overshoot simulates all the way to the overrun budget
         // before it can report "never" -- so a per-tier line made a slow search
