@@ -315,7 +315,7 @@ calibration. The row above is.
 
 ---
 
-## Task 3 — The calibration script
+## Task 3 — The calibration script — **IN PROGRESS**
 
 **It is the simulator with a search wrapper** (B.7). It runs `sim run --policy greedy` and
 binary-searches the free parameters until the observed curve matches
@@ -327,6 +327,105 @@ long does this take," so calibrated numbers cannot disagree with measured ones. 
 a second, faster estimator for the search loop — that would reintroduce the disagreement
 the design exists to prevent, and it is the kind of shortcut that looks like an
 optimisation.
+
+### What landed
+
+`sim calibrate [--content <dir>] [--max-tier n] [--tolerance f] [--write]`.
+
+- **The authored/derived split is now structural** (spec B.1). `derived:` is a schema'd
+  block that `loadBundleDir` lays over the authored values, emitted by the calibrator as a
+  generated `derived.yaml` next to the hand-written files. A patch naming a machine class
+  or requirement the bundle does not have **throws** rather than being ignored: that means
+  the content was re-authored since the run, so the numbers no longer describe it.
+- **The authoring inversion** (spec D3): `machineClasses[].rEff` is authorable and
+  `r = rEff · step^(1/interval)` is derived. Retuning the ladder now moves pacing by zero.
+  `costRatio` stays legal for bundles with hand-verified numbers, which is what the fixture
+  has.
+- **Per-tier bisection** of delivery requirements, in tier order, each tier resuming from
+  the previous tier's checkpoint. That resume is *exact*, not an approximation — tier k's
+  requirements cannot affect anything before tier k-1 unlocked, because the purchase cadence
+  in that span ramps against milestone k-1 — and a test asserts the resumed run reaches the
+  next tier **on the same millisecond** as an unbroken one. It is memoisation of this
+  simulator, which is the distinction B.7's "exactly one implementation" rule turns on.
+- Amounts are **rounded before they are measured**, so the simulator runs the number that
+  ships. Rounding at emit time would mean committing a bundle nobody ever ran — and a test
+  pins that reloading the authored files with the derived block on top reproduces the
+  reported measurement to nine decimal places.
+- The reported observation comes from a **confirming run over the emitted numbers**, never
+  from the search's memory of its best evaluation.
+
+### The ramp read "capped" as "nearly finished" — a third defect, and the reason tier 1 had no solution
+
+The first real search found the tier-time curve was not a curve. Raising tier 1 from 2,500
+`iron_plate` — exactly the base liquid cap of 500 + 2000 — to **2,600** moved the tier from
+**0.26 collections to 4.05**: four per cent more plate for fifteen times the time, with the
+curve non-monotone on both sides of it.
+
+| tier 1 requires | before | after |
+|---|---|---|
+| 2,500 | 0.260 | 0.260 |
+| 2,600 | **4.052** | **0.323** |
+| 3,000 | 7.739 | 0.626 |
+| 10,000 | 11.282 | 1.722 |
+| 20,000 | never | 2.168 |
+
+Cause: `tierProgress` is `liquid / amount`, so a player pinned at a cap of 2,500 against a
+requirement of 2,600 reads as **96% done** — and B.7's purchase-interval ramp duly slowed
+them from one decision every 2 minutes to one every **29 minutes**, exactly when the thing
+they had to do was go and buy storage.
+
+A requirement the player cannot physically hold is not progress at any fill level.
+Deliveries are paid from liquid stock (R7), so waiting never completes that tier; only a
+purchase does. `tierProgress` now returns 0 in that case. **This was not a calibration
+difficulty, it was an unsolvable problem**: a whole band of tier times, roughly 0.3 to 3.7
+collections, was unreachable at every possible requirement.
+
+### Tier 1 is on target. Tiers 2+ are blocked on a self-terminating storage ladder
+
+```
+tier   target   observed     miss   runs
+   1     2.00       2.09     4.5%     10
+   2     5.00       4.20   -15.9%     19   OFF TARGET
+   3    11.00       5.08   -53.8%     19   OFF TARGET
+```
+
+Tier 2's response saturates and then falls off a cliff into "never":
+
+| iron_rod required | collections | purchases | top binding constraint |
+|---|---|---|---|
+| 30,000 | 2.83 | 168 | `make_iron_plate` |
+| 194,400 | 4.20 | 496 | `make_iron_plate` |
+| 450,000 | **never** | 548 | `storage:iron_plate` 469h |
+| 9,000,000 | **never** | 548 | `storage:iron_plate` 469h |
+
+Every stalled run parks at `iron_plate = 194424.579555328`, and that is not an
+approximation of anything — it is **exactly** `500 · 1.6^12 + 2000 · 1.6^7`, the liquid cap
+at storage level 12 and QS level 7. Storage level 13 costs `50 · 2^13 = 409,600`; QS level 8
+costs `500 · 2.5^8 = 762,939`. Neither can ever be banked, because the cap is 194,425.
+
+**`curves.yaml` sets `costGrowth` above `capGrowth` on both curves — 2.0 against 1.6 for
+storage, 2.5 against 1.6 for Quantum Storage.** Cost outruns capacity, so past a crossover
+level the next level costs more than the maximum the player can hold and the storage ladder
+**permanently ends**. It is structural, not a tuning miss: it happens for every item in
+every bundle authored this way, only the crossover level moves.
+
+This is precisely the permanent-hard-wall class B.6 check 9 exists for — "you could never
+bank enough to buy the thing" — on the one purchase check 9 does not look at: **the storage
+levels themselves.** Check 9 measures build costs and milestone requirements against the
+*maximum attainable* cap, and the maximum attainable cap is not attainable.
+
+### Still to do
+
+1. **A validator check for the self-terminating ladder.** Cheap, static, and it fails the
+   slice today. Either an extension to check 9 or check 12; propose as a B.6 amendment.
+2. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is the
+   constraint that makes it well posed, and `pacing.storageBindingCadence` (12 machines
+   between storage binding) is the target it is measured against. Until this lands, no tier
+   above 1 has a solution, so the 10-tier `derived.yaml` is not yet worth committing.
+3. Re-run the full calibration and commit `derived.yaml` with its target-vs-observed claim.
+
+**Do not hand-tune `curves.yaml` to get past this.** The numbers are the calibrator's
+output; the shape constraint is the thing to fix.
 
 ---
 

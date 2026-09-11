@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { BundleSchema, type Bundle } from "./schema.js";
+import { BundleSchema, type Bundle, type Derived, type StorageCurve } from "./schema.js";
 
 export interface ValidationIssue {
   check: number;
@@ -56,7 +56,97 @@ export function loadBundleDir(dir: string): Bundle {
 
   // Check 1: schema conformance. Throwing here is deliberate — nothing
   // downstream can run against a bundle that is not even shaped right.
-  return BundleSchema.parse(merged);
+  //
+  // The derived overlay is applied here rather than left to callers so that there
+  // is exactly one notion of "the bundle": the validator, the engine, the simulator
+  // and the calibrator all see the calibrated numbers, and none of them can be
+  // looking at the authored seeds by accident.
+  return applyDerived(BundleSchema.parse(merged));
+}
+
+
+/**
+ * Lay the calibration script's solution over the authored numbers (spec B.1, B.7).
+ *
+ * Every entry is a patch rather than a replacement, so a run that solved only
+ * milestone amounts cannot silently reset a storage curve it never looked at.
+ *
+ * A patch naming something the bundle does not have throws rather than being
+ * ignored. That case means the content was re-authored since the calibration run, so
+ * the numbers no longer describe this graph; carrying on would leave the bundle
+ * half-calibrated with nothing anywhere to say so, which is exactly the failure mode
+ * spec B.1 wants made structural.
+ */
+export function applyDerived(bundle: Bundle): Bundle {
+  const derived: Derived | undefined = bundle.derived;
+  if (derived === undefined) return bundle;
+
+  let next = bundle;
+
+  if (derived.machineClasses !== undefined) {
+    const byId = new Map(derived.machineClasses.map((c) => [c.id, c]));
+    for (const id of byId.keys()) {
+      if (!bundle.machineClasses.some((c) => c.id === id)) {
+        throw new Error(
+          `derived block sets costRatio for machine class "${id}", which this bundle ` +
+            `does not define. The content was re-authored after calibration; re-run it.`,
+        );
+      }
+    }
+    next = {
+      ...next,
+      machineClasses: next.machineClasses.map((cls) => {
+        const patch = byId.get(cls.id);
+        return patch === undefined ? cls : { ...cls, costRatio: patch.costRatio };
+      }),
+    };
+  }
+
+  if (derived.milestones !== undefined) {
+    const byTier = new Map(derived.milestones.map((m) => [m.tier, m]));
+    for (const [tier, patch] of byTier) {
+      const milestone = bundle.milestones.find((m) => m.tier === tier);
+      if (!milestone) {
+        throw new Error(
+          `derived block sets requirements for tier ${tier}, which this bundle does ` +
+            `not define. The content was re-authored after calibration; re-run it.`,
+        );
+      }
+      for (const requirement of patch.requires) {
+        if (!milestone.requires.some((r) => r.item === requirement.item)) {
+          throw new Error(
+            `derived block sets a tier ${tier} requirement for "${requirement.item}", ` +
+              `which that milestone does not ask for. The content was re-authored ` +
+              `after calibration; re-run it.`,
+          );
+        }
+      }
+    }
+    next = {
+      ...next,
+      milestones: next.milestones.map((milestone) => {
+        const patch = byTier.get(milestone.tier);
+        if (patch === undefined) return milestone;
+        const amounts = new Map(patch.requires.map((r) => [r.item, r.amount]));
+        return {
+          ...milestone,
+          requires: milestone.requires.map((r) => ({
+            ...r,
+            amount: amounts.get(r.item) ?? r.amount,
+          })),
+        };
+      }),
+    };
+  }
+
+  const patchCurve = (curve: StorageCurve, patch: Partial<StorageCurve> | undefined): StorageCurve =>
+    patch === undefined ? curve : { ...curve, ...patch };
+
+  return {
+    ...next,
+    storage: patchCurve(next.storage, derived.storage),
+    quantumStorage: patchCurve(next.quantumStorage, derived.quantumStorage),
+  };
 }
 
 function duplicates(ids: string[]): string[] {

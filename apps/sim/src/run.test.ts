@@ -205,3 +205,63 @@ describe("formatReport", () => {
     expect(text).toContain("r_eff");
   });
 });
+
+// Spec B.7: "there is exactly one implementation of how long does this take, so
+// calibrated numbers cannot disagree with measured ones." Calibration bisects tier
+// k's requirements, which cannot change anything before tier k-1 unlocked -- the
+// purchase cadence in that span is measured against milestone k-1, not k -- so the
+// prefix can be replayed from a checkpoint instead of re-simulated. That is
+// memoisation of this simulator, not a second, faster estimate of it, and this test
+// is what holds the distinction: resuming must land on the same millisecond.
+describe("resuming from a checkpoint", () => {
+  it("reaches the next tier at exactly the time an unbroken run does", () => {
+    const whole = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 3,
+      maxSimMs: THIRTY_DAYS_MS,
+      captureCheckpoints: true,
+    });
+    const atTier1 = whole.checkpoints.find((c) => c.tier === 1);
+    if (!atTier1) throw new Error("no tier 1 checkpoint");
+
+    const resumed = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 3,
+      maxSimMs: THIRTY_DAYS_MS,
+      startFrom: atTier1,
+    });
+
+    expect(resumed.tierTimes.map((t) => [t.tier, t.atMs])).toEqual(
+      whole.tierTimes.filter((t) => t.tier > 1).map((t) => [t.tier, t.atMs]),
+    );
+    expect(resumed.simulatedMs).toBe(whole.simulatedMs);
+  }, 60_000);
+
+  it("captures one checkpoint per tier it unlocks", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 3,
+      maxSimMs: THIRTY_DAYS_MS,
+      captureCheckpoints: true,
+    });
+    expect(report.checkpoints.map((c) => c.tier)).toEqual([1, 2, 3]);
+    expect(report.checkpoints.every((c) => c.state.tier >= c.tier)).toBe(true);
+  }, 60_000);
+
+  it("captures nothing unless asked, so an ordinary run keeps no world states", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    expect(report.checkpoints).toEqual([]);
+  }, 30_000);
+});

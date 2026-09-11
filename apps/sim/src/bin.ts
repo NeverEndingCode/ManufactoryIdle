@@ -2,6 +2,7 @@
 // sim run --policy greedy --content <dir> --until tier:10 --report json
 // sim run --policy casual --seed 42
 // sim play --seed 42
+// sim calibrate --content <dir> --max-tier 3 --write
 import { parseArgs } from "node:util";
 import { argv, exit, stderr, stdout } from "node:process";
 import { POLICY_NAMES, type PolicyName } from "./policies.js";
@@ -12,6 +13,13 @@ const USAGE = `usage:
   sim run  [--policy greedy|casual|optimal|bottleneck] [--content <dir>]
            [--seed <n>] [--until tier:<n>] [--max-days <n>] [--report text|json]
   sim play [--content <dir>] [--seed <n>]
+  sim calibrate [--content <dir>] [--policy <name>] [--seed <n>] [--max-tier <n>]
+           [--tolerance <f>] [--write]
+
+  calibrate solves the free content numbers against pacing.targetCollectionsToTier
+  by running the simulator and bisecting (spec B.7). It prints what it found;
+  --write emits it to <dir>/derived.yaml, which the loader lays over the authored
+  files. Expect it to take a while: every step of every search is a real run.
 `;
 
 function parseUntilTier(value: string | undefined): number {
@@ -23,7 +31,7 @@ function parseUntilTier(value: string | undefined): number {
 
 async function main(): Promise<number> {
   const mode = argv[2];
-  if (mode !== "run" && mode !== "play") {
+  if (mode !== "run" && mode !== "play" && mode !== "calibrate") {
     stderr.write(USAGE);
     return 2;
   }
@@ -37,8 +45,23 @@ async function main(): Promise<number> {
       until: { type: "string", default: "tier:1" },
       "max-days": { type: "string", default: "365" },
       report: { type: "string", default: "text" },
+      "max-tier": { type: "string" },
+      tolerance: { type: "string", default: "0.05" },
+      write: { type: "boolean", default: false },
     },
   });
+
+  if (mode === "calibrate") {
+    const { runCalibration } = await import("./calibrate-cli.js");
+    return runCalibration({
+      contentDir: values.content,
+      policy: values.policy as PolicyName,
+      seed: Number(values.seed),
+      maxTier: values["max-tier"] === undefined ? undefined : Number(values["max-tier"]),
+      tolerance: Number(values.tolerance),
+      write: values.write,
+    });
+  }
 
   if (mode === "play") {
     const { startPlay } = await import("./play.js");

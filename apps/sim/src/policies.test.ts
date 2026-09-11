@@ -6,6 +6,7 @@ import {
   affordableCandidates,
   costScore,
   getPolicy,
+  tierProgress,
   topTargetItem,
   type PolicyContext,
 } from "./policies.js";
@@ -187,6 +188,37 @@ describe("getPolicy", () => {
         stored: { ...base.stored, iron_plate: D(20_000) },
       });
       expect(getPolicy("greedy").intervalMs(ctx)).toBe(early);
+    });
+
+    // Phase 2, Task 3. The ramp read "pinned at a cap I have to raise" as "96% done"
+    // and slowed the player to one decision every 29 minutes exactly when they had to
+    // go and buy storage. Measured on the slice: raising tier 1 from 2,500 iron_plate
+    // (the base liquid cap) to 2,600 -- four per cent -- took the tier from 0.26
+    // collections to 4.05, a fifteenfold jump, and the curve was non-monotone either
+    // side of it. That made a whole band of tier times unreachable at any requirement,
+    // so calibration had no solution to find rather than a hard one.
+    //
+    // A requirement above what the player can physically hold is not progress at any
+    // fill level; it is a wall that only a purchase moves. B.7's ramp models "fewer,
+    // bigger decisions as a tier genuinely nears its end", which this is not.
+    it("stays at the early interval when the requirement exceeds the liquid cap", () => {
+      // Fixture tier 2 wants 2000 iron_plate; the base liquid cap is 300 + 1200.
+      const base = newWorld(content, 1);
+      const ctx = context({ tier: 1, stored: { ...base.stored, iron_plate: D(1500) } });
+      expect(tierProgress(ctx)).toBe(0);
+      expect(getPolicy("greedy").intervalMs(ctx)).toBe(early);
+    });
+
+    it("ramps again once storage levels lift the cap past the requirement", () => {
+      const base = newWorld(content, 1);
+      // capGrowth 1.6^4 = 6.5536, so level 4 puts iron_plate's cap at 9830 > 2000.
+      const ctx = context({
+        tier: 1,
+        stored: { ...base.stored, iron_plate: D(1000) },
+        storageLevel: { ...base.storageLevel, iron_plate: 4 },
+      });
+      expect(tierProgress(ctx)).toBeCloseTo(0.5, 6);
+      expect(getPolicy("greedy").intervalMs(ctx)).toBeCloseTo(early + (late - early) * 0.5, 6);
     });
 
     it("holds at the late interval past the last authored milestone", () => {

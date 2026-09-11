@@ -13,6 +13,7 @@ import {
   isLiveRecipe,
   levelCostRange,
   liquid,
+  liquidCap,
   machineCostRange,
   solve,
   type Action,
@@ -60,6 +61,17 @@ export interface Policy {
  *
  * Progress is the LEAST-satisfied requirement of the next milestone, so a tier counts
  * as nearly over only once its slowest requirement is nearly met.
+ *
+ * A requirement the player cannot physically hold is not progress at ANY fill level.
+ * Deliveries are paid from liquid stock (ruling R7), so if storage plus Quantum
+ * Storage cannot reach the amount, waiting never completes the tier -- only buying a
+ * level does. Reading that as "nearly done" and slowing the player down is the
+ * opposite of what the situation calls for, and it was measurably ruinous: on the
+ * slice, raising tier 1 from 2,500 iron_plate (exactly the base liquid cap) to 2,600
+ * took the tier from 0.26 collections to 4.05. Four per cent more plate, fifteen times
+ * the time, with the curve non-monotone either side. That put a whole band of tier
+ * times out of reach of any requirement, which is not a hard calibration problem but
+ * an unsolvable one.
  */
 export function tierProgress(ctx: PolicyContext): number {
   const next = ctx.content.bundle.milestones.find((m) => m.tier === ctx.state.tier + 1);
@@ -68,6 +80,9 @@ export function tierProgress(ctx: PolicyContext): number {
   let worst = 1;
   for (const requirement of next.requires) {
     if (!(requirement.amount > 0)) continue;
+    if (liquidCap(ctx.content, ctx.state, requirement.item).toNumber() < requirement.amount) {
+      return 0;
+    }
     worst = Math.min(worst, liquid(ctx.state, requirement.item).toNumber() / requirement.amount);
   }
   return Math.max(0, Math.min(1, worst));

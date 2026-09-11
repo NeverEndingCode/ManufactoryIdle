@@ -108,3 +108,60 @@ describe("checkReferences", () => {
     expect(checkReferences(bundle).some((i) => i.message.includes("duplicate"))).toBe(true);
   });
 });
+
+// Spec B.1: "Cost numbers are never hand-authored. Intent is authored and a script
+// solves for the numbers... it needs to be structural, not aspirational." Phase 2's
+// calibrator emits its solution as a `derived` block, which the loader lays over the
+// authored values. Keeping it a separate, generated file is what makes the split
+// structural: you can tell by looking which numbers a human chose.
+describe("the derived block", () => {
+  const CURVES = `storage: { capGrowth: 1.6, costGrowth: 2.0, baseCostItem: iron_ore, baseCostAmount: 50, maxLevel: 20 }\n`;
+  const MILESTONE = `milestones:\n  - { tier: 1, name: First, requires: [{ item: iron_ore, amount: 100 }] }\n`;
+
+  it("overrides a machine class cost ratio", () => {
+    const derived = `derived:\n  machineClasses:\n    - { id: miner, costRatio: 1.234 }\n`;
+    const bundle = loadBundleDir(writeBundle({ ...ALL, "z-derived.yaml": derived }));
+    expect(bundle.machineClasses[0]!.costRatio).toBe(1.234);
+  });
+
+  it("overrides a milestone requirement amount", () => {
+    const derived = `derived:\n  milestones:\n    - { tier: 1, requires: [{ item: iron_ore, amount: 9999 }] }\n`;
+    const bundle = loadBundleDir(
+      writeBundle({ ...ALL, "f.yaml": MILESTONE, "z-derived.yaml": derived }),
+    );
+    expect(bundle.milestones[0]!.requires[0]!.amount).toBe(9999);
+  });
+
+  it("overrides only the storage fields it names", () => {
+    const derived = `derived:\n  storage: { capGrowth: 1.85 }\n`;
+    const bundle = loadBundleDir(
+      writeBundle({ ...ALL, "f.yaml": CURVES, "z-derived.yaml": derived }),
+    );
+    expect(bundle.storage.capGrowth).toBe(1.85);
+    expect(bundle.storage.costGrowth).toBe(2);
+    expect(bundle.storage.baseCostItem).toBe("iron_ore");
+  });
+
+  it("leaves the bundle exactly as authored when there is no derived block", () => {
+    const bundle = loadBundleDir(writeBundle(ALL));
+    expect(bundle.machineClasses[0]!.costRatio).toBe(1.09);
+    expect(bundle.derived).toBeUndefined();
+  });
+
+  // A derived block naming something that is not there is a stale calibration run
+  // against content that has since been re-authored. Silently ignoring it would
+  // leave the bundle half-calibrated with nothing to say so.
+  it("rejects a derived entry for a machine class that does not exist", () => {
+    const derived = `derived:\n  machineClasses:\n    - { id: nope, costRatio: 1.2 }\n`;
+    expect(() => loadBundleDir(writeBundle({ ...ALL, "z-derived.yaml": derived }))).toThrow(
+      /nope/,
+    );
+  });
+
+  it("rejects a derived requirement for an item the milestone does not require", () => {
+    const derived = `derived:\n  milestones:\n    - { tier: 1, requires: [{ item: nope, amount: 5 }] }\n`;
+    expect(() =>
+      loadBundleDir(writeBundle({ ...ALL, "f.yaml": MILESTONE, "z-derived.yaml": derived })),
+    ).toThrow(/nope/);
+  });
+});
