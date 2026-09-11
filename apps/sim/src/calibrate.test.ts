@@ -161,6 +161,20 @@ describe("calibrate", () => {
     );
   }, 300_000);
 
+  // A single tier can take tens of minutes: every step of the search is a real run,
+  // and an overshoot simulates to the overrun budget before it can report "never".
+  // Reporting only once per tier made that indistinguishable from a hang.
+  it("reports every search step, not just the tier it finished", () => {
+    const lines: string[] = [];
+    calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, onProgress: (l) => lines.push(l) });
+    const steps = lines.filter((l) => l.includes("try"));
+    expect(steps.length).toBeGreaterThan(1);
+    // Each step says what it tried and what came back, so a stalled search is
+    // distinguishable from a slow one.
+    expect(steps[0]).toMatch(/try/);
+    expect(steps.some((l) => /never|\d/.test(l))).toBe(true);
+  }, 300_000);
+
   it("records the targets and the observations side by side", () => {
     const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05 });
     expect(result.derived.run!.targetCollectionsToTier).toEqual(

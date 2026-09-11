@@ -327,8 +327,27 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       };
     };
 
+    let step = 0;
     const search = bisectMonotone(
-      (factor) => runAt(factor).collections ?? Number.POSITIVE_INFINITY,
+      (factor) => {
+        step += 1;
+        const started = Date.now();
+        const { collections } = runAt(factor);
+        const amounts = withMilestoneAmounts(working, tier, factor)
+          .milestones.find((m) => m.tier === tier)!
+          .requires.map((r) => `${r.item} ${r.amount}`)
+          .join(", ");
+        // Per step, not per tier. One tier can take tens of minutes -- every step is
+        // a real run, and an overshoot simulates all the way to the overrun budget
+        // before it can report "never" -- so a per-tier line made a slow search
+        // indistinguishable from a hung one.
+        report(
+          `  tier ${String(tier).padStart(2)} try ${String(step).padStart(2)}  ` +
+            `${(collections === null ? "never" : collections.toFixed(2)).padStart(8)} of ` +
+            `${target.toFixed(2)}  ${((Date.now() - started) / 1000).toFixed(0)}s  ${amounts}`,
+        );
+        return collections ?? Number.POSITIVE_INFINITY;
+      },
       {
         target,
         tolerance,
