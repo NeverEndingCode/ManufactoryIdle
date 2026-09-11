@@ -447,13 +447,63 @@ Both bundles were re-authored to `costGrowth ≤ capGrowth` — storage 1.5 and 
 (B.3); the *values* remain placeholders for the calibrator. Four hand-verified arithmetic
 tests in the engine moved with the fixture's curve.
 
+### With the ladder climbable, tier 2 lands — and tier 3 reveals the real lever
+
+```
+tier   target   observed     miss   runs
+   1     2.00       1.95    -2.4%      8    iron_plate 22,400
+   2     5.00       5.10    +2.0%     10    reinforced_iron_plate 512,000, iron_rod 3,072,000
+   3    11.00       7.86   -28.5%     22    OFF TARGET
+```
+
+Tier 2 was −15.9% before check 12 and is +2.0% after, on the same search. Tier 3 is not
+a near miss, and the per-step trace says exactly why:
+
+| tier 3 requires (cable) | collections |
+|---|---|
+| 200 | 5.30 |
+| 12,800 | 5.54 |
+| 819,200 | 6.41 |
+| 3,276,800 | 7.22 |
+| 6,680,000 | **7.86** |
+| 6,690,000 | never — `reinforced_iron_plate 5,020,800 is above the maximum 5,010,283 a player can hold` |
+
+**Milestone amounts are a logarithmically weak lever, and they run out of room before
+they run out of effect.** Multiplying the requirement by 33,000 buys 2.56 collections;
+the bisection then converges onto the cap boundary to the last thousand — 5,010,000
+against a maximum attainable 5,010,283 — and the target of 11 is simply not in the
+reachable set. This is not the cliff of the ramp defect, which was a hole in an otherwise
+continuous curve. This is a **ceiling**.
+
+It follows from `r_eff > 1`: machine count grows logarithmically, so time to bank N is
+roughly `a + b·log N`. Stretching a tier by a factor needs an exponentially larger
+requirement, and the liquid cap arrives long before the exponent does.
+
+**The lever with authority over the tier-time curve is `r_eff`, and the spec disagrees
+with itself about who sets it.** B.7 lists calibration as solving "per-class `r_eff`
+(hence `r`)"; §D3 says "you author the ladder and `r_eff` … the calibration script derives
+`r = r_eff × m`". The measurement says B.7 is right. Note the targets
+`[2, 5, 11, 24, 52, 110, 230, 480, 1000, 2100]` have near-constant ratios of about 2.1 —
+which is exactly the shape a *fixed* `r_eff` produces. That makes the solve well posed at
+two levels:
+
+- **`r_eff` sets the ratio between successive tiers.** One global scale against the
+  curve's shape.
+- **Milestone amounts set each tier's absolute placement.** What is already built.
+
 ### Still to do
 
-1. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is now a
-   validated constraint, which is what makes the search well posed, and
+1. **Solve `r_eff`** against the inter-tier ratio, then re-solve amounts per tier. This is
+   the one that unblocks tiers 3–10; resolve the D3/B.7 contradiction in the design doc in
+   the same commit.
+2. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is now a
+   validated constraint, which is what makes that search well posed, and
    `pacing.storageBindingCadence` (12 machines between storage binding) is the target.
-2. Re-run the full ten-tier calibration and commit `derived.yaml` with its
-   target-versus-observed claim.
+   Raising the ceiling here also widens the band amounts can reach.
+3. Re-run the full ten-tier calibration and commit `derived.yaml` with its
+   target-versus-observed claim. Tier 1 and 2 already calibrate; committing a partial
+   block would put a stale `observed` column next to eight unsolved tiers, which is worse
+   than none.
 
 **Do not hand-tune `curves.yaml` values to move a tier time.** The shape constraint is an
 authoring decision; the numbers inside it are the calibrator's output.
