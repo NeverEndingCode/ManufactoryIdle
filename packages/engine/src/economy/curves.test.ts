@@ -291,12 +291,13 @@ describe("machineCostRange", () => {
 
 describe("levelCostRange and capAtLevel", () => {
   it("sums the geometric run of level costs", () => {
-    // storage: baseCostAmount 50, costGrowth 2. Levels 0..2: 50 * (1 + 2 + 4) = 350
+    // storage: baseCostAmount 50, costGrowth 1.5 (check 12 caps it at capGrowth).
+    // Levels 0..2: 50 * (1 + 1.5 + 2.25) = 237.5
     const cost = levelCostRange(content.bundle.storage, 0, 3);
-    expect(cost.get("iron_plate")!.toNumber()).toBeCloseTo(350, 9);
-    // Levels 2..3: 50 * (4 + 8) = 600
+    expect(cost.get("iron_plate")!.toNumber()).toBeCloseTo(237.5, 9);
+    // Levels 2..3: 50 * (2.25 + 3.375) = 281.25
     expect(levelCostRange(content.bundle.storage, 2, 2).get("iron_plate")!.toNumber()).toBeCloseTo(
-      600,
+      281.25,
       9,
     );
   });

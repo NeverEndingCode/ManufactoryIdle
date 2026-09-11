@@ -27,8 +27,8 @@ function rich(plate = 100_000): WorldState {
 
 describe("BUY_STORAGE", () => {
   it("charges the geometric run of level costs and raises the cap", () => {
-    // storage curve: baseCostAmount 50, costGrowth 2, capGrowth 1.6.
-    // Levels 0, 1, 2 cost 50 * (1 + 2 + 4) = 350 iron_plate.
+    // storage curve: baseCostAmount 50, costGrowth 1.5, capGrowth 1.6.
+    // Levels 0, 1, 2 cost 50 * (1 + 1.5 + 2.25) = 237.5 iron_plate.
     const result = applyBuyStorage(rich(), content, {
       type: "BUY_STORAGE",
       itemId: "iron_ore",
@@ -36,7 +36,7 @@ describe("BUY_STORAGE", () => {
     });
     if (result.rejected) throw new Error(result.reason);
     expect(result.state.storageLevel.iron_ore).toBe(3);
-    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 350, 6);
+    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 237.5, 6);
     // 600 * 1.6^3 = 600 * 4.096 = 2457.6
     expect(storageCap(content, result.state, "iron_ore").toNumber()).toBeCloseTo(2457.6, 6);
   });
@@ -44,7 +44,7 @@ describe("BUY_STORAGE", () => {
   it("charges from the current level, not from zero", () => {
     const start = rich();
     const atTwo: WorldState = { ...start, storageLevel: { ...start.storageLevel, iron_ore: 2 } };
-    // Levels 2 and 3 cost 50 * (4 + 8) = 600.
+    // Levels 2 and 3 cost 50 * (2.25 + 3.375) = 281.25.
     const result = applyBuyStorage(atTwo, content, {
       type: "BUY_STORAGE",
       itemId: "iron_ore",
@@ -52,7 +52,7 @@ describe("BUY_STORAGE", () => {
     });
     if (result.rejected) throw new Error(result.reason);
     expect(result.state.storageLevel.iron_ore).toBe(4);
-    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 600, 6);
+    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 281.25, 6);
   });
 
   it("rejects going past the curve's maximum level", () => {
@@ -108,12 +108,12 @@ describe("BUY_STORAGE", () => {
 
 describe("BUY_QS", () => {
   it("raises every item in the lane at once (spec B.4)", () => {
-    // quantumStorage curve: baseCostAmount 500, costGrowth 2.5, capGrowth 1.6.
-    // Levels 0 and 1 cost 500 * (1 + 2.5) = 1750 iron_plate.
+    // quantumStorage curve: baseCostAmount 500, costGrowth 1.55, capGrowth 1.6.
+    // Levels 0 and 1 cost 500 * (1 + 1.55) = 1275 iron_plate.
     const result = applyBuyQs(rich(), content, { type: "BUY_QS", lane: "iron", levels: 2 });
     if (result.rejected) throw new Error(result.reason);
     expect(result.state.qsLevel.iron).toBe(2);
-    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 1750, 6);
+    expect(result.state.stored.iron_plate!.toNumber()).toBeCloseTo(100_000 - 1275, 6);
     // 2400 * 1.6^2 = 6144, and 1600 * 1.6^2 = 4096.
     expect(quantumCap(content, result.state, "iron_ore").toNumber()).toBeCloseTo(6144, 6);
     expect(quantumCap(content, result.state, "iron_ingot").toNumber()).toBeCloseTo(4096, 6);

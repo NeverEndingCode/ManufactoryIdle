@@ -1,7 +1,12 @@
 // Spec B.6 checks 8, 9 and 10. Deferred out of Phase 0 for needing the economy
 // machinery that arrives with Phase 2's calibration.
 import { describe, expect, it } from "vitest";
-import { checkGeneratorCapacity, checkRunawayGrowth, checkStorageReachesCosts } from "./economy.js";
+import {
+  checkGeneratorCapacity,
+  checkRunawayGrowth,
+  checkStorageLadderClimbable,
+  checkStorageReachesCosts,
+} from "./economy.js";
 import type { Bundle } from "../schema.js";
 
 function bundle(): Bundle {
@@ -162,5 +167,56 @@ describe("checkGeneratorCapacity (check 10)", () => {
       unlockTier: 0,
     });
     expect(checkGeneratorCapacity(b)).toEqual([]);
+  });
+});
+
+// Phase 2, Task 3. Found by the calibration script, which could not lengthen any tier
+// past the second: every stalled run parked at exactly 500*1.6^12 + 2000*1.6^7 =
+// 194424.579555328 iron_plate while the next storage level cost 409,600.
+describe("checkStorageLadderClimbable (check 12)", () => {
+  function withCostItem(b: Bundle): Bundle {
+    b.storage = { ...b.storage, baseCostItem: "plate", baseCostAmount: 50 };
+    b.quantumStorage = { ...b.quantumStorage, baseCostItem: "plate", baseCostAmount: 500 };
+    return b;
+  }
+
+  it("flags a curve whose level cost outruns the capacity that level buys", () => {
+    // costGrowth 2 against capGrowth 1.6: cost doubles while capacity grows 1.6x, so
+    // past a crossover level the next level costs more than the player can hold and
+    // the ladder permanently ends. This is the slice's authored shape.
+    const issues = checkStorageLadderClimbable(withCostItem(bundle()));
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0]!.check).toBe(12);
+    expect(issues[0]!.severity).toBe("error");
+    expect(issues[0]!.message).toMatch(/storage/);
+  });
+
+  it("names the level the ladder stops at, which is what the author has to move", () => {
+    const issues = checkStorageLadderClimbable(withCostItem(bundle()));
+    expect(issues[0]!.message).toMatch(/level \d+/);
+  });
+
+  it("passes when cost growth does not exceed capacity growth", () => {
+    const b = withCostItem(bundle());
+    b.storage = { ...b.storage, costGrowth: 1.5 };
+    b.quantumStorage = { ...b.quantumStorage, costGrowth: 1.55 };
+    expect(checkStorageLadderClimbable(b)).toEqual([]);
+  });
+
+  // The very first level has to be affordable too, and that is a different sum: no
+  // amount of favourable growth rescues a base cost above the base cap.
+  it("flags a first level nobody could ever afford", () => {
+    const b = withCostItem(bundle());
+    b.storage = { ...b.storage, costGrowth: 1.5, baseCostAmount: 1e9 };
+    b.quantumStorage = { ...b.quantumStorage, costGrowth: 1.55 };
+    const issues = checkStorageLadderClimbable(b);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.message).toMatch(/level 0/);
+  });
+
+  // A curve with no cost item is the schema's "levels are free" case. Free levels
+  // cannot be unaffordable, and the fixture relies on that.
+  it("says nothing about a curve whose levels are free", () => {
+    expect(checkStorageLadderClimbable(bundle())).toEqual([]);
   });
 });

@@ -171,3 +171,75 @@ export function checkGeneratorCapacity(bundle: Bundle): ValidationIssue[] {
 
   return issues;
 }
+
+/**
+ * Check 12 — the storage ladder must be climbable to the top.
+ *
+ * Proposed as an amendment to spec B.6, and it is check 9's own class of defect on
+ * the one purchase check 9 does not look at: **the storage levels themselves**.
+ *
+ * Buying the level that takes an item from L to L+1 costs `baseCostAmount *
+ * costGrowth^L` (the engine's `levelCostRange` at `levels = 1`), and it is paid out
+ * of stock, so it is bounded by what the player can hold. The best case is the cost
+ * item at storage level L with Quantum Storage maxed:
+ *
+ *     cost(L)  =  baseCostAmount * costGrowth^L
+ *     hold(L)  =  baseStorageCap * capGrowth^L  +  baseQuantumCap * qsCapGrowth^qsMax
+ *
+ * If `costGrowth > capGrowth` the first grows faster than the second, so past a
+ * crossover level the next level costs more than the maximum the player can ever
+ * bank, and the ladder **permanently ends**. That is not a tuning miss — it happens
+ * for every item in every bundle authored that way, and only the crossover level
+ * moves. The parallel is spec C.0's mark analysis, where `B = A` is exactly
+ * pace-neutral: a storage level whose cost scales with the capacity it grants is
+ * neutral in the same way, and anything steeper eventually stops being buyable.
+ *
+ * The slice was authored at 2.0 against 1.6 for storage and 2.5 against 1.6 for
+ * Quantum Storage. Every run that needed more than `500 * 1.6^12 + 2000 * 1.6^7 =
+ * 194424.58` iron_plate stalled there permanently, with storage level 13 quoted at
+ * 409,600 and QS level 8 at 762,939. The calibration script could not lengthen any
+ * tier past the second, and this is why.
+ *
+ * **Check 9 depends on this one.** Its "maximum attainable cap" is attainable only if
+ * the ladder can actually be climbed to `maxLevel`; when this check passes, that
+ * premise holds.
+ */
+export function checkStorageLadderClimbable(bundle: Bundle): ValidationIssue[] {
+  const items = new Map(bundle.items.map((item) => [item.id, item]));
+  const issues: ValidationIssue[] = [];
+
+  for (const [label, curve] of [
+    ["storage", bundle.storage],
+    ["Quantum Storage", bundle.quantumStorage],
+  ] as const) {
+    // null means levels are free (spec B.4's schema note), and free is always
+    // affordable. A dangling id is check 2's to report.
+    if (curve.baseCostItem === null) continue;
+    const item = items.get(curve.baseCostItem);
+    if (item === undefined) continue;
+
+    const qsCeiling =
+      item.baseQuantumCap *
+      Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel);
+
+    for (let level = 0; level < curve.maxLevel; level += 1) {
+      const cost = curve.baseCostAmount * Math.pow(curve.costGrowth, level);
+      const hold = item.baseStorageCap * Math.pow(bundle.storage.capGrowth, level) + qsCeiling;
+      if (cost > hold) {
+        issues.push(
+          issue(
+            12,
+            `the ${label} ladder stops at level ${level}: that level costs ` +
+              `${cost.toFixed(0)} "${curve.baseCostItem}" but the most a player can hold ` +
+              `there is ${hold.toFixed(0)}, so it can never be bought and no level above ` +
+              `it is reachable. costGrowth ${curve.costGrowth} outruns capGrowth ` +
+              `${bundle.storage.capGrowth}; cost growth must not exceed capacity growth.`,
+          ),
+        );
+        break;
+      }
+    }
+  }
+
+  return issues;
+}

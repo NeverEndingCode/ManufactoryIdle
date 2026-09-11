@@ -414,18 +414,49 @@ bank enough to buy the thing" — on the one purchase check 9 does not look at: 
 levels themselves.** Check 9 measures build costs and milestone requirements against the
 *maximum attainable* cap, and the maximum attainable cap is not attainable.
 
+Confirmed at scale, independently of the calibrator: a 365-day `greedy` run on the slice
+**stops at tier 5 and spends 362 of those 365 days bound on `storage:iron_plate`.** The
+slice was not a slow game, it was a game with an ending at tier 5.
+
+### Check 12 — the storage ladder must be climbable
+
+Proposed as a B.6 amendment, and it is check 9's own class of defect on the one purchase
+check 9 does not look at. Buying the level from L to L+1 costs `baseCostAmount ·
+costGrowth^L` and is paid out of stock, so it is bounded by what the player can hold:
+
+```
+cost(L)  =  baseCostAmount   · costGrowth^L
+hold(L)  =  baseStorageCap   · capGrowth^L  +  baseQuantumCap · qsCapGrowth^qsMax
+```
+
+`costGrowth > capGrowth` makes the first outrun the second, and the ladder ends. The check
+walks levels 0..maxLevel and names the one it stops at, since that is what the author has
+to move. It is an **error**: a permanent hard wall is a stuck save, which B.6 says is worth
+failing the build over.
+
+This is the same argument spec C.0 makes about marks. There, `B = A` — build cost scaling
+with rate — is exactly pace-neutral. Here, a storage level whose cost scales with the
+capacity it grants is neutral in the same way, and anything steeper eventually stops being
+buyable.
+
+**Check 9 now depends on check 12.** Its "maximum attainable cap" is attainable only if the
+ladder can be climbed to `maxLevel`.
+
+Both bundles were re-authored to `costGrowth ≤ capGrowth` — storage 1.5 and Quantum Storage
+1.55 against a capGrowth of 1.6. The *shape* is an authoring decision, like the ladder
+(B.3); the *values* remain placeholders for the calibrator. Four hand-verified arithmetic
+tests in the engine moved with the fixture's curve.
+
 ### Still to do
 
-1. **A validator check for the self-terminating ladder.** Cheap, static, and it fails the
-   slice today. Either an extension to check 9 or check 12; propose as a B.6 amendment.
-2. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is the
-   constraint that makes it well posed, and `pacing.storageBindingCadence` (12 machines
-   between storage binding) is the target it is measured against. Until this lands, no tier
-   above 1 has a solution, so the 10-tier `derived.yaml` is not yet worth committing.
-3. Re-run the full calibration and commit `derived.yaml` with its target-vs-observed claim.
+1. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is now a
+   validated constraint, which is what makes the search well posed, and
+   `pacing.storageBindingCadence` (12 machines between storage binding) is the target.
+2. Re-run the full ten-tier calibration and commit `derived.yaml` with its
+   target-versus-observed claim.
 
-**Do not hand-tune `curves.yaml` to get past this.** The numbers are the calibrator's
-output; the shape constraint is the thing to fix.
+**Do not hand-tune `curves.yaml` values to move a tier time.** The shape constraint is an
+authoring decision; the numbers inside it are the calibrator's output.
 
 ---
 
