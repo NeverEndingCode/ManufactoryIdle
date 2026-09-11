@@ -626,7 +626,7 @@ the full catalog lands and we can see whether any item there is cycle-only.
 | Check 10's generator-unlock scan still reads every recipe. Over-strict rather than stuck-save, so it can wait | Task 7 |
 | Spec B.5 prose says "Four lanes" while its own table lists five and the bundle has five (Power is a lane) — a spec fix, not a content one | Task 6 |
 | `build` and `typecheck` now run identical `tsc --noEmit` commands in every package | Task 6 |
-| `README.md` hardcodes a test count — **delete the number rather than updating it**; it has drifted twice already | Phase 0 |
+| ~~`README.md` hardcodes a test count~~ — **DONE** (Task 3): number deleted rather than updated, with a line saying why, and the stale "Phase 1 is next" status corrected | Phase 0 |
 
 ---
 
