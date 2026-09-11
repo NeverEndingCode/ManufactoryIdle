@@ -10,6 +10,7 @@ import {
   bestUnlockedMark,
   canAffordBuild,
   getMark,
+  isLiveRecipe,
   levelCostRange,
   liquid,
   machineCostRange,
@@ -119,8 +120,18 @@ export function affordableCandidates(ctx: PolicyContext): Candidate[] {
     candidates.push({ action, costs, score: costScore(costs), label });
   };
 
-  for (const key of content.recipesByLaneClass.keys()) {
+  for (const [key, recipeIds] of content.recipesByLaneClass) {
     const [lane, machineClass] = key.split("::") as [string, string];
+    // A mark can unlock well before any recipe that uses it: on the slice, miner
+    // mk1 is tier 0 while `mine_copper_ore` is tier 2. Offering that machine let
+    // greedy sink 790 of its first 1,639 purchases into copper, coal and oil
+    // lane-classes with nothing to assign them to -- machines that produce
+    // nothing, bought with money that is then gone. No player does that, so no
+    // policy should, and a pace measured with it in is not the game's pace.
+    const live = recipeIds.some((recipeId) =>
+      isLiveRecipe(content, recipeId, state.tier, state.activeRecipe),
+    );
+    if (!live) continue;
     const mark = bestUnlockedMark(content, machineClass, state.tier);
     if (mark === null) continue;
     const markDef = getMark(content, machineClass, mark);

@@ -250,6 +250,71 @@ attributable to the lane that caused it.
 
 ---
 
+## Task 8 — The slice was unplayable past tier 1 (blocking Task 3) — **DONE** (unplanned)
+
+Task 2 recorded `greedy` failing to reach tier 2 on the slice as "placeholder milestone
+amounts, not a defect… the content validates, solves, and runs". **That was wrong, and it
+was wrong in the direction this phase's own review note warns about: a number that looked
+like bad balance was a stuck save.** Measured rather than reasoned — a 20-day greedy run:
+
+```
+purchases                    1639
+make_iron_rod                   0 machines    iron_rod   liquid 0
+make_screw                      0 machines    screw      liquid 0
+make_reinforced_iron_plate      0 machines    RIP        liquid 0
+make_iron_plate               109 machines    iron_plate liquid 194,424  (at cap, level 12)
+```
+
+Tier 2 needs 300 `iron_rod` and 50 `reinforced_iron_plate`. Both producers had **zero**
+machines and always would, so tier 2 was unreachable at *any* milestone amount. A
+calibration run would have bisected forever against an infeasible target.
+
+**Two defects, both invisible to the fixture**, whose iron lane-classes have exactly one
+live recipe each — so no assignment rule can starve anything in it, and no existing test
+could see this class of defect at all.
+
+**1. `autoAssignTarget` was winner-take-all, twice over.** Task 2 replaced the
+busiest-recipe rule with priority rank, which only moved which recipe starved: rank 0
+(`iron_plate`) took every iron constructor forever. Adding "skip a recipe whose output is
+FULL" reached tier 2 and then stalled at tier 3 for a second reason — `cable` ranks *above*
+`wire` and is never full because it is never made, so 99 copper constructors went to
+`make_cable` and none to `make_wire`, which makes cable's only input.
+
+Rank now decides only among recipes that can *use* another machine: output not FULL, and
+either unstaffed or already at nameplate. The solver already computes the second, per
+recipe, as its clock — so the engine reads that rather than re-deriving a cheaper
+approximation that could disagree with what the player is shown. The rule is
+self-correcting rather than a tuned ratio: wire takes machines until cable can run at
+nameplate, at which point cable outranks it again.
+
+**2. `affordableCandidates` offered machines for lane-classes with no live recipe.** A mark
+can unlock long before any recipe using it: miner mk1 is tier 0, `mine_copper_ore` is
+tier 2. **790 of greedy's first 1,639 purchases** went into copper, coal and oil — machines
+that produce nothing, bought with money that is then gone. No player does that, and a pace
+measured with it in is not the game's pace.
+
+**Outcome.** Same content, same seed, same policy:
+
+| | before | after |
+|---|---|---|
+| tier reached within 60d | 1 | **5 — in 12h 24m** |
+| purchases to get there | 1,401, mostly wasted | 332 |
+| max dead time | 58d 0h | **28m 29s** |
+
+602 tests green, up six. Every one was watched failing against the pre-fix code — which
+mattered: the locked-lane integration guard passed on first write and only discriminated
+once its run was extended to tier 2, because ten simulated minutes is not long enough for
+greedy to reach a locked lane at all. A test that cannot fail is worse than no test.
+
+The two slice-level guards in `run.test.ts` assert **reachability, deliberately not a
+time** — the time is Task 3's to calibrate and will move every time it runs.
+
+**What this says about Task 3.** Every before-number in Tasks 0 and 2 was measured on the
+fixture or on a slice that could not be played, so none of them is a baseline for
+calibration. The row above is.
+
+---
+
 ## Task 3 — The calibration script
 
 **It is the simulator with a search wrapper** (B.7). It runs `sim run --policy greedy` and

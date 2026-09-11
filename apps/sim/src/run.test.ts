@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadContent } from "./bootstrap.js";
+import { SLICE_BUNDLE_DIR, loadContent } from "./bootstrap.js";
 import { POLICY_NAMES } from "./policies.js";
 import { authoredREff, formatReport, observedREff } from "./report.js";
 import { runSimulation } from "./run.js";
@@ -151,6 +151,46 @@ describe("runSimulation", () => {
     });
     expect(report.purchases).toBeGreaterThan(0);
   });
+});
+
+// Phase 2, Task 8. The fixture's iron lane has ONE live recipe per lane-class, so
+// no assignment rule can starve anything in it and none of the tests above can see
+// this class of defect at all. The slice is the first content where it bites, and
+// it bit twice: `make_iron_rod` starved behind a capped `make_iron_plate` (tier 2
+// unreachable), then `make_wire` starved behind an unfillable `make_cable` (tier 3
+// unreachable). Both looked exactly like "the milestone amounts are placeholders".
+//
+// This asserts reachability, deliberately not a time. The time is Task 3's to
+// calibrate and will move every time it runs; "the player can get there at all" is
+// the property that must not regress.
+describe("the vertical slice is playable", () => {
+  it("greedy reaches tier 5 without a policy hint", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 5,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    expect(report.reachedTier).toBe(5);
+    expect(report.tierTimes.map((t) => t.tier)).toEqual([1, 2, 3, 4, 5]);
+    // ~10s: 44 recipes over half a simulated day at a 120s-and-up decision cadence.
+  }, 60_000);
+
+  it("buys machines only into lanes it has unlocked", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    // `observed` is non-null exactly where a lane-class count grew, so this reads as
+    // "which lanes did it buy into". The run stops on reaching tier 2, so copper
+    // (tier 2), coal (3) and oil (6) were locked for the whole of it.
+    const bought = [...new Set(report.rEff.filter((r) => r.observed !== null).map((r) => r.lane))];
+    expect(bought.sort()).toEqual(["iron", "power"]);
+  }, 30_000);
 });
 
 describe("formatReport", () => {

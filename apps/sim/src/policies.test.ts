@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { D, apply, computeCapacity, solve, type WorldState } from "@manufactory/engine";
-import { loadContent, newWorld } from "./bootstrap.js";
+import { SLICE_BUNDLE_DIR, loadContent, newWorld } from "./bootstrap.js";
 import {
   POLICY_NAMES,
   affordableCandidates,
@@ -62,6 +62,35 @@ describe("affordableCandidates", () => {
       if (candidate.action.type !== "BUY_MACHINE") continue;
       expect(["miner", "smelter", "constructor"]).toContain(candidate.action.machineClass);
     }
+  });
+
+  // Phase 2, Task 8. A mark can unlock long before any recipe that uses it does:
+  // on the slice, miner mk1 is tier 0 while `mine_copper_ore` is tier 2, so at
+  // tier 0 `copper/miner` passed bestUnlockedMark and was offered. greedy bought
+  // it -- and 790 of its first 1,639 purchases went into copper, coal and oil
+  // lane-classes with nothing live to assign to. Those machines produce nothing
+  // and the money is gone, which is not a player's behaviour and is not a pace
+  // the calibrator should be solving against.
+  it("offers no machine for a lane-class with no live recipe", () => {
+    const slice = loadContent(SLICE_BUNDLE_DIR);
+    const base = newWorld(slice, 1);
+    const state: WorldState = {
+      ...base,
+      stored: Object.fromEntries(slice.stockItemIds.map((id) => [id, D(100_000)])),
+    };
+    const candidates = affordableCandidates({
+      content: slice,
+      state,
+      solution: solve(state, slice),
+      nowMs: 0,
+    });
+    const lanes = new Set(
+      candidates
+        .filter((c) => c.action.type === "BUY_MACHINE")
+        .map((c) => (c.action as { lane: string }).lane),
+    );
+    // Only iron and power unlock at tier 0; copper is tier 2, coal 3, oil 6.
+    expect([...lanes].sort()).toEqual(["iron", "power"]);
   });
 
   it("every candidate it returns is actually applicable", () => {
