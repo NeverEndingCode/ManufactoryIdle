@@ -4,6 +4,7 @@ import { SLICE_BUNDLE_DIR, loadContent, newWorld } from "./bootstrap.js";
 import {
   POLICY_NAMES,
   affordableCandidates,
+  idleReassignments,
   costScore,
   getPolicy,
   tierProgress,
@@ -308,4 +309,104 @@ describe("getPolicy", () => {
       before,
     );
   });
+});
+
+// Phase 2, Task 3. Calibration stalled at tier 4 on the slice with 81 assemblers
+// sitting idle on a reinforced-iron-plate warehouse pinned at its maximum cap, while
+// `make_rotor` -- which tier 4 needs -- had zero machines and produced nothing. Moving
+// 40 of the idle 81 produced 143 rotor/s immediately.
+//
+// The engine already routes a NEW machine correctly (it went to rotor when bought).
+// The gap is that nothing ever revisits an assignment, and greedy had stopped buying
+// assemblers because they were never the cheapest thing on offer. So the machines
+// existed, the verb to move them existed, and no policy used it.
+//
+// This is deliberately NOT the strategy question that SET_RESERVE and REORDER_PRIORITY
+// raise. Leaving owned machines idle while a sibling recipe starves is not a strategy,
+// it models no player, and spec E.2 does not describe greedy as doing it.
+describe("idleReassignments", () => {
+  function refineryWorld(machines: number, plastic: number): PolicyContext {
+    const base = newWorld(content, 1);
+    const state: WorldState = {
+      ...base,
+      tier: 3,
+      installed: { ...base.installed, oil: { ...base.installed.oil, refinery: [machines] } },
+      assignment: { ...base.assignment, refine_plastic: machines },
+      stored: { ...base.stored, plastic: D(plastic), crude_oil: D(5000) },
+    };
+    return { content, state, solution: solve(state, content), nowMs: 0 };
+  }
+
+  it("moves idle machines to a live sibling that has none", () => {
+    // plastic's liquid cap is 200 + 800, so this pins refine_plastic at clock 0.
+    const actions = idleReassignments(refineryWorld(10, 1000));
+    const assigns = actions.filter((a) => a.type === "ASSIGN_MACHINES");
+    expect(assigns).toHaveLength(2);
+    const byRecipe = new Map(
+      assigns.map((a) => [(a as { recipeId: string }).recipeId, (a as { count: number }).count]),
+    );
+    expect(byRecipe.get("residual_fuel")).toBeGreaterThan(0);
+    // The donor keeps the rest, and the two still sum to the pool.
+    expect(byRecipe.get("refine_plastic")! + byRecipe.get("residual_fuel")!).toBe(10);
+  });
+
+  it("leaves a busy lane-class alone", () => {
+    // plastic well under cap, so refine_plastic is running and its machines are not idle.
+    expect(idleReassignments(refineryWorld(10, 0))).toEqual([]);
+  });
+
+  it("does nothing once the sibling has machines of its own", () => {
+    const ctx = refineryWorld(10, 1000);
+    const state: WorldState = {
+      ...ctx.state,
+      assignment: { ...ctx.state.assignment, refine_plastic: 6, residual_fuel: 4 },
+    };
+    expect(idleReassignments({ ...ctx, state, solution: solve(state, content) })).toEqual([]);
+  });
+
+  it("leaves a lane-class with a single live recipe alone", () => {
+    const base = newWorld(content, 1);
+    const state: WorldState = { ...base, stored: { ...base.stored, iron_plate: D(1e9) } };
+    const actions = idleReassignments({ content, state, solution: solve(state, content), nowMs: 0 });
+    for (const action of actions) {
+      expect(["make_plate", "mine_iron", "smelt_iron"]).not.toContain(
+        (action as { recipeId?: string }).recipeId,
+      );
+    }
+  });
+
+  it("every action it emits is accepted by the engine", () => {
+    const ctx = refineryWorld(10, 1000);
+    let state = ctx.state;
+    for (const action of idleReassignments(ctx)) {
+      const result = apply(state, content, action, state.seed);
+      expect(result.rejected).toBe(false);
+      if (!result.rejected) state = result.state;
+    }
+  });
+});
+
+describe("policies move idle machines before buying more", () => {
+  function stuck(): PolicyContext {
+    const base = newWorld(content, 1);
+    const state: WorldState = {
+      ...base,
+      tier: 3,
+      installed: { ...base.installed, oil: { ...base.installed.oil, refinery: [10] } },
+      assignment: { ...base.assignment, refine_plastic: 10 },
+      stored: { ...base.stored, plastic: D(1000), crude_oil: D(5000), iron_ore: D(1e6), iron_ingot: D(1e6), iron_plate: D(1e6) },
+    };
+    return { content, state, solution: solve(state, content), nowMs: 0 };
+  }
+
+  for (const name of ["greedy", "optimal", "bottleneck", "casual"] as const) {
+    it(`${name} reassigns rather than leaving a live recipe at zero machines`, () => {
+      const actions = getPolicy(name).decide(stuck());
+      const moved = actions.filter((a) => a.type === "ASSIGN_MACHINES");
+      expect(moved.length).toBeGreaterThan(0);
+      expect(
+        moved.some((a) => (a as { recipeId: string }).recipeId === "residual_fuel"),
+      ).toBe(true);
+    });
+  }
 });

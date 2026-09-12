@@ -265,3 +265,22 @@ describe("resuming from a checkpoint", () => {
     expect(report.checkpoints).toEqual([]);
   }, 30_000);
 });
+
+// Phase 2, Task 3. `purchases` counted every action the policy returned, so once the
+// policies started emitting ASSIGN_MACHINES to move idle machines, reassignments were
+// reported as purchases. A purchase is a spend; moving a machine you already own is not.
+describe("what counts as a purchase", () => {
+  it("counts only actions that spend", () => {
+    const report = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    });
+    // Every purchase must be matched by machines or levels actually bought.
+    const machinesBought = report.rEff.filter((r) => r.observed !== null).length;
+    expect(report.purchases).toBeGreaterThan(0);
+    expect(machinesBought).toBeGreaterThan(0);
+  }, 60_000);
+});

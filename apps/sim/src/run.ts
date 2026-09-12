@@ -102,7 +102,10 @@ export function runSimulation(options: RunOptions): RunReport {
       const result = apply(state, content, action, state.seed);
       if (result.rejected) continue;
       state = result.state;
-      purchases += 1;
+      // A purchase is a SPEND. Policies also emit ASSIGN_MACHINES to move machines
+      // they already own off an idle recipe, and counting those here would inflate the
+      // figure the report calls "purchases" with actions that cost nothing.
+      if (action.type.startsWith("BUY_")) purchases += 1;
       markEvent(nowMs);
     }
 

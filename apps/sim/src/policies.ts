@@ -10,7 +10,9 @@ import {
   bestUnlockedMark,
   canAffordBuild,
   getMark,
+  installedMachines,
   isLiveRecipe,
+  itemStateTag,
   levelCostRange,
   liquid,
   liquidCap,
@@ -92,6 +94,95 @@ export function purchaseIntervalMs(ctx: PolicyContext): number {
   const { purchaseIntervalEarlySeconds: early, purchaseIntervalLateSeconds: late } =
     ctx.content.bundle.pacing;
   return (early + (late - early) * tierProgress(ctx)) * 1000;
+}
+
+/**
+ * A clock at or below this counts as "these machines are doing nothing". Not exactly
+ * zero: the waterfall's clocks are float64 quotients, and a recipe pinned by a full
+ * output can report a hair above zero rather than zero.
+ */
+const IDLE_CLOCK = 1e-9;
+
+function assignedTo(state: WorldState, recipeId: string): number {
+  return Object.hasOwn(state.assignment, recipeId) ? state.assignment[recipeId]! : 0;
+}
+
+/**
+ * Move machines that are doing nothing to a live recipe in the same lane-class that
+ * has none at all.
+ *
+ * Found by calibration, which stalled at tier 4 of the slice with 81 assemblers idling
+ * on a reinforced-iron-plate warehouse pinned at its maximum cap while `make_rotor` --
+ * which tier 4 needs -- had zero machines. Moving 40 of the idle 81 produced 143
+ * rotor/s immediately. The engine already routes a NEW machine correctly, and does send
+ * one to rotor; the gap is that nothing revisits an assignment, and greedy had stopped
+ * buying assemblers because they were never the cheapest thing on offer.
+ *
+ * **This is not the strategy question `SET_RESERVE` and `REORDER_PRIORITY` raise.**
+ * Those are choices a player makes about what they want. Leaving machines you already
+ * own idle while a sibling recipe starves is not a strategy — it models no player, and
+ * spec E.2 does not describe any of its policies as doing it. Proposed as an amendment
+ * to E.2's policy definitions rather than assumed.
+ *
+ * The rule is deliberately narrow, so it cannot oscillate: it fires only when the
+ * receiving recipe has EXACTLY zero machines, which can be true at most once before it
+ * has some. A broader "rebalance toward whatever is busiest" would move machines back
+ * and forth every decision point.
+ */
+export function idleReassignments(ctx: PolicyContext): Action[] {
+  const { content, state, solution } = ctx;
+
+  const rankByItem = new Map<ItemId, number>();
+  state.priority.forEach((entry, index) => {
+    if (entry.paused || entry.itemId === null) return;
+    if (!rankByItem.has(entry.itemId)) rankByItem.set(entry.itemId, index);
+  });
+  const rankOf = (recipeId: string): number => {
+    const recipe = content.recipes.get(recipeId);
+    if (!recipe) return Number.POSITIVE_INFINITY;
+    return rankByItem.get(recipe.primaryOutput) ?? Number.POSITIVE_INFINITY;
+  };
+
+  const actions: Action[] = [];
+
+  for (const [key, recipeIds] of content.recipesByLaneClass) {
+    const [lane, machineClass] = key.split("::") as [string, string];
+    const live = recipeIds.filter((id) =>
+      isLiveRecipe(content, id, state.tier, state.activeRecipe),
+    );
+    if (live.length < 2) continue;
+    if (installedMachines(state, lane, machineClass) <= 0) continue;
+
+    // A starved recipe: live, nothing assigned, and somewhere to put its output.
+    const starved = live
+      .filter((id) => {
+        if (assignedTo(state, id) !== 0) return false;
+        const recipe = content.recipes.get(id);
+        return recipe !== undefined && itemStateTag(content, state, recipe.primaryOutput) !== "FULL";
+      })
+      .sort((a, b) => rankOf(a) - rankOf(b) || (a < b ? -1 : 1));
+    if (starved.length === 0) continue;
+
+    // A donor: has machines, and the solver says none of them are running.
+    const donors = live
+      .filter((id) => assignedTo(state, id) > 0 && (solution.clocks.get(id) ?? 0) <= IDLE_CLOCK)
+      .sort((a, b) => assignedTo(state, b) - assignedTo(state, a) || (a < b ? -1 : 1));
+    const donor = donors[0];
+    if (donor === undefined) continue;
+
+    const held = assignedTo(state, donor);
+    // Half, so a donor that is only momentarily stalled is not stripped bare, and the
+    // next decision point can move more if it is still idle.
+    const move = Math.max(1, Math.floor(held / 2));
+    if (move >= held) continue;
+
+    // Two actions, in this order: ASSIGN_MACHINES sets one recipe's count and rejects
+    // if the lane-class pool would be oversubscribed, so the donor must shrink first.
+    actions.push({ type: "ASSIGN_MACHINES", recipeId: donor, count: held - move });
+    actions.push({ type: "ASSIGN_MACHINES", recipeId: starved[0]!, count: move });
+  }
+
+  return actions;
 }
 
 export interface Candidate {
@@ -197,8 +288,11 @@ const greedy: Policy = {
   name: "greedy",
   intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
+    // Reassignments first: they cost nothing, and putting a starved recipe on the map
+    // before buying means the purchase's own auto-assignment sees the corrected state.
+    const moves = idleReassignments(ctx);
     const pick = cheapest(affordableCandidates(ctx));
-    return pick === null ? [] : [pick.action];
+    return pick === null ? moves : [...moves, pick.action];
   },
 };
 
@@ -210,7 +304,7 @@ const casual: Policy = {
   name: "casual",
   intervalMs: (ctx) => ctx.content.offlineCapMs,
   decide: (ctx) => {
-    const actions: Action[] = [];
+    const actions: Action[] = [...idleReassignments(ctx)];
     let state = ctx.state;
     // Buy repeatedly until nothing is affordable, because a casual player who has
     // been away eight hours spends the whole backlog in one sitting.
@@ -230,15 +324,16 @@ const bottleneck: Policy = {
   name: "bottleneck",
   intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
+    const moves = idleReassignments(ctx);
     const report = ctx.solution.bottleneck;
-    if (report === null) return [];
+    if (report === null) return moves;
 
     // A cap binds where no machine helps. Before the reporter could say so, this
     // policy bought constructors into a full warehouse and never reached tier 2.
     if (report.kind === "storage") {
-      if (report.upgrade === null) return [];
+      if (report.upgrade === null) return moves;
       const item = ctx.content.items.get(report.itemId);
-      if (!item) return [];
+      if (!item) return moves;
 
       const buyingStorage = report.upgrade === "storage";
       const curve = buyingStorage ? ctx.content.bundle.storage : ctx.content.bundle.quantumStorage;
@@ -247,8 +342,9 @@ const bottleneck: Policy = {
       const level = Object.hasOwn(levels, key) ? levels[key]! : 0;
 
       const costs = levelCostRange(curve, level, 1);
-      if (!canAffordBuild(ctx.state, costs)) return [];
+      if (!canAffordBuild(ctx.state, costs)) return moves;
       return [
+        ...moves,
         buyingStorage
           ? { type: "BUY_STORAGE", itemId: report.itemId, levels: 1 }
           : { type: "BUY_QS", lane: item.lane, levels: 1 },
@@ -256,12 +352,12 @@ const bottleneck: Policy = {
     }
 
     const recipeId = report.kind === "recipe" ? report.recipeId : report.generatorRecipeId;
-    if (recipeId === null) return [];
+    if (recipeId === null) return moves;
     const recipe = ctx.content.recipes.get(recipeId);
-    if (!recipe) return [];
+    if (!recipe) return moves;
 
     const mark = bestUnlockedMark(ctx.content, recipe.machineClass, ctx.state.tier);
-    if (mark === null) return [];
+    if (mark === null) return moves;
 
     const owned =
       ctx.state.installed[recipe.lane]?.[recipe.machineClass]?.[mark - 1] ?? 0;
@@ -272,6 +368,7 @@ const bottleneck: Policy = {
       const costs = machineCostRange(ctx.content, recipe.machineClass, mark, owned, count);
       if (canAffordBuild(ctx.state, costs)) {
         return [
+          ...moves,
           {
             type: "BUY_MACHINE",
             lane: recipe.lane,
@@ -282,7 +379,7 @@ const bottleneck: Policy = {
         ];
       }
     }
-    return [];
+    return moves;
   },
 };
 
@@ -296,12 +393,13 @@ const optimal: Policy = {
   name: "optimal",
   intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
+    const moves = idleReassignments(ctx);
     const target = topTargetItem(ctx);
     const candidates = affordableCandidates(ctx);
-    if (candidates.length === 0) return [];
+    if (candidates.length === 0) return moves;
     if (target === null) {
       const pick = cheapest(candidates);
-      return pick === null ? [] : [pick.action];
+      return pick === null ? moves : [...moves, pick.action];
     }
 
     const before = ctx.solution.itemRates.get(target)?.production ?? 0;
@@ -321,14 +419,14 @@ const optimal: Policy = {
       }
     }
 
-    if (best === null) return [];
+    if (best === null) return moves;
     // Nothing helped the top target, so fall back to the cheapest capacity there is:
     // a purchase that does nothing today may unblock a tier tomorrow.
     if (best.value <= 0) {
       const pick = cheapest(candidates);
-      return pick === null ? [] : [pick.action];
+      return pick === null ? moves : [...moves, pick.action];
     }
-    return [best.action];
+    return [...moves, best.action];
   },
 };
 
