@@ -351,10 +351,25 @@ describe("task 14c: the milestone knife-edge", () => {
     refund: 0,
     rotate: 0,
   };
-  // The counterexample's window: the tier-2 milestone completes at
-  // START + 1,460,148.148...ms, inside [0, 2*halfMs] but past halfMs -- the
-  // knife-edge itself.
-  const halfMs = 730_075;
+  // The counterexample's window: the tier-2 milestone completes inside [0, 2*halfMs]
+  // but past halfMs -- the knife-edge itself. The ASSERTIONS below are untouched; only
+  // this window moved, and it moved because the rates it was calibrated against were
+  // wrong.
+  //
+  // It was 730_075, chosen when the milestone arrived at START + 1,460,148.148 ms. That
+  // arrival was an artefact of resolve's live-lock (see FLOW_CANCELLATION_TOLERANCE in
+  // solve/fixpoint.ts): an item whose production and consumption cancelled reported a
+  // net of float noise rather than zero, which resolve read as a real rate and used to
+  // schedule an event every nanosecond. Re-solving that often kept flipping the item
+  // just off its EMPTY pin, so its consumer dodged the 2% reserve-floor tax waterfall
+  // charges a contested recipe, and iron_plate produced 0.675/s instead of its true
+  // 0.6615/s.
+  //
+  // With the noise snapped at source the item stays pinned, the tax applies, and the
+  // milestone arrives 2.0% later at START + 1,489,947.091 ms -- measured by bisection,
+  // not guessed. The window follows it, keeping the property this test exists for: the
+  // milestone lands inside the window and past the halfway split.
+  const halfMs = 745_000;
 
   it("agrees between one long resolve and two split resolves, milestone inside the window", () => {
     const start = buildWorld(content, sketch, START);

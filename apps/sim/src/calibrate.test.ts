@@ -878,22 +878,20 @@ describe("solving r_eff and capPerTier jointly", () => {
   // one raises tier 2's target above its ceiling (measured ~6.7 at cap 1) so a real cap
   // is required, which is the condition the joint solve exists for. Synthesising the
   // condition is far cheaper than reaching it honestly at tier 4.
+  // 7, not 12. Tier 2's ceiling is ~6.7 at capPerTier 1 and the ceiling moves as
+  // `0.82 * ln(capFactor)`, so 7 asks for a cap factor near 2.2 while 12 asks for e^7.2
+  // -- about 1,340 -- and every probe on the way there simulates a game demanding
+  // astronomical amounts. This describe kept 12 after the other one was corrected.
   const demanding: typeof slice = {
     ...slice,
-    pacing: { ...slice.pacing, targetCollectionsToTier: [2, 12, ...slice.pacing.targetCollectionsToTier.slice(2)] },
+    pacing: { ...slice.pacing, targetCollectionsToTier: [2, 7, ...slice.pacing.targetCollectionsToTier.slice(2)] },
   };
 
-  // SKIPPED, and the reason is measured rather than a guess: both of these need a
-  // configuration where a real capPerTier is required, and those are exactly the
-  // configurations where `resolve` costs 108 ms a call (99% of the wall clock, 76 events
-  // for a 121-second step, one call reaching 5,002). Fifteen minutes produced no result.
-  //
-  // They are kept rather than deleted because they are the tests the joint solve exists
-  // to pass -- "a scale that stretches the game further asks less of storage" is the
-  // whole claim -- and they should be the first thing un-skipped once `resolve`'s event
-  // churn is fixed. Deleting them would lose the intent; leaving them running would
-  // hang the suite.
-  it.skip("solves a capPerTier above 1 when the targets demand it", () => {
+  // These were skipped while `resolve` cost 108 ms a call: both need a configuration
+  // where a real capPerTier is required, and fifteen minutes produced no result. With
+  // the cancellation crumb snapped at source (FLOW_CANCELLATION_TOLERANCE) resolve runs
+  // at 1.37 ms a call and they are affordable again, which is what they were kept for.
+  it("solves a capPerTier above 1 when the targets demand it", () => {
     const result = calibrate({
       bundle: demanding,
       maxTier: 2,
@@ -907,7 +905,7 @@ describe("solving r_eff and capPerTier jointly", () => {
   // The claim the joint solve is FOR: a scale that stretches the game further needs
   // less help from storage. If both scales came back with the same cap, pairing them
   // would be machinery for nothing.
-  it.skip("asks less of storage at a scale that stretches the game further", () => {
+  it("asks less of storage at a scale that stretches the game further", () => {
     const result = calibrate({
       bundle: demanding,
       maxTier: 2,
