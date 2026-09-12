@@ -687,14 +687,61 @@ expectations written for check 12 were wrong, and the measurements corrected the
 
 Both are now asserted rather than assumed.
 
-**It is solved first**, before `r_eff` and before the amounts, because it decides what is
-*reachable* while the other two decide where inside the reachable range things land. A
-tier whose ceiling is below its target has no solution at any `r_eff` and no solution at
-any amount, so fitting either of those first is fitting inside a box known to be too
-small. And unlike `r_eff`, it genuinely bisects: raising a cap can only make a tier take
-longer to fill, never less. `smallestClearing` takes the **smallest** sufficient value —
-bigger caps mean a player hoarding more of everything, which is a real cost to the game's
-feel rather than a free win.
+Unlike `r_eff` it genuinely bisects: raising a cap can only make a tier take longer to
+fill, never less. `smallestClearing` takes the **smallest** sufficient value — bigger caps
+mean a player hoarding more of everything, which is a real cost to the game's feel rather
+than a free win.
+
+#### It was keyed on the wrong tier, and the measurement said so
+
+Keyed on the **item's** tier, `capPerTier 2` was short in 4 s and `capPerTier 4` was still
+short after 259 — nonsense for a factor reaching 4⁹ by tier 9. **A milestone's ceiling is
+set by its lowest-tier requirement**, and those sit far below the milestone's own tier:
+the slice's tier-2 milestone asks for `iron_rod`, a **tier-0** item, so its cap was
+multiplied by `capPerTier⁰ = 1` and no factor could raise that ceiling at all.
+
+Keyed on the **player's** tier, every cap grows as the player advances, so a tier-k
+milestone can demand `capPerTier^k` more of anything. It is also the better mechanic —
+warehouses get bigger as the factory does. It forces every cap reader to say *when*, and
+they do not agree: a milestone is banked on the tier **below** it, a machine can be bought
+on any tier at or after it unlocks, and check 12 asks at the deepest tier.
+
+#### It is a logarithmic lever, and that makes headroom exponentially expensive
+
+Tier 3's ceiling against the cap factor, measured:
+
+| capPerTier | cap at tier 2 | tier-3 ceiling |
+|---|---|---|
+| 1.0 | 1× | 8.93 |
+| 1.5 | 2.25× | 9.39 |
+| 2.0 | 4× | 10.10 |
+| 3.0 | 9× | 10.68 |
+
+`ceiling = 8.87 + 0.82 · ln(cap factor)` — the same logarithmic weakness milestone amounts
+have, and for the same reason: time to bank grows slowly with amount because production
+accelerates.
+
+**The consequence is a defect in the solve as first written.** Its `capHeadroom` default of
+1.25 costs, in a log regime, a cap factor 28× larger than simply reaching the target:
+
+| goal for tier 3 | cap factor needed | capPerTier |
+|---|---|---|
+| reach the target (11) | 13.3× | **3.64** |
+| target × 1.25 headroom (13.75) | 372× | **19.29** |
+
+`capPerTier` 19 puts tier-9 caps at 3×10¹¹ times base. Headroom must be small — 1.02 to
+1.05 — or expressed as an absolute margin rather than a ratio.
+
+#### The levers multiply, so solving them in sequence overcharges
+
+`capPerTier` is solved at the bundle's **authored** `r_eff`, which is the worst case for it.
+But `r_eff` scale 4 alone already cleared tiers 1–5 and missed tier 6 by 0.9%. The two
+multiply — `capPerTier` raises what can be asked, `r_eff` slows how fast it is made — so
+solved together each needs far less than either does alone.
+
+The original argument for solving storage first ("it decides what is reachable, the others
+decide where inside the reachable range things land") is right in principle and wrong in
+practice: **both** levers move reachability.
 
 ### Still to do
 
