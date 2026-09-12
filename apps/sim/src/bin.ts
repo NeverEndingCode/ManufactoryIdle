@@ -14,10 +14,12 @@ const USAGE = `usage:
            [--seed <n>] [--until tier:<n>] [--max-days <n>] [--report text|json]
   sim play [--content <dir>] [--seed <n>]
   sim calibrate [--content <dir>] [--policy <name>] [--seed <n>] [--max-tier <n>]
-           [--tolerance <f>] [--write]
+           [--tolerance <f>] [--write] [--no-solve-reff]
 
   calibrate solves the free content numbers against pacing.targetCollectionsToTier
-  by running the simulator and bisecting (spec B.7). It prints what it found;
+  by running the simulator (spec B.7): it scans r_eff, then bisects each tier's
+  delivery amounts underneath the winner. --no-solve-reff holds r_eff where the
+  bundle authored it and solves amounts only. It prints what it found;
   --write emits it to <dir>/derived.yaml, which the loader lays over the authored
   files. Expect it to take a while: every step of every search is a real run.
 `;
@@ -48,6 +50,7 @@ async function main(): Promise<number> {
       "max-tier": { type: "string" },
       tolerance: { type: "string", default: "0.05" },
       write: { type: "boolean", default: false },
+      "no-solve-reff": { type: "boolean", default: false },
     },
   });
 
@@ -60,6 +63,7 @@ async function main(): Promise<number> {
       maxTier: values["max-tier"] === undefined ? undefined : Number(values["max-tier"]),
       tolerance: Number(values.tolerance),
       write: values.write,
+      solveREff: !values["no-solve-reff"],
     });
   }
 

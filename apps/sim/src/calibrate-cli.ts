@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { stderr, stdout } from "node:process";
 import { loadBundleDir, serialiseDerived } from "@manufactory/content";
 import { FIXTURE_BUNDLE_DIR } from "./bootstrap.js";
-import { calibrate, type TierCalibration } from "./calibrate.js";
+import { calibrate, type CalibrationResult, type TierCalibration } from "./calibrate.js";
 import type { PolicyName } from "./policies.js";
 
 export interface CalibrationCliOptions {
@@ -14,6 +14,22 @@ export interface CalibrationCliOptions {
   maxTier?: number;
   tolerance: number;
   write: boolean;
+  solveREff: boolean;
+}
+
+function formatScan(result: CalibrationResult): string {
+  if (result.rEffScan.length === 0) return "r_eff held at the authored value";
+  const lines = ["", "r_eff scale   curve miss", ""];
+  // Ascending by scale rather than by score, so the shape of the response is readable
+  // and a flat region is visible as one. The response is not monotone (spec D3), which
+  // is the reason this is a scan, and the reason the whole of it is printed.
+  for (const entry of [...result.rEffScan].sort((a, b) => a.scale - b.scale)) {
+    const chosen = entry.scale === result.rEffScale ? "  <- chosen" : "";
+    lines.push(
+      `${entry.scale.toFixed(3).padStart(11)}   ${entry.miss.toFixed(4).padStart(10)}${chosen}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 function formatTable(tiers: TierCalibration[], tolerance: number): string {
@@ -49,11 +65,13 @@ export function runCalibration(options: CalibrationCliOptions): number {
     seed: options.seed,
     maxTier: options.maxTier,
     tolerance: options.tolerance,
+    solveREff: options.solveREff,
     // Progress goes to stderr so that stdout stays the result, and a run that takes
     // an hour is not a silent one.
     onProgress: (line) => stderr.write(`${line}\n`),
   });
 
+  stdout.write(`${formatScan(result)}\n`);
   stdout.write(`${formatTable(result.tiers, options.tolerance)}\n`);
 
   if (options.write) {

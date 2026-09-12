@@ -192,6 +192,53 @@ export function deriveCostRatios(bundle: Bundle): { id: string; costRatio: numbe
 }
 
 /**
+ * A copy of `bundle` with every authored `r_eff` moved by one scale.
+ *
+ * It scales `r_eff − 1`, not `r_eff`. Spec D3's invariant is `r_eff > 1 + ε`, so the
+ * distance above the floor is the pacing quantity: 1.047 and 1.076 are not "within 3%
+ * of each other", they are a factor of 1.6 apart in the thing that decides pace.
+ * Scaling that distance keeps the ordering the author chose between classes, and can
+ * never land on or below the floor for a positive scale.
+ *
+ * One scale for every class rather than fourteen independent knobs: there are ten tier
+ * targets, so per-class freedom would be underdetermined and the answer arbitrary.
+ */
+export function withREffScale(bundle: Bundle, scale: number): Bundle {
+  return {
+    ...bundle,
+    machineClasses: bundle.machineClasses.map((cls: MachineClass) =>
+      cls.rEff === undefined ? cls : { ...cls, rEff: 1 + (cls.rEff - 1) * scale },
+    ),
+  };
+}
+
+/**
+ * How badly a whole tier curve misses its targets — the score the `r_eff` scan
+ * minimises, since no single tier's time can be bisected against (see `calibrate`).
+ *
+ * Relative, because a tier aiming at 2100 collections and landing 1 out is not the
+ * same failure as a tier aiming at 2 and landing 1 out.
+ *
+ * An unreachable tier scores `UNREACHABLE_PENALTY` rather than infinity: infinity
+ * would make every bad candidate equally bad, and the scan needs to prefer "two tiers
+ * unreachable" over "five tiers unreachable" in order to climb out. The penalty sits
+ * far above any relative miss a reachable tier can produce, so a reachable curve
+ * always beats an unreachable one.
+ */
+export const UNREACHABLE_PENALTY = 1e6;
+
+export function curveMiss(tiers: { target: number; observed: number | null }[]): number {
+  let total = 0;
+  for (const tier of tiers) {
+    total +=
+      tier.observed === null
+        ? UNREACHABLE_PENALTY
+        : Math.abs(tier.observed - tier.target) / tier.target;
+  }
+  return total;
+}
+
+/**
  * A copy of `bundle` with one tier's delivery requirements scaled.
  *
  * Rounding happens HERE, not at emit time, so the simulator measures the number that
@@ -232,6 +279,13 @@ export interface CalibrateOptions {
    */
   overrunBudget?: number;
   maxIterationsPerTier?: number;
+  /** Set false to hold `r_eff` at whatever the bundle authored and solve amounts only. */
+  solveREff?: boolean;
+  /**
+   * The coarse grid of `r_eff - 1` scales to rank. Geometric, because the useful range
+   * spans more than an order of magnitude and the response is flat at the bottom of it.
+   */
+  rEffScales?: readonly number[];
   onProgress?: (line: string) => void;
 }
 
@@ -251,6 +305,125 @@ export interface CalibrationResult {
   /** The same solution as a `derived` block, ready to write next to the source. */
   derived: Derived;
   tiers: TierCalibration[];
+  /** The scale applied to every class's `r_eff - 1`. 1 when nothing authored `r_eff`. */
+  rEffScale: number;
+  /** Every scale tried, with the curve score it produced. The scan, shown. */
+  rEffScan: { scale: number; miss: number }[];
+}
+
+interface AmountOptions extends CalibrateOptions {
+  bundle: Bundle;
+}
+
+interface AmountResult {
+  bundle: Bundle;
+  tiers: TierCalibration[];
+}
+
+/**
+ * The `r_eff` scan (spec D3 as amended in Phase 2, and B.7).
+ *
+ * It is a scan and not a bisection, and that is forced by measurement rather than
+ * chosen for convenience. Raising `r_eff` makes machines dearer, so a player buys fewer
+ * and banks more of the same currency instead — and while a tier's requirement is small
+ * relative to production, that hoarding WINS. On the slice at a fixed 22,400
+ * `iron_plate`, scaling `r_eff - 1` by 1 -> 2 -> 4 took tier 1 from 1.95 collections to
+ * 1.65 to 1.42. Only once the requirement is large does slower production dominate: at
+ * 1,000,000 the same scales run 3.94 -> 3.76 -> 9.39 -> 23.58 -> 53.71.
+ *
+ * A bisection assumes the monotonicity that measurement disproves, and would settle in
+ * the flat corner and report success. So every candidate is scored on the WHOLE tier
+ * curve, by `curveMiss`, with the amounts re-solved underneath it — a scale is only as
+ * good as the game it produces once the requirements have been fitted to it.
+ *
+ * Coarse geometric pass first, then a finer one around the winner. The coarse pass runs
+ * at a loose tolerance because it only has to rank candidates; the chosen scale is then
+ * calibrated once more at full precision, and THAT is the result reported.
+ */
+const COARSE_SCALES = [0.5, 1, 2, 4, 8, 16, 32];
+
+export function calibrate(options: CalibrateOptions): CalibrationResult {
+  const report = options.onProgress ?? ((): void => {});
+  const tolerance = options.tolerance ?? 0.05;
+  const targets = options.bundle.pacing.targetCollectionsToTier;
+
+  const authorsREff = options.bundle.machineClasses.some((c) => c.rEff !== undefined);
+  const scan: { scale: number; miss: number }[] = [];
+
+  const score = (scale: number, coarse: boolean): { miss: number; result: AmountResult } => {
+    const scaled = withREffScale(options.bundle, scale);
+    const ratios = deriveCostRatios(scaled);
+    const result = calibrateAmounts({
+      ...options,
+      bundle: withCostRatios(scaled, ratios),
+      tolerance: coarse ? Math.max(tolerance, 0.15) : tolerance,
+      maxIterationsPerTier: coarse ? 6 : options.maxIterationsPerTier,
+      // The scan makes tens of inner passes; their per-step lines would bury the scan.
+      onProgress: coarse ? undefined : options.onProgress,
+    });
+    return { miss: curveMiss(result.tiers), result };
+  };
+
+  let bestScale = 1;
+  if (authorsREff && options.solveREff !== false) {
+    let best = Number.POSITIVE_INFINITY;
+    const consider = (scale: number): void => {
+      const { miss } = score(scale, true);
+      scan.push({ scale, miss });
+      report(`r_eff scale ${scale.toFixed(3).padStart(8)}  curve miss ${miss.toFixed(4)}`);
+      if (miss < best) {
+        best = miss;
+        bestScale = scale;
+      }
+    };
+    for (const scale of options.rEffScales ?? COARSE_SCALES) consider(scale);
+    // Refine around the winner. The coarse grid steps by 2x, so half a step either way
+    // is the whole interval the winner could be hiding in.
+    for (const factor of [0.6, 0.8, 1.25, 1.6]) consider(bestScale * factor);
+    report(`r_eff scale chosen: ${bestScale.toFixed(3)}`);
+  }
+
+  const scaled = withREffScale(options.bundle, bestScale);
+  const costRatios = deriveCostRatios(scaled);
+  for (const ratio of costRatios) {
+    report(`r_eff -> r   ${ratio.id.padEnd(18)} ${ratio.costRatio.toFixed(6)}`);
+  }
+
+  const final = score(bestScale, false).result;
+  const rEffById = new Map(scaled.machineClasses.map((c) => [c.id, c.rEff]));
+
+  const derived: Derived = {
+    run: {
+      calibratedAt: new Date().toISOString(),
+      policy: options.policy ?? "greedy",
+      seed: options.seed ?? 42,
+      targetCollectionsToTier: targets,
+      observedCollectionsToTier: final.tiers.map((t) => t.observed),
+    },
+    ...(costRatios.length > 0
+      ? {
+          machineClasses: costRatios.map((r) => ({
+            ...r,
+            ...(rEffById.get(r.id) === undefined ? {} : { rEff: rEffById.get(r.id)! }),
+          })),
+        }
+      : {}),
+    milestones: final.tiers.map((t) => ({
+      tier: t.tier,
+      requires: final.bundle.milestones.find((m) => m.tier === t.tier)!.requires.map((r) => ({
+        item: r.item,
+        amount: r.amount,
+      })),
+    })),
+  };
+
+  return {
+    bundle: final.bundle,
+    derived,
+    tiers: final.tiers,
+    rEffScale: bestScale,
+    rEffScan: scan,
+  };
 }
 
 function withCostRatios(bundle: Bundle, ratios: { id: string; costRatio: number }[]): Bundle {
@@ -276,7 +449,7 @@ function withCostRatios(bundle: Bundle, ratios: { id: string; costRatio: number 
  * Solving every tier at once would be a dozen knobs against ten numbers, and the
  * answer would be arbitrary rather than derived.
  */
-export function calibrate(options: CalibrateOptions): CalibrationResult {
+function calibrateAmounts(options: AmountOptions): AmountResult {
   const policy = options.policy ?? "greedy";
   const seed = options.seed ?? 42;
   const tolerance = options.tolerance ?? 0.05;
@@ -291,11 +464,7 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     .sort((a, b) => a - b);
   const maxTier = options.maxTier ?? (solvable[solvable.length - 1] ?? 0);
 
-  const costRatios = deriveCostRatios(options.bundle);
-  let working = withCostRatios(options.bundle, costRatios);
-  for (const ratio of costRatios) {
-    report(`r_eff -> r   ${ratio.id.padEnd(18)} ${ratio.costRatio.toFixed(6)}`);
-  }
+  let working = options.bundle;
 
   const offlineCapMs = options.bundle.offlineCapHours * 60 * 60 * 1000;
   const tiers: TierCalibration[] = [];
@@ -430,23 +599,5 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     }
   }
 
-  const derived: Derived = {
-    run: {
-      calibratedAt: new Date().toISOString(),
-      policy,
-      seed,
-      targetCollectionsToTier: targets,
-      observedCollectionsToTier: tiers.map((t) => t.observed),
-    },
-    ...(costRatios.length > 0 ? { machineClasses: costRatios } : {}),
-    milestones: tiers.map((t) => ({
-      tier: t.tier,
-      requires: working.milestones.find((m) => m.tier === t.tier)!.requires.map((r) => ({
-        item: r.item,
-        amount: r.amount,
-      })),
-    })),
-  };
-
-  return { bundle: working, derived, tiers };
+  return { bundle: working, tiers };
 }

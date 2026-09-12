@@ -236,8 +236,13 @@ export const StartSchema = z
 // looked at. `loadBundleDir` rejects a patch that names something the bundle does
 // not have, because that means the content was re-authored after the calibration run
 // and the numbers no longer describe it.
+// Both, deliberately. `costRatio` is what the engine runs on; `rEff` beside it is the
+// pacing decision that produced it (spec D3, as amended in Phase 2 — calibration solves
+// r_eff and derives r = r_eff * m). Emitting only the cost ratio would leave a reader
+// unable to tell a solved number from a hand-picked one, and a re-run unable to start
+// from where the last one finished.
 const DerivedMachineClassSchema = z
-  .object({ id: Id, costRatio: z.number().gt(1) })
+  .object({ id: Id, costRatio: z.number().gt(1), rEff: z.number().gt(1).optional() })
   .strict();
 
 const DerivedMilestoneSchema = z

@@ -124,6 +124,17 @@ describe("the derived block", () => {
     expect(bundle.machineClasses[0]!.costRatio).toBe(1.234);
   });
 
+  // The calibrator solves r_eff and derives costRatio from it. Both are emitted: the
+  // costRatio is what the engine runs on, and the r_eff beside it is what a reader has
+  // to see to know what pacing decision produced it. Spec D3 as amended in Phase 2.
+  it("overrides a machine class r_eff alongside its cost ratio", () => {
+    const derived =
+      `derived:\n  machineClasses:\n    - { id: miner, costRatio: 1.234, rEff: 1.185 }\n`;
+    const bundle = loadBundleDir(writeBundle({ ...ALL, "z-derived.yaml": derived }));
+    expect(bundle.machineClasses[0]!.costRatio).toBe(1.234);
+    expect(bundle.machineClasses[0]!.rEff).toBe(1.185);
+  });
+
   it("overrides a milestone requirement amount", () => {
     const derived = `derived:\n  milestones:\n    - { tier: 1, requires: [{ item: iron_ore, amount: 9999 }] }\n`;
     const bundle = loadBundleDir(

@@ -97,7 +97,12 @@ export function applyDerived(bundle: Bundle): Bundle {
       ...next,
       machineClasses: next.machineClasses.map((cls) => {
         const patch = byId.get(cls.id);
-        return patch === undefined ? cls : { ...cls, costRatio: patch.costRatio };
+        if (patch === undefined) return cls;
+        return {
+          ...cls,
+          costRatio: patch.costRatio,
+          ...(patch.rEff === undefined ? {} : { rEff: patch.rEff }),
+        };
       }),
     };
   }
