@@ -732,7 +732,23 @@ accelerates.
 `capPerTier` 19 puts tier-9 caps at 3×10¹¹ times base. Headroom must be small — 1.02 to
 1.05 — or expressed as an absolute margin rather than a ratio.
 
-#### The levers multiply, so solving them in sequence overcharges
+#### Solved jointly with `r_eff`
+
+Each candidate scale now gets its **own** `capPerTier`: the smallest that clears every
+target at that scale. `capPerTier` bisects because it is monotone — a bigger cap can only
+make a tier take longer to fill, never less — while the scale is scanned because it
+measurably is not. The pre-filter and the storage solve became the same step: a scale is
+usable exactly when *some* cap clears, and the smallest such cap is the one to use with
+it.
+
+The scan runs ascending and each bisection is **warm-started from the previous scale's
+answer**, since a faster game needs a bigger cap and the last answer is a good guess for
+the next.
+
+`capHeadroom` drops from 1.25 to **1.05**, which the log fit makes non-negotiable rather
+than a taste call.
+
+#### The levers multiply, so solving them in sequence overcharged
 
 `capPerTier` is solved at the bundle's **authored** `r_eff`, which is the worst case for it.
 But `r_eff` scale 4 alone already cleared tiers 1–5 and missed tier 6 by 0.9%. The two
@@ -743,9 +759,42 @@ The original argument for solving storage first ("it decides what is reachable, 
 decide where inside the reachable range things land") is right in principle and wrong in
 practice: **both** levers move reachability.
 
+### The real blocker is `resolve`, and it is measured
+
+Every search in this task has been bottlenecked on individual simulated runs taking
+minutes or never finishing, at scattered parameter values. Profiled on the configuration
+that stalled the joint solve for 800+ seconds (`r_eff` scale 1.6, tier 2):
+
+```
+steps 1129   sim days 1.6   wall 122s
+  solve     1.2s   ( 1%)   0.54 ms/call
+  resolve  122.0s  (99%)  108.09 ms/call
+  decide    0.0s   ( 0%)
+  apply     0.1s   ( 0%)
+  events: 85,788 total — 76.0 per resolve, max 5,002
+  step length: 121 s of simulated time per resolve
+```
+
+**`resolve` is 99% of the wall clock at ~200 solve-equivalents per call.** It emits
+**76 events for a 121-second step** — an event every 1.6 simulated seconds — and one call
+reached **5,002 events**, half of `MAX_EVENTS`.
+
+That is the same family as the Task 2 defect (`FULL_TOLERANCE`, a zero-progress fill loop
+burning 10,000 events per call), not fully closed: something is still churning events at a
+rate the interval cannot justify. `resolve`'s own doc comment claims "an 8-hour resolve
+with 20 events is 20 of those [solves]" — the measurement says 76 events for **two
+minutes**, so the doc describes a simulator this no longer is.
+
+**This is the next task, and it precedes finishing the calibration.** Every remaining
+measurement — the ten-tier scan, the `derived.yaml` run, Task 4's CI gates — is priced by
+`resolve`, and at 108 ms a call none of them is affordable. It is also the highest-value
+fix available: a 10× here makes every search in this phase 10× cheaper, where more search
+cleverness buys single-digit factors at best.
+
 ### Still to do
 
-1. **Measure how deep the `r_eff` scale needs to go, and what it costs.** Scale 8 timed
+1. **Fix `resolve`'s event churn.** Measured above; blocks everything downstream.
+2. **Measure how deep the `r_eff` scale needs to go, and what it costs.** Scale 8 timed
    out unmeasured.
 2. **Solve the storage curves and scale the per-item base caps with tier** (B.7's `s`,
    `sc`, `q`) if step 1 says `r_eff` alone cannot reach tier 10, or if the `r_eff` it

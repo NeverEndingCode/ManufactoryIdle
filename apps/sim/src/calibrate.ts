@@ -595,6 +595,15 @@ export interface CalibrateOptions {
   /** Set false to hold the storage tier factor where the bundle authored it. */
   solveCapPerTier?: boolean;
   /**
+   * Set false to take the coarse grid's winner and skip the refinement pass.
+   *
+   * The refinement probes fractions of the winner, and those fractions are where cost
+   * is unpredictable: measured, a refinement at scale 1.6 spent over 800 seconds on a
+   * single tier while scale 1.25 did the same tier in 4. For a quick look, or a test
+   * that only needs the coarse ranking, that is a bad trade.
+   */
+  refine?: boolean;
+  /**
    * How far above its target each tier's ceiling must reach for `capPerTier` to count
    * as sufficient. Above 1 so the amounts search has somewhere to land: a ceiling
    * exactly ON the target is only reachable by asking for every last unit a player can
@@ -629,8 +638,11 @@ export interface CalibrationResult {
   rEffScale: number;
   /** The solved storage tier factor (spec B.4 as amended). */
   capPerTier: number;
-  /** Every scale tried, with the curve score it produced. The scan, shown. */
-  rEffScan: { scale: number; miss: number }[];
+  /**
+   * Every scale tried, with the curve score it produced and the capPerTier solved for
+   * it. `capPerTier` is absent on a scale that was refused or that no cap could rescue.
+   */
+  rEffScan: { scale: number; miss: number; capPerTier?: number }[];
 }
 
 interface AmountOptions extends CalibrateOptions {
@@ -684,7 +696,7 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
   const targets = options.bundle.pacing.targetCollectionsToTier;
 
   const authorsREff = options.bundle.machineClasses.some((c) => c.rEff !== undefined);
-  const scan: { scale: number; miss: number }[] = [];
+  const scan: { scale: number; miss: number; capPerTier?: number }[] = [];
 
   /**
    * Why a scale cannot be used at all, or null if it can.
@@ -707,15 +719,15 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
 
   const score = (
     scale: number,
+    bundleAtScale: Bundle,
     coarse: boolean,
   ): { miss: number; result?: AmountResult; refused?: string } => {
     const coarseTolerance = Math.max(tolerance, 0.15);
-    const scaled = withREffScale(base, scale);
-    const refused = refuse(scaled);
+    const refused = refuse(bundleAtScale);
     if (refused !== null) return { miss: Number.POSITIVE_INFINITY, refused };
     const result = calibrateAmounts({
       ...options,
-      bundle: scaled,
+      bundle: bundleAtScale,
       tolerance: coarse ? coarseTolerance : tolerance,
       maxIterationsPerTier: coarse ? 6 : options.maxIterationsPerTier,
       // A tighter leash while ranking. The scan gets dearer as the scale rises -- a
@@ -746,100 +758,111 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     solvable[solvable.length - 1] ?? 0,
   );
 
-  // Storage first, because it decides what is REACHABLE and the other two decide where
-  // inside the reachable range things land. A tier whose ceiling is below its target has
-  // no solution at any r_eff and no solution at any amount, so solving either of those
-  // first would be fitting inside a box known to be too small.
+  // r_eff and capPerTier are solved TOGETHER, because they multiply: capPerTier raises
+  // what a tier can ask for, r_eff slows how fast it is made. Solved in sequence --
+  // capPerTier first, at the bundle's authored r_eff -- capPerTier is fitted at its own
+  // worst case and charged for the whole gap alone. Measured on the slice: r_eff scale 4
+  // by itself cleared tiers 1 to 5 and missed tier 6 by 0.9%, while capPerTier by itself
+  // at the authored scale needed 3.64 just to reach tier 3's target.
   //
-  // Solved at the bundle's authored r_eff. That does not guarantee every scale the scan
-  // then tries also clears -- the ceiling is not monotone in r_eff -- but it does not
-  // need to: the pre-filter rejects any scale that does not.
-  const headroom = options.capHeadroom ?? 1.25;
-  let base = options.bundle;
-  let capPerTier = options.bundle.storage.capPerTier;
-  if (options.solveCapPerTier !== false && deepestTier > 0) {
-    report(`capPerTier  ... solving so every tier clears its target by ${headroom}x`);
-    const started = Date.now();
+  // So every candidate scale gets its own capPerTier: the smallest that clears at THAT
+  // scale. capPerTier bisects because it is monotone -- a bigger cap can only make a
+  // tier take longer to fill, never less -- while the scale is scanned because it is
+  // measurably not (see the note on the scan).
+  //
+  // The headroom is small on purpose. The ceiling responds to the cap factor
+  // logarithmically -- measured `ceiling = 8.87 + 0.82 * ln(capFactor)` on tier 3 -- so
+  // a 25% margin costs 28x the cap factor: reaching tier 3's target of 11 needs
+  // capPerTier 3.64, reaching 11 x 1.25 needs 19.29, which puts tier-9 caps at 3e11
+  // times base. In a log regime headroom is exponentially expensive and has to be thin.
+  const headroom = options.capHeadroom ?? 1.05;
+  const authoredCap = options.bundle.storage.capPerTier;
+  const holdCap = options.solveCapPerTier === false;
+
+  const capByScale = new Map<number, number>();
+  const shortfalls = new Map<number, number>();
+  // Warm start. Scales are tried in ascending order and a faster game needs a bigger
+  // cap, so the previous answer is a good guess for the next and the bisection starts
+  // near its target instead of bracketing from scratch every time.
+  let warmSeed = Math.max(authoredCap, 2);
+
+  const ceilingsAt = (bundleAtScale: Bundle, cap: number): TierCeiling[] =>
+    tierCeilings({
+      bundle: withCapPerTier(bundleAtScale, cap),
+      maxTier: deepestTier,
+      policy: options.policy ?? "greedy",
+      seed: options.seed ?? 42,
+    });
+
+  /** The smallest capPerTier clearing every target at this scale, or null if none does. */
+  const requiredCap = (scale: number, bundleAtScale: Bundle): number | null => {
+    if (holdCap) {
+      const ceilings = ceilingsAt(bundleAtScale, authoredCap);
+      if (clearsTargets(ceilings, headroom)) return authoredCap;
+      shortfalls.set(scale, ceilingShortfall(ceilings));
+      return null;
+    }
     const solved = smallestClearing(
-      (value) =>
-        clearsTargets(
-          tierCeilings({
-            bundle: withCapPerTier(options.bundle, value),
-            maxTier: deepestTier,
-            policy: options.policy ?? "greedy",
-            seed: options.seed ?? 42,
-          }),
-          headroom,
-        ),
+      (value) => clearsTargets(ceilingsAt(bundleAtScale, value), headroom),
       {
-        // Seeded at 2 rather than 1 because the targets themselves roughly double each
-        // tier, so a cap factor near 2 is where the answer plausibly lives. Starting at
-        // 1 spends its first probes on values that obviously fail.
-        seed: Math.max(capPerTier, 2),
+        seed: warmSeed,
         floor: 1,
         onProbe: (value, cleared, elapsedMs) =>
           report(
-            `  capPerTier ${value.toFixed(4).padStart(9)}  ${cleared ? "clears" : "short "}  ` +
-              `${(elapsedMs / 1000).toFixed(0)}s`,
+            `  [scale ${scale.toFixed(3)}] capPerTier ${value.toFixed(4).padStart(9)}  ` +
+              `${cleared ? "clears" : "short "}  ${(elapsedMs / 1000).toFixed(0)}s`,
           ),
       },
     );
-    capPerTier = solved.value;
-    base = withCapPerTier(options.bundle, capPerTier);
-    report(
-      `capPerTier  ${capPerTier.toFixed(4)}  ${solved.cleared ? "clears" : "NEVER CLEARED"}  ` +
-        `${solved.evaluations} runs  ${((Date.now() - started) / 1000).toFixed(0)}s`,
-    );
-  }
+    if (!solved.cleared) {
+      shortfalls.set(scale, ceilingShortfall(ceilingsAt(bundleAtScale, solved.value)));
+      return null;
+    }
+    warmSeed = solved.value;
+    return solved.value;
+  };
 
   let bestScale = 1;
-  const shortfalls = new Map<number, number>();
+  let bestCap = authoredCap;
   if (authorsREff && options.solveREff !== false) {
     let best = Number.POSITIVE_INFINITY;
-    const consider = (scale: number, skipPreFilter = false): void => {
-      // Announced before it runs, not only after. A single coarse point is a whole
-      // amounts calibration and can take minutes, and the scan has eleven of them.
+    const consider = (scale: number, force = false): void => {
       report(`r_eff scale ${scale.toFixed(3).padStart(8)}  ...`);
       const started = Date.now();
+      const elapsed = (): string => `${((Date.now() - started) / 1000).toFixed(0)}s`;
 
-      // The pre-filter. One run instead of tens: if even a requirement at the cap
-      // lands a tier before its target, no requirement reaches the target and there is
-      // nothing to fit. Measured on the slice, this discards three of the four scales
-      // around the authored value without a single amounts calibration.
-      if (!skipPreFilter) {
-        const scaled = withREffScale(base, scale);
-        if (refuse(scaled) === null) {
-          const ceilings = tierCeilings({
-            bundle: scaled,
-            maxTier: deepestTier,
-            policy: options.policy ?? "greedy",
-            seed: options.seed ?? 42,
-          });
-          if (!clearsTargets(ceilings)) {
-            const short = ceilings.filter((c) => c.ceiling !== null && c.ceiling < c.target);
-            scan.push({ scale, miss: Number.POSITIVE_INFINITY });
-            shortfalls.set(scale, ceilingShortfall(ceilings));
-            report(
-              `r_eff scale ${scale.toFixed(3).padStart(8)}  ceiling too low, ` +
-                `${short.map((c) => `tier ${c.tier} tops out at ${c.ceiling!.toFixed(2)} of ${c.target}`).join("; ")}  ` +
-                `${((Date.now() - started) / 1000).toFixed(0)}s`,
-            );
-            return;
-          }
-        }
+      const scaled = withREffScale(options.bundle, scale);
+      const refused = refuse(scaled);
+      if (refused !== null) {
+        scan.push({ scale, miss: Number.POSITIVE_INFINITY });
+        report(`r_eff scale ${scale.toFixed(3).padStart(8)}  refused, ${refused}  ${elapsed()}`);
+        return;
       }
 
-      const { miss, refused } = score(scale, true);
-      scan.push({ scale, miss });
-      const elapsed = `${((Date.now() - started) / 1000).toFixed(0)}s`;
+      // The pre-filter and the storage solve are now the same step: a scale is usable
+      // exactly when SOME capPerTier makes every tier clear, and the smallest such value
+      // is the one to use with it.
+      const cap = force ? (capByScale.get(scale) ?? warmSeed) : requiredCap(scale, scaled);
+      if (cap === null) {
+        scan.push({ scale, miss: Number.POSITIVE_INFINITY });
+        report(
+          `r_eff scale ${scale.toFixed(3).padStart(8)}  no capPerTier clears every ` +
+            `target  ${elapsed()}`,
+        );
+        return;
+      }
+      capByScale.set(scale, cap);
+
+      const { miss } = score(scale, withCapPerTier(scaled, cap), true);
+      scan.push({ scale, miss, capPerTier: cap });
       report(
-        refused === undefined
-          ? `r_eff scale ${scale.toFixed(3).padStart(8)}  curve miss ${miss.toFixed(4)}  ${elapsed}`
-          : `r_eff scale ${scale.toFixed(3).padStart(8)}  refused, ${refused}  ${elapsed}`,
+        `r_eff scale ${scale.toFixed(3).padStart(8)}  capPerTier ${cap.toFixed(4)}  ` +
+          `curve miss ${miss.toFixed(4)}  ${elapsed()}`,
       );
       if (miss < best) {
         best = miss;
         bestScale = scale;
+        bestCap = cap;
       }
     };
     for (const scale of options.rEffScales ?? COARSE_SCALES) consider(scale);
@@ -847,13 +870,15 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     // from it inside the loop meant that as soon as one refinement won, the next was
     // measured relative to that instead of to the coarse winner -- a grid that walks,
     // whose shape depends on the order it happened to be evaluated in.
-    if (Number.isFinite(best)) {
+    if (Number.isFinite(best) && options.refine !== false) {
       const coarseWinner = bestScale;
       for (const scale of refinementScales(coarseWinner)) consider(scale);
-    } else {
-      // Nothing cleared. Rather than emit no solution, fit the scale that came
-      // closest and let its tiers report themselves as off target -- the numbers are
-      // then honest about what they could not do, which a silent failure is not.
+    } else if (Number.isFinite(best)) {
+      report(`refinement skipped; keeping the coarse winner ${bestScale.toFixed(3)}`);
+    } else if (!Number.isFinite(best)) {
+      // Nothing cleared at any capPerTier. Rather than emit no solution, fit the scale
+      // that came closest and let its tiers report themselves as off target -- numbers
+      // honest about what they could not do beat a silent failure.
       let closest = bestScale;
       let least = Number.POSITIVE_INFINITY;
       for (const [scale, shortfall] of shortfalls) {
@@ -863,22 +888,40 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
         }
       }
       bestScale = closest;
+      bestCap = capByScale.get(closest) ?? warmSeed;
       report(
-        `no scale reached every target; fitting the closest, ${closest.toFixed(3)} ` +
-          `(short by ${least.toFixed(3)} of a target, summed)`,
+        `no scale reached every target at any capPerTier; fitting the closest, ` +
+          `${closest.toFixed(3)} (short by ${least.toFixed(3)} of a target, summed)`,
       );
+      capByScale.set(closest, bestCap);
       consider(closest, true);
+      bestCap = capByScale.get(closest) ?? bestCap;
     }
+  } else if (!holdCap && deepestTier > 0) {
+    // No scale scan -- either nothing authored `r_eff` or the caller asked to hold it --
+    // so storage is solved on its own, at the bundle as authored. Nesting this inside
+    // the scan made `solveCapPerTier` silently do nothing whenever `solveREff` was off,
+    // which is a combination the CLI exposes as `--no-solve-reff`.
+    report(`r_eff held; solving capPerTier alone`);
+    const cap = requiredCap(1, options.bundle);
+    if (cap !== null) bestCap = cap;
+    report(
+      cap === null
+        ? `capPerTier: no value clears every target`
+        : `capPerTier ${cap.toFixed(4)}`,
+    );
     report(`r_eff scale chosen: ${bestScale.toFixed(3)}`);
   }
 
+  const capPerTier = bestCap;
+  const base = withCapPerTier(options.bundle, capPerTier);
   const scaled = withREffScale(base, bestScale);
   const costRatios = deriveCostRatios(scaled);
   for (const ratio of costRatios) {
     report(`r_eff -> r   ${ratio.id.padEnd(18)} ${ratio.costRatio.toFixed(6)}`);
   }
 
-  const chosen = score(bestScale, false);
+  const chosen = score(bestScale, scaled, false);
   if (chosen.result === undefined) {
     throw new Error(
       `every r_eff scale tried was refused (${chosen.refused ?? "unknown"}). ` +
