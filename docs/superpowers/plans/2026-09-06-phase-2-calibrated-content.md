@@ -791,9 +791,67 @@ measurement — the ten-tier scan, the `derived.yaml` run, Task 4's CI gates —
 fix available: a 10× here makes every search in this phase 10× cheaper, where more search
 cleverness buys single-digit factors at best.
 
+### Investigated: `resolve`'s churn is one defect said four ways — and the fix is blocked
+
+**Root cause, with evidence.** `nextDiscontinuity` guarded with `net === 0`, an exact
+comparison against a number reached by subtraction. When an item's production and
+consumption cancel, `net` is not zero but cancellation noise: measured
+**3.552713678800501e-15, exactly 16 × `Number.EPSILON`**. With `have` at zero that reads
+as a positive rate, so resolve schedules an `unpin` a nanosecond out; integrating a
+nanosecond of 3.5e-15/s lifts the stock to ~1e-24, which then reads as positive stock
+with a negative net and schedules a `drain` straight back to zero.
+
+The pair repeats for ever — **49.3% drains and 49.2% unpins, alternating 1:1 on the same
+two items** (`iron_rod` 25,059/25,003, `screw` 15,007/15,000), 117.7 loop iterations per
+resolve, each paying for a full solve.
+
+**A tolerance on that guard is a 79× speedup: `resolve` drops from 108.09 ms a call to
+1.37 ms**, and the workload that previously could not reach tier 2 in 120 seconds reaches
+it comfortably.
+
+**But it breaks spec E.6's split-invariance, and that is the real finding.** The same
+exact-comparison defect exists in *four* places, and the live-lock was hiding the other
+three by making every step infinitesimal — nothing was ever integrated across a stale
+classification:
+
+| # | Site | Test |
+|---|---|---|
+| 1 | `nextDiscontinuity` | `net === 0` |
+| 2 | `itemStateTag` EMPTY | `have <= 0` — while FULL has had a tolerance since Task 2 |
+| 3 | `fixpoint` pin seed | `liquid(...) <= 0` |
+| 4 | `fixpoint` pin loop | `liquid(...) <= 0` |
+
+Sites 3 and 4 decide `pinnedEmpty`, which decides whether a recipe is *contested* and so
+whether waterfall charges it the **2% reserve-floor tax**. An item resting at
+8.105460747032112e-14 — thirteen orders below its own cap — is therefore "stock", and
+whether it is flips as float residue accumulates. Downstream that is a 2% jump in
+production (`iron_plate` 0.6615 → 0.675/s), a genuine discontinuity in `solve`'s output
+that `resolve` cannot schedule an event for, because nothing actually happened.
+
+Measured consequence: the whole-window resolve takes one 1,489,947 ms step at 0.6615
+while the split arrangement re-solves at the boundary and gets 0.675, so the two disagree
+by 1.5%. Capping the step at 1000 ms restores agreement — which confirms the diagnosis and
+is not a fix, since a 1000 ms cap reinstates the very step count the change removed.
+
+**Unifying sites 2–4 on one notion of "empty" was tried and made things worse** — seven
+failures including basic integration — so the pin set's threshold is load-bearing in ways
+`itemStateTag`'s is not. All changes were reverted; the tree is green.
+
+**This is an architectural decision, not a patch.** `resolve`'s correctness currently
+rests on a live-lock, and the two cannot both be kept. The options, none cheap:
+
+1. **One notion of "empty", done properly** — reconcile the pin threshold with
+   `itemStateTag` and re-derive whatever depends on the exact boundary. Biggest change,
+   correct answer.
+2. **Bounded integration step** — accept a maximum `dtMs`, trading exactness for a bound.
+   Contradicts spec C.7's event-driven design and costs most of the speedup.
+3. **Make the noise not arise** — compute `net` so cancellation is exact (e.g. sum
+   production and consumption in a fixed order, or carry rationals), removing the
+   residue at source rather than tolerating it downstream.
+
 ### Still to do
 
-1. **Fix `resolve`'s event churn.** Measured above; blocks everything downstream.
+1. **Decide how to close `resolve`'s live-lock**, per the three options above.
 2. **Measure how deep the `r_eff` scale needs to go, and what it costs.** Scale 8 timed
    out unmeasured.
 2. **Solve the storage curves and scale the per-item base caps with tier** (B.7's `s`,
