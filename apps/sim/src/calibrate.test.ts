@@ -344,8 +344,17 @@ describe("the r_eff scan", () => {
   // plus its refinement is eleven, which is a ten-minute job and belongs at the CLI.
   const scales = [1, 8];
 
+  // Computed once and read by four assertions. `calibrate` is a pure function of its
+  // options and nothing here mutates the result, so re-running it per test bought
+  // nothing but three more scans -- about seventy seconds of the suite.
+  let shared: ReturnType<typeof calibrate> | undefined;
+  const scan = (): ReturnType<typeof calibrate> => {
+    shared ??= calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, rEffScales: scales });
+    return shared;
+  };
+
   it("scores every scale it is given and reports the scan", () => {
-    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, rEffScales: scales });
+    const result = scan();
     expect(result.rEffScan.map((s) => s.scale)).toEqual(
       expect.arrayContaining(scales),
     );
@@ -353,7 +362,7 @@ describe("the r_eff scan", () => {
   }, 600_000);
 
   it("picks the scale with the smallest curve miss, not the first or the largest", () => {
-    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, rEffScales: scales });
+    const result = scan();
     const best = result.rEffScan.reduce((a, b) => (b.miss < a.miss ? b : a));
     expect(result.rEffScale).toBe(best.scale);
   }, 600_000);
@@ -362,7 +371,7 @@ describe("the r_eff scan", () => {
   // came from the authored r_eff instead, the committed bundle would run on a pacing
   // decision the calibration never made.
   it("emits cost ratios derived from the scale it chose", () => {
-    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, rEffScales: scales });
+    const result = scan();
     const miner = result.derived.machineClasses!.find((c) => c.id === "miner")!;
     const authored = slice.machineClasses.find((c) => c.id === "miner")!;
     const m = Math.pow(authored.ladder.step, 1 / authored.ladder.interval);
@@ -385,6 +394,23 @@ describe("the r_eff scan", () => {
 });
 
 describe("the scan and check 8", () => {
+  // One scan, two assertions -- see the note in "the r_eff scan".
+  let shared: { result: ReturnType<typeof calibrate>; lines: string[] } | undefined;
+  const scan = (): { result: ReturnType<typeof calibrate>; lines: string[] } => {
+    if (shared === undefined) {
+      const lines: string[] = [];
+      const result = calibrate({
+        bundle: slice,
+        maxTier: 1,
+        tolerance: 0.05,
+        rEffScales: [0.001, 1],
+        onProgress: (line) => lines.push(line),
+      });
+      shared = { result, lines };
+    }
+    return shared;
+  };
+
   // r_eff below 1 + eps is spec D3's runaway: machine count grows linearly or faster
   // and production explodes. The scan is handed its grid, so nothing stops a caller
   // asking for a scale that lands there -- and a calibrator that emits content its own
@@ -393,27 +419,13 @@ describe("the scan and check 8", () => {
   // It reuses checkRunawayGrowth rather than re-deriving the floor, so the calibrator
   // and the validator cannot drift apart on what counts as runaway.
   it("refuses a scale that drives r_eff below the runaway floor", () => {
-    const lines: string[] = [];
-    const result = calibrate({
-      bundle: slice,
-      maxTier: 1,
-      tolerance: 0.05,
-      rEffScales: [0.001, 1],
-      onProgress: (line) => lines.push(line),
-    });
+    const { result, lines } = scan();
     expect(result.rEffScale).toBe(1);
     expect(lines.some((l) => l.includes("runaway"))).toBe(true);
   }, 600_000);
 
   it("does not simulate a scale it has already refused", () => {
-    const lines: string[] = [];
-    calibrate({
-      bundle: slice,
-      maxTier: 1,
-      tolerance: 0.05,
-      rEffScales: [0.001, 1],
-      onProgress: (line) => lines.push(line),
-    });
+    const { lines } = scan();
     const refused = lines.find((l) => l.includes("runaway"))!;
     expect(refused).toMatch(/ 0s$/);
   }, 600_000);
@@ -537,6 +549,10 @@ describe("the scan's use of the pre-filter", () => {
       maxTier: 3,
       tolerance: 0.05,
       rEffScales: [1, 0.5],
+      // This asserts which passes RAN, not how well they fitted, so the fallback's
+      // amounts search is capped to a couple of steps. Fitting it properly is the
+      // expensive half and proves nothing the other tests do not.
+      maxIterationsPerTier: 2,
       onProgress: (line) => lines.push(line),
     });
     for (const scale of ["1.000", "0.500"]) {
@@ -562,6 +578,7 @@ describe("the scan's use of the pre-filter", () => {
       maxTier: 1,
       tolerance: 0.05,
       rEffScales: [1, 2],
+      maxIterationsPerTier: 2,
       onProgress: (line) => lines.push(line),
     });
     expect(result.tiers).toHaveLength(1);
