@@ -208,13 +208,25 @@ export function deriveCostRatios(bundle: Bundle): { id: string; costRatio: numbe
  *
  * One scale for every class rather than fourteen independent knobs: there are ten tier
  * targets, so per-class freedom would be underdetermined and the answer arbitrary.
+ *
+ * It re-derives `costRatio` as well, and that is not a convenience. The engine runs on
+ * `costRatio`; `rEff` is the intent behind it. Moving one without the other produces a
+ * bundle that SIMULATES AS IF UNSCALED while reporting the new r_eff — a silent no-op
+ * that looks like a measurement. It cost a wrong pre-filter result before this was
+ * folded in. The two can now only move together.
+ *
+ * Math.pow is legal here for report.ts's reason: calibration is offline, and its output
+ * is a committed number that never re-enters a state-affecting path (spec E.4).
  */
 export function withREffScale(bundle: Bundle, scale: number): Bundle {
   return {
     ...bundle,
-    machineClasses: bundle.machineClasses.map((cls: MachineClass) =>
-      cls.rEff === undefined ? cls : { ...cls, rEff: 1 + (cls.rEff - 1) * scale },
-    ),
+    machineClasses: bundle.machineClasses.map((cls: MachineClass) => {
+      if (cls.rEff === undefined) return cls;
+      const rEff = 1 + (cls.rEff - 1) * scale;
+      const m = Math.pow(cls.ladder.step, 1 / cls.ladder.interval);
+      return { ...cls, rEff, costRatio: rEff * m };
+    }),
   };
 }
 
@@ -253,6 +265,146 @@ export function curveMiss(
     }
     const relative = Math.abs(tier.observed - tier.target) / tier.target;
     total += Math.max(0, relative - deadband);
+  }
+  return total;
+}
+
+/**
+ * How close to the maximum attainable cap the ceiling configuration fills to. Just
+ * under, because a requirement exactly at the cap is delivered only if the very last
+ * unit arrives before anything else consumes it, and that is a knife edge rather than
+ * a measurement.
+ */
+const CEILING_FILL = 0.98;
+
+/**
+ * A copy of `bundle` with every requirement up to `maxTier` set as large as a player
+ * could ever hold (ruling R7 pays deliveries from liquid stock, so that is the most
+ * that can ever be asked for).
+ *
+ * A tier's landing time in THIS configuration is the latest it can be made to land:
+ * its own requirement is at the maximum, and every earlier tier is also at its
+ * slowest, so the tier starts accumulating as late as it ever could.
+ */
+export function withAllMilestonesAtCap(bundle: Bundle, maxTier: number): Bundle {
+  const items = new Map(bundle.items.map((item) => [item.id, item]));
+  return {
+    ...bundle,
+    milestones: bundle.milestones.map((milestone) =>
+      milestone.tier > maxTier
+        ? milestone
+        : {
+            ...milestone,
+            requires: milestone.requires.map((requirement) => {
+              const item = items.get(requirement.item);
+              if (item === undefined) return requirement;
+              return {
+                ...requirement,
+                amount: Math.max(
+                  1,
+                  Math.floor(maxAttainableCap(bundle, item) * CEILING_FILL),
+                ),
+              };
+            }),
+          },
+    ),
+  };
+}
+
+export interface TierCeiling {
+  tier: number;
+  target: number;
+  /** null when the tier did not land inside the budget — its ceiling is beyond it. */
+  ceiling: number | null;
+}
+
+export interface CeilingOptions {
+  bundle: Bundle;
+  maxTier: number;
+  policy: PolicyName;
+  seed: number;
+  /** Hard ceiling on the ceiling run itself. See CEILING_BUDGET_CAP. */
+  maxCollections?: number;
+}
+
+/**
+ * The furthest the ceiling run will ever simulate, whatever the targets say.
+ *
+ * Its natural budget is the deepest target, since past that every unlanded tier has
+ * already proven its ceiling exceeds its own target. But that budget is authored data:
+ * a `targetCollectionsToTier` with a typo in it -- 1e9 rather than 1e3 -- asks for two
+ * and a half million years of simulated time, and the calibrator hangs instead of
+ * complaining. 5,000 collections is about four and a half years of play at three
+ * collections a day, past the end of any game this is pacing.
+ *
+ * Hitting the cap makes the filter PERMISSIVE, not wrong: a tier that has not landed is
+ * reported as clearing its target, so an over-long run costs at worst a wasted scoring
+ * pass. The asymmetry is deliberate -- a pre-filter that wrongly rejects loses the
+ * answer, one that wrongly admits only loses time.
+ */
+export const CEILING_BUDGET_CAP = 5_000;
+
+/**
+ * The latest each tier can be made to land, in ONE simulated run per bundle.
+ *
+ * This is the scan's pre-filter. A full amounts calibration per candidate scale costs
+ * tens of runs and, measured, took thirteen minutes on a single tier; this costs one
+ * run whose budget is the deepest target itself, because the moment the clock passes
+ * that target every tier still unlanded already has a ceiling above its own target
+ * (targets increase with tier). So it is cheap for exactly the reason it is useful.
+ *
+ * It is the same simulator, asked a cheaper question — "is this satisfiable at all",
+ * the same question check 9 asks — and not a second estimator of how long anything
+ * takes, which B.7 forbids.
+ */
+export function tierCeilings(options: CeilingOptions): TierCeiling[] {
+  const targets = options.bundle.pacing.targetCollectionsToTier;
+  const offlineCapMs = options.bundle.offlineCapHours * 60 * 60 * 1000;
+  const deepest = Math.min(
+    targets[options.maxTier - 1] ?? 0,
+    options.maxCollections ?? CEILING_BUDGET_CAP,
+  );
+
+  const capped = withAllMilestonesAtCap(options.bundle, options.maxTier);
+  const run = runSimulation({
+    policy: options.policy,
+    seed: options.seed,
+    content: indexContent(capped as ContentBundle),
+    untilTier: options.maxTier,
+    // Stopping at the deepest target is the whole economy of this: past it, every
+    // unlanded tier has already proven its ceiling exceeds its target.
+    maxSimMs: deepest * offlineCapMs,
+  });
+
+  const landed = new Map(run.tierTimes.map((t) => [t.tier, t.collections]));
+  const out: TierCeiling[] = [];
+  for (let tier = 1; tier <= options.maxTier; tier += 1) {
+    out.push({ tier, target: targets[tier - 1] ?? 0, ceiling: landed.get(tier) ?? null });
+  }
+  return out;
+}
+
+/**
+ * Whether every tier could be stretched to its target.
+ *
+ * A tier that did not land inside the budget counts as clearing it: its ceiling is
+ * beyond the budget, which is later than its target, not earlier. Reading "never" as
+ * a failure would reject precisely the scales that stretch the game the most.
+ */
+export function clearsTargets(ceilings: readonly TierCeiling[]): boolean {
+  return ceilings.every((c) => c.ceiling === null || c.ceiling >= c.target);
+}
+
+/**
+ * How far short of its targets a ceiling report falls, relatively and summed. Only
+ * used to rank scales that all failed the pre-filter, so that "fit the closest" means
+ * something rather than "fit whichever was tried first".
+ */
+export function ceilingShortfall(ceilings: readonly TierCeiling[]): number {
+  let total = 0;
+  for (const c of ceilings) {
+    if (c.ceiling === null || c.target <= 0) continue;
+    total += Math.max(0, (c.target - c.ceiling) / c.target);
   }
   return total;
 }
@@ -408,12 +560,11 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
   ): { miss: number; result?: AmountResult; refused?: string } => {
     const coarseTolerance = Math.max(tolerance, 0.15);
     const scaled = withREffScale(options.bundle, scale);
-    const ratios = deriveCostRatios(scaled);
-    const refused = refuse(withCostRatios(scaled, ratios));
+    const refused = refuse(scaled);
     if (refused !== null) return { miss: Number.POSITIVE_INFINITY, refused };
     const result = calibrateAmounts({
       ...options,
-      bundle: withCostRatios(scaled, ratios),
+      bundle: scaled,
       tolerance: coarse ? coarseTolerance : tolerance,
       maxIterationsPerTier: coarse ? 6 : options.maxIterationsPerTier,
       // A tighter leash while ranking. The scan gets dearer as the scale rises -- a
@@ -435,14 +586,52 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     return { miss: curveMiss(result.tiers, coarse ? coarseTolerance : 0), result };
   };
 
+  const solvable = options.bundle.milestones
+    .map((m) => m.tier)
+    .filter((tier) => tier <= targets.length)
+    .sort((a, b) => a - b);
+  const deepestTier = Math.min(
+    options.maxTier ?? (solvable[solvable.length - 1] ?? 0),
+    solvable[solvable.length - 1] ?? 0,
+  );
+
   let bestScale = 1;
+  const shortfalls = new Map<number, number>();
   if (authorsREff && options.solveREff !== false) {
     let best = Number.POSITIVE_INFINITY;
-    const consider = (scale: number): void => {
+    const consider = (scale: number, skipPreFilter = false): void => {
       // Announced before it runs, not only after. A single coarse point is a whole
       // amounts calibration and can take minutes, and the scan has eleven of them.
       report(`r_eff scale ${scale.toFixed(3).padStart(8)}  ...`);
       const started = Date.now();
+
+      // The pre-filter. One run instead of tens: if even a requirement at the cap
+      // lands a tier before its target, no requirement reaches the target and there is
+      // nothing to fit. Measured on the slice, this discards three of the four scales
+      // around the authored value without a single amounts calibration.
+      if (!skipPreFilter) {
+        const scaled = withREffScale(options.bundle, scale);
+        if (refuse(scaled) === null) {
+          const ceilings = tierCeilings({
+            bundle: scaled,
+            maxTier: deepestTier,
+            policy: options.policy ?? "greedy",
+            seed: options.seed ?? 42,
+          });
+          if (!clearsTargets(ceilings)) {
+            const short = ceilings.filter((c) => c.ceiling !== null && c.ceiling < c.target);
+            scan.push({ scale, miss: Number.POSITIVE_INFINITY });
+            shortfalls.set(scale, ceilingShortfall(ceilings));
+            report(
+              `r_eff scale ${scale.toFixed(3).padStart(8)}  ceiling too low, ` +
+                `${short.map((c) => `tier ${c.tier} tops out at ${c.ceiling!.toFixed(2)} of ${c.target}`).join("; ")}  ` +
+                `${((Date.now() - started) / 1000).toFixed(0)}s`,
+            );
+            return;
+          }
+        }
+      }
+
       const { miss, refused } = score(scale, true);
       scan.push({ scale, miss });
       const elapsed = `${((Date.now() - started) / 1000).toFixed(0)}s`;
@@ -461,8 +650,28 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     // from it inside the loop meant that as soon as one refinement won, the next was
     // measured relative to that instead of to the coarse winner -- a grid that walks,
     // whose shape depends on the order it happened to be evaluated in.
-    const coarseWinner = bestScale;
-    for (const scale of refinementScales(coarseWinner)) consider(scale);
+    if (Number.isFinite(best)) {
+      const coarseWinner = bestScale;
+      for (const scale of refinementScales(coarseWinner)) consider(scale);
+    } else {
+      // Nothing cleared. Rather than emit no solution, fit the scale that came
+      // closest and let its tiers report themselves as off target -- the numbers are
+      // then honest about what they could not do, which a silent failure is not.
+      let closest = bestScale;
+      let least = Number.POSITIVE_INFINITY;
+      for (const [scale, shortfall] of shortfalls) {
+        if (shortfall < least) {
+          least = shortfall;
+          closest = scale;
+        }
+      }
+      bestScale = closest;
+      report(
+        `no scale reached every target; fitting the closest, ${closest.toFixed(3)} ` +
+          `(short by ${least.toFixed(3)} of a target, summed)`,
+      );
+      consider(closest, true);
+    }
     report(`r_eff scale chosen: ${bestScale.toFixed(3)}`);
   }
 

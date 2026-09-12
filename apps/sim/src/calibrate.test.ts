@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { applyDerived, loadBundleDir } from "@manufactory/content";
+import { applyDerived, loadBundleDir, maxAttainableCap } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
 import { SLICE_BUNDLE_DIR } from "./bootstrap.js";
 import { indexContent } from "@manufactory/engine";
@@ -8,6 +8,9 @@ import {
   calibrate,
   curveMiss,
   refinementScales,
+  tierCeilings,
+  clearsTargets,
+  withAllMilestonesAtCap,
   REFINEMENT_FACTORS,
   UNREACHABLE_PENALTY,
   deriveCostRatios,
@@ -254,10 +257,24 @@ describe("withREffScale", () => {
     expect(rank(after)).toEqual(rank(before));
   });
 
-  it("is the identity at scale 1", () => {
+  it("leaves r_eff where it was at scale 1", () => {
     expect(withREffScale(slice, 1).machineClasses.map((c) => c.rEff)).toEqual(
       slice.machineClasses.map((c) => c.rEff),
     );
+  });
+
+  // The engine runs on costRatio and rEff is the intent behind it, so a bundle where
+  // they disagree simulates as if unscaled while reporting the new r_eff -- a silent
+  // no-op that looks like a measurement, which is exactly how the first version of the
+  // ceiling pre-filter produced a wrong answer.
+  it("moves costRatio with r_eff so the two can never disagree", () => {
+    for (const scale of [0.5, 1, 4]) {
+      for (const cls of withREffScale(slice, scale).machineClasses) {
+        if (cls.rEff === undefined) continue;
+        const m = Math.pow(cls.ladder.step, 1 / cls.ladder.interval);
+        expect(cls.costRatio).toBeCloseTo(cls.rEff * m, 12);
+      }
+    }
   });
 
   it("never lands on or below the runaway floor", () => {
@@ -437,4 +454,159 @@ describe("the scan's refinement pass", () => {
     // And that base is one of the coarse points -- the one that won.
     expect(coarse).toContain(Math.round(bases[0]! * 1000) / 1000);
   }, 900_000);
+});
+
+describe("withAllMilestonesAtCap", () => {
+  // The ceiling configuration: every requirement as large as the player could ever
+  // hold. A tier's landing time here is the latest it can be made to land, because a
+  // requirement is monotone in time and every earlier tier is also at its slowest.
+  it("fills each requirement to just under the item's maximum attainable cap", () => {
+    const capped = withAllMilestonesAtCap(slice, 3);
+    for (const milestone of capped.milestones.filter((m) => m.tier <= 3)) {
+      for (const requirement of milestone.requires) {
+        const item = slice.items.find((i) => i.id === requirement.item)!;
+        const cap = maxAttainableCap(slice, item);
+        expect(requirement.amount).toBeLessThan(cap);
+        expect(requirement.amount).toBeGreaterThan(cap * 0.9);
+      }
+    }
+  });
+
+  it("leaves tiers past the one being solved alone", () => {
+    const capped = withAllMilestonesAtCap(slice, 2);
+    expect(capped.milestones.filter((m) => m.tier > 2)).toEqual(
+      slice.milestones.filter((m) => m.tier > 2),
+    );
+  });
+
+  it("keeps every amount a whole number", () => {
+    for (const milestone of withAllMilestonesAtCap(slice, 10).milestones) {
+      for (const requirement of milestone.requires) {
+        expect(Number.isInteger(requirement.amount)).toBe(true);
+      }
+    }
+  });
+});
+
+describe("the ceiling pre-filter", () => {
+  // One run per scale instead of a whole amounts calibration. It answers only "could
+  // this scale reach the target at all", which is the question that discards most
+  // candidates -- and it is the same simulator asked a cheaper question, not a second
+  // estimate of how long anything takes.
+  it("reports a ceiling per tier", () => {
+    const ceilings = tierCeilings({ bundle: slice, maxTier: 2, policy: "greedy", seed: 42 });
+    expect(ceilings.map((c) => c.tier)).toEqual([1, 2]);
+    for (const c of ceilings) expect(c.target).toBeGreaterThan(0);
+  }, 300_000);
+
+  // A tier whose ceiling is below its target cannot be solved by any requirement, so
+  // the scale is rejected without ever fitting amounts to it.
+  it("rejects a scale whose ceiling falls short and keeps one that clears it", () => {
+    // Measured: at the authored r_eff, tier 3's ceiling is 7.72 against a target of
+    // 11; at twice the authored distance above the floor it is 12.45.
+    const authored = tierCeilings({ bundle: slice, maxTier: 3, policy: "greedy", seed: 42 });
+    const doubled = tierCeilings({
+      bundle: withREffScale(slice, 2),
+      maxTier: 3,
+      policy: "greedy",
+      seed: 42,
+    });
+    expect(clearsTargets(authored)).toBe(false);
+    expect(clearsTargets(doubled)).toBe(true);
+  }, 900_000);
+
+  // A tier that never lands inside the budget has a ceiling beyond it, which is later
+  // than its target, not earlier. Treating "never" as a failure would reject exactly
+  // the scales that stretch the game most.
+  it("counts a tier that did not land inside the budget as clearing its target", () => {
+    expect(clearsTargets([{ tier: 1, target: 2, ceiling: null }])).toBe(true);
+  });
+});
+
+describe("the scan's use of the pre-filter", () => {
+  // Both of these scales fall short of tier 3 -- measured ceilings 7.72 at scale 1 and
+  // 9.39 at 0.5, against a target of 11 -- so both are filtered out, and the fallback
+  // then fits the closer of the two. That covers the rejection path AND the fallback
+  // in one pass, and it is deliberately the CHEAP pair: scoring scale 2 at tier 3 is
+  // the thirteen-minute case this pre-filter exists to avoid, and putting it in the
+  // suite would be paying the very cost being optimised away.
+  it("does not fit amounts to a scale whose ceiling cannot reach the target", () => {
+    const lines: string[] = [];
+    calibrate({
+      bundle: slice,
+      maxTier: 3,
+      tolerance: 0.05,
+      rEffScales: [1, 0.5],
+      onProgress: (line) => lines.push(line),
+    });
+    for (const scale of ["1.000", "0.500"]) {
+      expect(
+        lines.some((l) => l.includes(`scale    ${scale}`) && l.includes("ceiling too low")),
+      ).toBe(true);
+    }
+    // The giveaway that neither was fitted during the scan: the only tier lines in the
+    // whole log come from the single fallback pass, not from two scoring passes.
+    expect(lines.filter((l) => /^ {2}\[scale .*\] tier +1 /.test(l))).toHaveLength(1);
+  }, 900_000);
+
+  it("still solves when no scale clears, rather than emitting nothing", () => {
+    const lines: string[] = [];
+    // Targets nothing can reach, but inside the budget cap so the pre-filter can
+    // observe the shortfall rather than running out of simulated time.
+    const impossible: typeof slice = {
+      ...slice,
+      pacing: { ...slice.pacing, targetCollectionsToTier: [400, 400, 400] },
+    };
+    const result = calibrate({
+      bundle: impossible,
+      maxTier: 1,
+      tolerance: 0.05,
+      rEffScales: [1, 2],
+      onProgress: (line) => lines.push(line),
+    });
+    expect(result.tiers).toHaveLength(1);
+    expect(lines.some((l) => l.includes("no scale"))).toBe(true);
+  }, 1_800_000);
+});
+
+
+describe("the ceiling run's own budget", () => {
+  // Its natural budget is the deepest target, which is authored data. A typo there --
+  // 1e9 instead of 1e3 -- would ask for two and a half million years of simulated time
+  // and hang the calibrator instead of complaining.
+  it("never simulates past the cap, whatever the targets ask for", () => {
+    const absurd: typeof slice = {
+      ...slice,
+      pacing: { ...slice.pacing, targetCollectionsToTier: [1e9, 1e9, 1e9] },
+    };
+    const started = Date.now();
+    const ceilings = tierCeilings({
+      bundle: absurd,
+      maxTier: 1,
+      policy: "greedy",
+      seed: 42,
+      maxCollections: 3,
+    });
+    expect(Date.now() - started).toBeLessThan(60_000);
+    expect(ceilings).toHaveLength(1);
+  }, 120_000);
+
+  // Permissive by construction: hitting the cap reports "did not land", which counts as
+  // clearing. A pre-filter that wrongly rejects loses the answer; one that wrongly
+  // admits only loses a scoring pass.
+  it("reports a tier it ran out of budget for as clearing, not failing", () => {
+    const absurd: typeof slice = {
+      ...slice,
+      pacing: { ...slice.pacing, targetCollectionsToTier: [1e9] },
+    };
+    const ceilings = tierCeilings({
+      bundle: absurd,
+      maxTier: 1,
+      policy: "greedy",
+      seed: 42,
+      maxCollections: 0.001,
+    });
+    expect(ceilings[0]!.ceiling).toBeNull();
+    expect(clearsTargets(ceilings)).toBe(true);
+  }, 120_000);
 });
