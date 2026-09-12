@@ -491,11 +491,73 @@ two levels:
   curve's shape.
 - **Milestone amounts set each tier's absolute placement.** What is already built.
 
+### `r_eff` is solved by scanning — DONE, and the tier-3 ceiling is U-shaped
+
+§D3 amended to defer to B.7: calibration solves `r_eff`, the author writes only the
+ladder. `sim calibrate` scans one scale on `r_eff − 1` across every class and scores each
+candidate on the whole tier curve with the amounts re-solved underneath it.
+
+**It is a scan and not a bisection because the response is not monotone**, and the
+tier-3 ceiling — the latest a tier can be made to land, with its requirement at the most
+a player can ever hold — shows exactly why:
+
+| scale on `r_eff − 1` | `r_eff` (miner) | tier 3 ceiling | vs. target 11 |
+|---|---|---|---|
+| 0.25 | 1.011672 | 10.79 | short |
+| 0.50 | 1.023344 | 9.39 | short |
+| 1.00 | 1.046688 | **7.72** | short — the authored value, and the worst of the four |
+| 2.00 | 1.093376 | **12.45** | **reachable** |
+
+The ceiling is **U-shaped with its minimum at the authored `r_eff`**. Both directions
+lengthen tier 3 and they do it by opposite mechanisms: raising `r_eff` slows production;
+lowering it makes machines cheap enough that `greedy` pours its currency into machines
+instead of banking it. A bisection would have walked downhill into the minimum and
+reported that the target was unreachable.
+
+**Scale 2 clears the target**, so tier 3 is solvable — the phase is not blocked on
+content after all. The scan finds it, given the time to look.
+
+### Three defects the scan found in itself
+
+1. **The ranking pass's own noise swamped its signal.** Fitting amounts to a 15%
+   tolerance accumulates up to 0.45 of noise across three tiers — larger than the
+   differences being ranked. `curveMiss` now measures from the edge of the fitting
+   tolerance, so only misses the fitting could not close survive.
+2. **Offered a scale of 0.001, the scan chose it** — `r_eff` 1.00005, deep inside D3's
+   runaway, which scores well precisely because a runaway game hits its milestones
+   promptly. Every candidate now goes through `checkRunawayGrowth`, the same function
+   `content:check` runs; a refused scale is never simulated, and if every scale is
+   refused the run throws rather than emitting a solution.
+3. **The refinement grid walked.** Each of its four points was computed from a
+   `bestScale` the loop was itself mutating, so as soon as one refinement won, the next
+   was measured relative to that instead of to the coarse winner.
+
+### The blocker is now runtime, not content
+
+A single coarse point at scale 2 ran **13 minutes at 100% CPU on tier 3 alone**; tiers 1
+and 2 took seconds each. A full eleven-point scan over ten tiers is an overnight job, not
+an hour's.
+
+The cheap fix is visible in the table above: the ceiling is one run per scale, and it
+answers *"can this scale reach the target at all"* on its own. Used as a pre-filter it
+would have discarded 0.25, 0.5 and 1.0 without a single amounts calibration and gone
+straight to 2. That is not a second estimator of duration — it is the same simulator,
+asked a cheaper question.
+
+### Still open: `SET_RESERVE` is implemented and no policy emits it
+
+Same shape as `purchaseIntervalLateSeconds` in Task 2: the action exists in the engine
+(`applySetReserve`), is wired into `sim play`, and is reachable from no automated policy.
+Milestones are paid from liquid stock, so reserving a required item stops downstream
+recipes eating it — which is exactly the "bank toward the milestone" lever, and the one
+whose absence produces the low-`r_eff` half of the U above. **Every calibrated number is
+currently tuned for a player who never uses a core mechanic.** Whether `greedy` should
+reserve is a spec decision about E.2's policy definitions, not a calibration one. The
+size of the effect is unmeasured.
+
 ### Still to do
 
-1. **Solve `r_eff`** against the inter-tier ratio, then re-solve amounts per tier. This is
-   the one that unblocks tiers 3–10; resolve the D3/B.7 contradiction in the design doc in
-   the same commit.
+1. **Pre-filter the scan by ceiling**, then re-run the full ten-tier calibration.
 2. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is now a
    validated constraint, which is what makes that search well posed, and
    `pacing.storageBindingCadence` (12 machines between storage binding) is the target.
