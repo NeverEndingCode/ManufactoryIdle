@@ -352,6 +352,20 @@ export interface CeilingOptions {
 export const CEILING_BUDGET_CAP = 5_000;
 
 /**
+ * The largest storage tier factor worth searching.
+ *
+ * `capPerTier` compounds: at 64 a tier-9 item holds 64^9 -- about 1e16 -- times its
+ * authored cap. Past that the search is no longer proposing a game, and each probe is
+ * expensive because a factor that big clears the early tiers and so simulates most of
+ * the run before failing. Measured: three probes at scale 0.5 (2, 4, 8) took 4 s, 206 s
+ * and 155 s and were all short, on a search that would otherwise have doubled 24 times.
+ *
+ * Hitting this bound means the scale cannot be rescued by storage at all, which is a
+ * result worth reporting quickly rather than an answer worth grinding for.
+ */
+export const MAX_CAP_PER_TIER = 64;
+
+/**
  * The latest each tier can be made to land, in ONE simulated run per bundle.
  *
  * This is the scan's pre-filter. A full amounts calibration per candidate scale costs
@@ -444,6 +458,12 @@ export interface ClearingOptions {
   seed?: number;
   /** Never search below this. Defaults to 1: a cap factor under 1 shrinks caps. */
   floor?: number;
+  /**
+   * Never search above this. Without it a hopeless predicate is answered by doubling
+   * until `maxExpansions` runs out, and here each doubling is a simulated run that gets
+   * MORE expensive as the value rises.
+   */
+  ceiling?: number;
   maxExpansions?: number;
   maxIterations?: number;
   /**
@@ -481,6 +501,7 @@ export function smallestClearing(
   options: ClearingOptions = {},
 ): ClearingResult {
   const floor = options.floor ?? 1;
+  const ceiling = options.ceiling ?? Number.POSITIVE_INFINITY;
   const maxExpansions = options.maxExpansions ?? 24;
   const maxIterations = options.maxIterations ?? 24;
   const precision = options.precision ?? 2e-2;
@@ -521,6 +542,7 @@ export function smallestClearing(
   let bad = seed;
   for (let i = 0; i < maxExpansions; i += 1) {
     const candidate = bad * 2;
+    if (candidate > ceiling) break;
     if (test(candidate)) {
       let good = candidate;
       for (let j = 0; j < maxIterations && good - bad > good * precision; j += 1) {
@@ -794,6 +816,14 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       seed: options.seed ?? 42,
     });
 
+  /** Which tier a ceiling report falls short at, for the probe log. */
+  const firstShort = (ceilings: readonly TierCeiling[]): string => {
+    const short = ceilings.find((c) => c.ceiling !== null && c.ceiling < c.target * headroom);
+    return short === undefined
+      ? "no tier short"
+      : `tier ${short.tier} tops out at ${short.ceiling!.toFixed(2)} of ${short.target}`;
+  };
+
   /** The smallest capPerTier clearing every target at this scale, or null if none does. */
   const requiredCap = (scale: number, bundleAtScale: Bundle): number | null => {
     if (holdCap) {
@@ -802,20 +832,33 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       shortfalls.set(scale, ceilingShortfall(ceilings));
       return null;
     }
+    // Reported per probe, because "short" alone says nothing about WHERE the game
+    // stops, and each probe here costs a simulated run of most of the game.
+    let lastShort = "";
     const solved = smallestClearing(
-      (value) => clearsTargets(ceilingsAt(bundleAtScale, value), headroom),
+      (value) => {
+        const ceilings = ceilingsAt(bundleAtScale, value);
+        const ok = clearsTargets(ceilings, headroom);
+        if (!ok) lastShort = firstShort(ceilings);
+        return ok;
+      },
       {
         seed: warmSeed,
         floor: 1,
+        ceiling: MAX_CAP_PER_TIER,
         onProbe: (value, cleared, elapsedMs) =>
           report(
             `  [scale ${scale.toFixed(3)}] capPerTier ${value.toFixed(4).padStart(9)}  ` +
-              `${cleared ? "clears" : "short "}  ${(elapsedMs / 1000).toFixed(0)}s`,
+              `${cleared ? "clears" : `short: ${lastShort}`}  ${(elapsedMs / 1000).toFixed(0)}s`,
           ),
       },
     );
     if (!solved.cleared) {
       shortfalls.set(scale, ceilingShortfall(ceilingsAt(bundleAtScale, solved.value)));
+      report(
+        `  [scale ${scale.toFixed(3)}] no capPerTier up to ${MAX_CAP_PER_TIER} clears; ` +
+          `${lastShort}`,
+      );
       return null;
     }
     warmSeed = solved.value;
