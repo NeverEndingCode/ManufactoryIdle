@@ -849,9 +849,51 @@ rests on a live-lock, and the two cannot both be kept. The options, none cheap:
    production and consumption in a fixed order, or carry rationals), removing the
    residue at source rather than tolerating it downstream.
 
+### Fixed, at the source — **108 ms a call to 1.37**
+
+Option 3, but not where it was first aimed. The clamp was a plausible culprit and the
+measurement ruled it out: of 20 crumbs in 1,912 random flows, **nine had consumption at
+or below production**, so no clamp could have produced them. They are ordinary
+cancellation between two independently-rounded sums, not one bad call site — which also
+means "make the arithmetic exact" would have meant rationals throughout the solver.
+
+What works instead is snapping the crumb in `computeFlows`, **the one place `net` is
+created**, and nowhere else. That choice is the whole point: `net` is read by `resolve`'s
+scheduler, the bottleneck reporter and the pin loop, and a tolerance at each reader is
+three chances to disagree about what "balanced" means. One authority at the source lets
+every reader keep testing `=== 0`.
+
+Two earlier attempts, both instructive:
+
+- **Tolerancing `resolve`'s own `net === 0`** bought the same 79× and broke
+  split-invariance by 1.5%. An item resting at 8.1e-14 is not pinned by `fixpoint`'s
+  exact `liquid <= 0`, so its consumer dodges waterfall's 2% reserve-floor tax; the
+  whole-window resolve integrated 1,489,947 ms at the pre-flip rate while the split
+  arrangement re-solved and got the post-flip one.
+- **Unifying the pin threshold with `itemStateTag`** then broke seven more tests. The pin
+  boundary is load-bearing in ways `itemStateTag`'s is not.
+
+Snapping at source fixes both without touching either.
+
+| | before | after |
+|---|---|---|
+| `resolve` | 108.09 ms/call | **1.37 ms/call** |
+| loop iterations per resolve | 117.7 | — |
+| `calibrate.test.ts` | 455 s | 328 s |
+| the two skipped joint tests | unaffordable | **passing** |
+
+The knife-edge test's window moves from 730,075 to 745,000. **Its assertions are
+untouched**: the milestone arrives at 1,489,947.091 ms rather than 1,460,148.148, because
+the old arrival was itself the artefact — re-solving every nanosecond kept flipping the
+item off its pin, so `iron_plate` ran at 0.675/s instead of its true 0.6615/s.
+
+A new fuzz property pins the class: a net rate is either meaningfully non-zero or exactly
+zero, never a crumb in between. It fails against the old code with a concrete
+counterexample.
+
 ### Still to do
 
-1. **Decide how to close `resolve`'s live-lock**, per the three options above.
+1. **Re-run the full ten-tier calibration and commit `derived.yaml`** — now affordable.
 2. **Measure how deep the `r_eff` scale needs to go, and what it costs.** Scale 8 timed
    out unmeasured.
 2. **Solve the storage curves and scale the per-item base caps with tier** (B.7's `s`,
