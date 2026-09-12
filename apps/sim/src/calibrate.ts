@@ -725,18 +725,6 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
   };
 }
 
-function withCostRatios(bundle: Bundle, ratios: { id: string; costRatio: number }[]): Bundle {
-  if (ratios.length === 0) return bundle;
-  const byId = new Map(ratios.map((r) => [r.id, r.costRatio]));
-  return {
-    ...bundle,
-    machineClasses: bundle.machineClasses.map((cls: MachineClass) => {
-      const costRatio = byId.get(cls.id);
-      return costRatio === undefined ? cls : { ...cls, costRatio };
-    }),
-  };
-}
-
 /**
  * Solve the delivery requirements so the observed curve matches
  * `pacing.targetCollectionsToTier` (spec B.7).
