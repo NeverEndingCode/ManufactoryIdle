@@ -7,6 +7,8 @@ import {
   bisectMonotone,
   calibrate,
   curveMiss,
+  refinementScales,
+  REFINEMENT_FACTORS,
   UNREACHABLE_PENALTY,
   deriveCostRatios,
   withREffScale,
@@ -398,4 +400,41 @@ describe("the scan and check 8", () => {
     const refused = lines.find((l) => l.includes("runaway"))!;
     expect(refused).toMatch(/ 0s$/);
   }, 600_000);
+});
+
+describe("the scan's refinement pass", () => {
+  // `refinementScales` takes the winner as a parameter precisely so the drift cannot
+  // happen: the four points are one base times four factors, by construction.
+  it("splits the octave either side of the winner", () => {
+    expect(refinementScales(4)).toEqual([2.4, 3.2, 5, 6.4]);
+    expect(refinementScales(1)).toEqual([...REFINEMENT_FACTORS]);
+  });
+
+  it("keeps every refinement relative to one base", () => {
+    const scales = refinementScales(7);
+    for (const [i, scale] of scales.entries()) {
+      expect(scale / REFINEMENT_FACTORS[i]!).toBeCloseTo(7, 9);
+    }
+  });
+
+  // A weaker guard than the two above, and deliberately labelled as one: it only bites
+  // if a refinement point actually wins, which depends on the bundle and the grid. It
+  // is here because it exercises the wiring -- that `calibrate` really does run four
+  // refinements off one base -- not because it can catch the drift on its own.
+  it("runs four refinements off a single coarse winner (wiring only)", () => {
+    const coarse = [1, 8];
+    const result = calibrate({
+      bundle: slice,
+      maxTier: 1,
+      tolerance: 0.05,
+      rEffScales: coarse,
+    });
+    const refinements = result.rEffScan.slice(coarse.length).map((s) => s.scale);
+    expect(refinements).toHaveLength(4);
+    // Every refinement must be one fixed base times its own factor.
+    const bases = refinements.map((scale, i) => scale / [0.6, 0.8, 1.25, 1.6][i]!);
+    for (const base of bases) expect(base).toBeCloseTo(bases[0]!, 9);
+    // And that base is one of the coarse points -- the one that won.
+    expect(coarse).toContain(Math.round(bases[0]! * 1000) / 1000);
+  }, 900_000);
 });

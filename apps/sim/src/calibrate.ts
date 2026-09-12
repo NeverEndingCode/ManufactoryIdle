@@ -361,6 +361,20 @@ interface AmountResult {
  */
 const COARSE_SCALES = [0.5, 1, 2, 4, 8, 16, 32];
 
+/**
+ * Where to look once the coarse grid has a winner. The grid steps by 2x, so the answer
+ * lies somewhere in the octave either side of it, and these four split that interval.
+ *
+ * A function taking the winner explicitly rather than four multiplications against a
+ * mutable variable: the whole point is that every refinement is relative to the same
+ * base, and a parameter makes that true by construction rather than by discipline.
+ */
+export const REFINEMENT_FACTORS = [0.6, 0.8, 1.25, 1.6] as const;
+
+export function refinementScales(coarseWinner: number): number[] {
+  return REFINEMENT_FACTORS.map((factor) => coarseWinner * factor);
+}
+
 export function calibrate(options: CalibrateOptions): CalibrationResult {
   const report = options.onProgress ?? ((): void => {});
   const tolerance = options.tolerance ?? 0.05;
@@ -443,9 +457,12 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       }
     };
     for (const scale of options.rEffScales ?? COARSE_SCALES) consider(scale);
-    // Refine around the winner. The coarse grid steps by 2x, so half a step either way
-    // is the whole interval the winner could be hiding in.
-    for (const factor of [0.6, 0.8, 1.25, 1.6]) consider(bestScale * factor);
+    // Read ONCE. `consider` writes to `bestScale`, so computing each refinement point
+    // from it inside the loop meant that as soon as one refinement won, the next was
+    // measured relative to that instead of to the coarse winner -- a grid that walks,
+    // whose shape depends on the order it happened to be evaluated in.
+    const coarseWinner = bestScale;
+    for (const scale of refinementScales(coarseWinner)) consider(scale);
     report(`r_eff scale chosen: ${bestScale.toFixed(3)}`);
   }
 
