@@ -358,6 +358,11 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       bundle: withCostRatios(scaled, ratios),
       tolerance: coarse ? Math.max(tolerance, 0.15) : tolerance,
       maxIterationsPerTier: coarse ? 6 : options.maxIterationsPerTier,
+      // A tighter leash while ranking. The scan gets dearer as the scale rises -- a
+      // slower game means every run simulates for longer -- and the coarse pass only
+      // has to order candidates, so it does not need to watch an overshoot play out to
+      // six times its target.
+      overrunBudget: coarse ? 3 : options.overrunBudget,
       // The scan makes tens of inner passes; their per-step lines would bury the scan.
       onProgress: coarse ? undefined : options.onProgress,
     });
@@ -368,9 +373,16 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
   if (authorsREff && options.solveREff !== false) {
     let best = Number.POSITIVE_INFINITY;
     const consider = (scale: number): void => {
+      // Announced before it runs, not only after. A single coarse point is a whole
+      // amounts calibration and can take minutes, and the scan has eleven of them.
+      report(`r_eff scale ${scale.toFixed(3).padStart(8)}  ...`);
+      const started = Date.now();
       const { miss } = score(scale, true);
       scan.push({ scale, miss });
-      report(`r_eff scale ${scale.toFixed(3).padStart(8)}  curve miss ${miss.toFixed(4)}`);
+      report(
+        `r_eff scale ${scale.toFixed(3).padStart(8)}  curve miss ${miss.toFixed(4)}  ` +
+          `${((Date.now() - started) / 1000).toFixed(0)}s`,
+      );
       if (miss < best) {
         best = miss;
         bestScale = scale;
