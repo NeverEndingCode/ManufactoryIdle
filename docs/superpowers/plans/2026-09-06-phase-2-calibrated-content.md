@@ -893,24 +893,23 @@ counterexample.
 
 ### Still to do
 
-1. **Re-run the full ten-tier calibration and commit `derived.yaml`** — now affordable.
-2. **Measure how deep the `r_eff` scale needs to go, and what it costs.** Scale 8 timed
-   out unmeasured.
-2. **Solve the storage curves and scale the per-item base caps with tier** (B.7's `s`,
-   `sc`, `q`) if step 1 says `r_eff` alone cannot reach tier 10, or if the `r_eff` it
-   needs makes the early tiers absurd.
-3. Re-run the full calibration and commit `derived.yaml` with its target-vs-observed
-   claim.
-4. Decide `SET_RESERVE` / `REORDER_PRIORITY` — still implemented and still emitted by no
-   policy.
-2. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is now a
-   validated constraint, which is what makes that search well posed, and
-   `pacing.storageBindingCadence` (12 machines between storage binding) is the target.
-   Raising the ceiling here also widens the band amounts can reach.
-3. Re-run the full ten-tier calibration and commit `derived.yaml` with its
-   target-versus-observed claim. Tier 1 and 2 already calibrate; committing a partial
-   block would put a stale `observed` column next to eight unsolved tiers, which is worse
-   than none.
+This list had grown three copies of "re-run the calibration" and a storage item that is
+now half done, from being edited in place as each piece landed. Corrected:
+
+1. **Run the full ten-tier calibration and commit `derived.yaml`.** This is Task 3's
+   actual deliverable and the only thing between here and a paced game. Everything
+   needed for it is built and, at 1.37 ms a resolve, affordable.
+2. **Decide what remains of B.7's storage list.** `capPerTier` is solved jointly with
+   `r_eff`. The cost curves — `capGrowth`, `costGrowth`, `baseCostAmount`, `maxLevel` on
+   both storage and Quantum Storage — are still authored, and
+   `pacing.storageBindingCadence` (12 machines between storage binding) is read by
+   nothing. Either solve them against that target or drop the intent; leaving an
+   authored pacing knob that nothing consumes is the `purchaseIntervalLateSeconds`
+   pattern for a third time.
+3. **Decide `SET_RESERVE` and `REORDER_PRIORITY`.** Both are implemented in the engine
+   and reachable from `sim play`, and no automated policy emits either. Every calibrated
+   number is therefore tuned for a player who never uses two core mechanics. A spec
+   decision about E.2's policy definitions, not a calibration one.
 
 **Do not hand-tune `curves.yaml` values to move a tier time.** The shape constraint is an
 authoring decision; the numbers inside it are the calibrator's output.
