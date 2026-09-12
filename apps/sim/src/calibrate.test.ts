@@ -610,3 +610,28 @@ describe("the ceiling run's own budget", () => {
     expect(clearsTargets(ceilings)).toBe(true);
   }, 120_000);
 });
+
+describe("the ceiling run's early exit", () => {
+  // A scale is rejected the moment ONE tier tops out below its target; everything
+  // simulated after that is wasted. On the full ten-tier slice, scale 0.5 was rejected
+  // on tier 3 but kept simulating to the deepest target: 899 seconds to learn something
+  // the first three tiers had already settled.
+  it("stops at the first tier that tops out below its target", () => {
+    const started = Date.now();
+    const ceilings = tierCeilings({
+      bundle: slice,
+      maxTier: 10,
+      policy: "greedy",
+      seed: 42,
+    });
+    expect(clearsTargets(ceilings)).toBe(false);
+    const failed = ceilings.find((c) => c.ceiling !== null && c.ceiling < c.target)!;
+    expect(failed.tier).toBeLessThanOrEqual(3);
+    // Every tier past the failure is unevaluated, because it was not worth evaluating.
+    for (const c of ceilings.filter((c) => c.tier > failed.tier)) {
+      expect(c.ceiling).toBeNull();
+    }
+    // The whole point: it must not have walked the remaining seven tiers to find out.
+    expect(Date.now() - started).toBeLessThan(120_000);
+  }, 300_000);
+});

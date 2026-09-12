@@ -364,22 +364,44 @@ export function tierCeilings(options: CeilingOptions): TierCeiling[] {
     targets[options.maxTier - 1] ?? 0,
     options.maxCollections ?? CEILING_BUDGET_CAP,
   );
+  const content = indexContent(
+    withAllMilestonesAtCap(options.bundle, options.maxTier) as ContentBundle,
+  );
 
-  const capped = withAllMilestonesAtCap(options.bundle, options.maxTier);
-  const run = runSimulation({
-    policy: options.policy,
-    seed: options.seed,
-    content: indexContent(capped as ContentBundle),
-    untilTier: options.maxTier,
-    // Stopping at the deepest target is the whole economy of this: past it, every
-    // unlanded tier has already proven its ceiling exceeds its target.
-    maxSimMs: deepest * offlineCapMs,
-  });
-
-  const landed = new Map(run.tierTimes.map((t) => [t.tier, t.collections]));
   const out: TierCeiling[] = [];
   for (let tier = 1; tier <= options.maxTier; tier += 1) {
-    out.push({ tier, target: targets[tier - 1] ?? 0, ceiling: landed.get(tier) ?? null });
+    out.push({ tier, target: targets[tier - 1] ?? 0, ceiling: null });
+  }
+
+  // Tier by tier, resuming from the previous tier's checkpoint, so that the run can be
+  // abandoned the moment the answer is known. ONE tier topping out below its target
+  // rejects the scale, and everything simulated after that is wasted: on the ten-tier
+  // slice, scale 0.5 was rejected on tier 3 and then kept going to the deepest target,
+  // spending 899 seconds to learn what the first three tiers had already settled.
+  let checkpoint: RunCheckpoint | undefined;
+  for (let tier = 1; tier <= options.maxTier; tier += 1) {
+    const run = runSimulation({
+      policy: options.policy,
+      seed: options.seed,
+      content,
+      untilTier: tier,
+      // Absolute, and stopping at the deepest target: past it, every unlanded tier has
+      // already proven its ceiling exceeds its own target.
+      maxSimMs: deepest * offlineCapMs,
+      startFrom: checkpoint,
+      captureCheckpoints: true,
+    });
+
+    const mark = run.tierTimes.find((t) => t.tier === tier);
+    // Did not land inside the budget, so its ceiling is beyond it — which clears its
+    // target, and leaves no checkpoint to carry deeper. Nothing further is knowable.
+    if (mark === undefined) return out;
+
+    out[tier - 1]!.ceiling = mark.collections;
+    if (mark.collections < out[tier - 1]!.target) return out;
+
+    checkpoint = run.checkpoints.find((c) => c.tier === tier);
+    if (checkpoint === undefined) return out;
   }
   return out;
 }
