@@ -481,7 +481,7 @@ describe("withAllMilestonesAtCap", () => {
     for (const milestone of capped.milestones.filter((m) => m.tier <= 3)) {
       for (const requirement of milestone.requires) {
         const item = slice.items.find((i) => i.id === requirement.item)!;
-        const cap = maxAttainableCap(slice, item);
+        const cap = maxAttainableCap(slice, item, Math.max(0, milestone.tier - 1));
         expect(requirement.amount).toBeLessThan(cap);
         expect(requirement.amount).toBeGreaterThan(cap * 0.9);
       }

@@ -192,7 +192,7 @@ export function levelCostRange(
 }
 
 /**
- * cap = base * capGrowth^level * capPerTier^tier (spec 3.3 and B.4, as amended).
+ * cap = base * capGrowth^level * capPerTier^playerTier (spec 3.3 and B.4, as amended).
  *
  * The tier factor is Phase 2's. Without it the most a player can ever bank does not
  * grow with progression -- the slice's mean base liquid cap by tier runs 3000, 3000,
@@ -200,6 +200,18 @@ export function levelCostRange(
  * tier 0 -- while production accelerates the whole way. Tier ceilings therefore
  * asymptote (measured: 87.16, 105.15, 106.90, 109.03) against targets that double, and
  * no milestone amount can stretch a tier past its ceiling.
+ *
+ * **It is the PLAYER's tier, not the item's**, and that distinction was settled by
+ * measurement. Keyed on the item's tier, a milestone requiring a low-tier item got
+ * almost no help: the slice's tier-2 milestone asks for `iron_rod`, a tier-0 item, so
+ * its cap was multiplied by capPerTier^0 = 1 and its ceiling could not be raised by any
+ * factor at all -- capPerTier 4 was still short after 259 seconds of measuring. A
+ * milestone's ceiling is set by its LOWEST-tier requirement, which is routinely far
+ * below the milestone's own tier.
+ *
+ * Keyed on progression, every cap grows as the player advances, so a tier-k milestone
+ * can demand capPerTier^k more of anything. It is also the more natural mechanic:
+ * warehouses get bigger as the factory does.
  *
  * Authored per-item caps stay the RELATIVE intent -- screws hold more than rotors --
  * and `capPerTier` is the single number calibration solves for the progression scaling.
@@ -212,10 +224,10 @@ export function capAtLevel(
   base: number,
   curve: StorageCurveDef,
   level: number,
-  tier = 0,
+  playerTier = 0,
 ): Dec {
   const byLevel = D(base).times(powIntDecimal(curve.capGrowth, level));
   const perTier = curve.capPerTier;
-  if (perTier === undefined || perTier === 1 || tier <= 0) return byLevel;
-  return byLevel.times(powIntDecimal(perTier, tier));
+  if (perTier === undefined || perTier === 1 || playerTier <= 0) return byLevel;
+  return byLevel.times(powIntDecimal(perTier, playerTier));
 }

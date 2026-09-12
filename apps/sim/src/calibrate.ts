@@ -300,9 +300,16 @@ export function withAllMilestonesAtCap(bundle: Bundle, maxTier: number): Bundle 
               if (item === undefined) return requirement;
               return {
                 ...requirement,
+                // At the tier BELOW this milestone: the player banks toward tier k
+                // while still on tier k-1, and caps grow with progression (spec B.4 as
+                // amended). Using this milestone's own tier would set a requirement
+                // the player cannot hold until after they have already delivered it.
                 amount: Math.max(
                   1,
-                  Math.floor(maxAttainableCap(bundle, item) * CEILING_FILL),
+                  Math.floor(
+                    maxAttainableCap(bundle, item, Math.max(0, milestone.tier - 1)) *
+                      CEILING_FILL,
+                  ),
                 ),
               };
             }),
@@ -975,7 +982,7 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
       for (const requirement of candidate.milestones.find((m) => m.tier === tier)!.requires) {
         const item = items.get(requirement.item);
         if (item === undefined) continue;
-        const cap = maxAttainableCap(options.bundle, item);
+        const cap = maxAttainableCap(options.bundle, item, Math.max(0, tier - 1));
         if (requirement.amount > cap) {
           return `${requirement.item} ${requirement.amount} is above the maximum ${cap.toFixed(0)} a player can hold`;
         }

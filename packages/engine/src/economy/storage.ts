@@ -52,7 +52,7 @@ export function storageCap(
     item.baseStorageCap,
     content.bundle.storage,
     numOf(state.storageLevel, itemId),
-    item.tier,
+    state.tier,
   );
 }
 
@@ -68,7 +68,7 @@ export function quantumCap(
     item.baseQuantumCap,
     content.bundle.quantumStorage,
     numOf(state.qsLevel, item.lane),
-    item.tier,
+    state.tier,
   );
 }
 

@@ -222,10 +222,9 @@ describe("checkStorageLadderClimbable (check 12)", () => {
   });
 });
 
-// Phase 2, Task 3. `capPerTier` amends B.4's cap formula so caps grow with the item's
-// own tier. Both of these read caps, and a validator that ignored the tier factor would
-// understate what a player can hold -- failing bundles that are in fact fine, and, worse,
-// mis-stating check 9's "maximum attainable" on the very axis this was added for.
+// Phase 2, Task 3, corrected. `capPerTier` amends B.4's cap formula, and it is keyed on
+// the PLAYER's tier rather than the item's -- see the note on `capAtLevel`. Both checks
+// below read caps, and both have to ask "at which tier?" rather than assume tier 0.
 describe("capPerTier and the cap-reading checks", () => {
   function withTierGrowth(b: Bundle, capPerTier: number): Bundle {
     b.storage = { ...b.storage, capPerTier };
@@ -233,46 +232,49 @@ describe("capPerTier and the cap-reading checks", () => {
     return b;
   }
 
-  it("raises maxAttainableCap by capPerTier to the item's tier", () => {
+  it("raises maxAttainableCap by capPerTier to the player's tier", () => {
     const plain = bundle();
-    const plate = plain.items.find((i) => i.id === "plate")!;
-    expect(plate.tier).toBe(1);
-    const before = maxAttainableCap(plain, plate);
-    const after = maxAttainableCap(withTierGrowth(bundle(), 3), plate);
-    expect(after).toBeCloseTo(before * 3, 6);
+    const ore = plain.items.find((i) => i.id === "ore")!;
+    expect(ore.tier).toBe(0);
+    const before = maxAttainableCap(plain, ore, 0);
+    // A tier-0 item still benefits, which is the whole point of the correction.
+    expect(maxAttainableCap(withTierGrowth(bundle(), 3), ore, 2)).toBeCloseTo(before * 9, 6);
   });
 
-  it("leaves a tier-0 item's maximum alone", () => {
+  it("is inert at tier 0, however steep the growth", () => {
     const ore = bundle().items.find((i) => i.id === "ore")!;
-    expect(maxAttainableCap(withTierGrowth(bundle(), 3), ore)).toBeCloseTo(
-      maxAttainableCap(bundle(), ore),
+    expect(maxAttainableCap(withTierGrowth(bundle(), 3), ore, 0)).toBeCloseTo(
+      maxAttainableCap(bundle(), ore, 0),
       6,
     );
   });
 
-  // Check 9 exists to catch a requirement nobody could ever bank. If it read the
-  // untiered cap it would flag amounts that are now perfectly reachable.
-  it("check 9 accepts a requirement the tier factor makes reachable", () => {
+  // A milestone is banked while the player is on the tier BELOW it -- they cannot be on
+  // tier k before unlocking tier k -- so that is the cap check 9 must measure against.
+  it("check 9 measures a milestone against the cap on the tier below it", () => {
     const b = bundle();
     const plate = b.items.find((i) => i.id === "plate")!;
-    const justOver = Math.ceil(maxAttainableCap(b, plate) * 1.5);
+    const atTierOne = maxAttainableCap(withTierGrowth(bundle(), 3), plate, 1);
+    const amount = Math.floor(atTierOne * 0.9);
     b.milestones = [
-      { tier: 1, name: "M", requires: [{ item: "plate", amount: justOver }], laneMultipliers: {} },
+      { tier: 2, name: "M", requires: [{ item: "plate", amount }], laneMultipliers: {} },
     ];
+    // Without the tier factor this is far beyond reach; with it, tier 2 is banked at
+    // tier 1's caps and it fits.
     expect(checkStorageReachesCosts(b)).toHaveLength(1);
     expect(checkStorageReachesCosts(withTierGrowth(b, 3))).toEqual([]);
   });
 
-  // Check 12 compares a level's cost against what the player can hold while buying it,
-  // so the tier factor raises the holding side and the ladder reaches further up.
-  //
-  // What it does NOT do is repeal `costGrowth > capGrowth`: capPerTier is a constant
-  // multiplier on capacity, while cost outgrowing capacity is a difference in GROWTH
-  // RATE, and a constant cannot beat a rate. It moves the crossover level, no more.
+  // Check 12 asks whether the ladder can EVER be climbed, and caps only grow with
+  // progression, so the deepest tier is the fairest place to ask.
   function steepLadder(capPerTier: number): Bundle {
     const b = withTierGrowth(bundle(), capPerTier);
     b.storage = { ...b.storage, baseCostItem: "plate", costGrowth: 2 };
     b.quantumStorage = { ...b.quantumStorage, baseCostItem: "plate", costGrowth: 1.55 };
+    b.milestones = [
+      { tier: 1, name: "A", requires: [{ item: "plate", amount: 1 }], laneMultipliers: {} },
+      { tier: 2, name: "B", requires: [{ item: "plate", amount: 1 }], laneMultipliers: {} },
+    ];
     return b;
   }
 
@@ -282,6 +284,9 @@ describe("capPerTier and the cap-reading checks", () => {
     return match === null ? Number.POSITIVE_INFINITY : Number(match[1]);
   }
 
+  // A constant multiplier does NOT repeal costGrowth > capGrowth: that is cost
+  // outgrowing capacity per level, a difference in growth rate, and a constant cannot
+  // beat a rate. It only moves the crossover level.
   it("check 12 lets the tier factor push the ladder further before it stops", () => {
     const before = stoppingLevel(steepLadder(1));
     expect(Number.isFinite(before)).toBe(true);
@@ -289,8 +294,8 @@ describe("capPerTier and the cap-reading checks", () => {
   });
 
   // And the ladder is finite, so a large enough factor moves the crossover past
-  // `maxLevel` entirely. That is a legitimate pass rather than a hole in the check:
-  // a ladder climbable to its own top has no wall in it, which is all check 12 claims.
+  // maxLevel entirely. That is a legitimate pass, not a hole: a ladder climbable to its
+  // own top has no wall in it, which is all check 12 claims.
   it("check 12 passes once the crossover is pushed past maxLevel", () => {
     expect(stoppingLevel(steepLadder(1000))).toBe(Number.POSITIVE_INFINITY);
     expect(checkStorageLadderClimbable(steepLadder(1000))).toEqual([]);

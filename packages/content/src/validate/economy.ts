@@ -70,17 +70,33 @@ export function checkRunawayGrowth(bundle: Bundle): ValidationIssue[] {
  *
  * Sound only when check 12 passes: if the level ladder self-terminates, `maxLevel` is
  * not reachable and this overstates what a player can hold.
+ *
+ * `playerTier` is required rather than defaulted, because there is no safe default: the
+ * cap grows with progression (spec B.4 as amended), so "the most a player can hold"
+ * means nothing until you say WHEN. Callers do not all give the same answer -- a
+ * milestone is banked on the tier below it, while a machine can be bought on any tier
+ * at or after it unlocks.
  */
-export function maxAttainableCap(bundle: Bundle, item: Item): number {
+export function maxAttainableCap(bundle: Bundle, item: Item, playerTier: number): number {
   const storage =
     item.baseStorageCap *
     Math.pow(bundle.storage.capGrowth, bundle.storage.maxLevel) *
-    Math.pow(bundle.storage.capPerTier, item.tier);
+    Math.pow(bundle.storage.capPerTier, playerTier);
   const quantum =
     item.baseQuantumCap *
     Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel) *
-    Math.pow(bundle.quantumStorage.capPerTier, item.tier);
+    Math.pow(bundle.quantumStorage.capPerTier, playerTier);
   return storage + quantum;
+}
+
+/** The deepest tier the bundle defines, which is as far as a player can ever get. */
+export function deepestTier(bundle: Bundle): number {
+  let deepest = 0;
+  for (const milestone of bundle.milestones) deepest = Math.max(deepest, milestone.tier);
+  for (const cls of bundle.machineClasses) {
+    for (const mark of cls.marks) deepest = Math.max(deepest, mark.unlockTier);
+  }
+  return deepest;
 }
 
 /**
@@ -104,11 +120,11 @@ export function checkStorageReachesCosts(bundle: Bundle): ValidationIssue[] {
   const items = new Map(bundle.items.map((item) => [item.id, item]));
   const issues: ValidationIssue[] = [];
 
-  const check = (itemId: string, amount: number, what: string): void => {
+  const check = (itemId: string, amount: number, what: string, playerTier: number): void => {
     const item = items.get(itemId);
     // A dangling id is check 2's to report, not this one's.
     if (item === undefined) return;
-    const cap = maxAttainableCap(bundle, item);
+    const cap = maxAttainableCap(bundle, item, playerTier);
     if (amount > cap) {
       issues.push(
         issue(
@@ -119,17 +135,28 @@ export function checkStorageReachesCosts(bundle: Bundle): ValidationIssue[] {
     }
   };
 
+  // A machine can be bought on any tier at or after it unlocks, so "could this EVER be
+  // afforded" is asked at the deepest tier the bundle reaches.
+  const deepest = deepestTier(bundle);
   for (const cls of bundle.machineClasses) {
     for (const mark of cls.marks) {
       for (const cost of mark.buildCost) {
-        check(cost.item, cost.amount, `"${cls.id}" mk${mark.mark}`);
+        check(cost.item, cost.amount, `"${cls.id}" mk${mark.mark}`, deepest);
       }
     }
   }
 
   for (const milestone of bundle.milestones) {
     for (const requirement of milestone.requires) {
-      check(requirement.item, requirement.amount, `milestone "${milestone.name}" (tier ${milestone.tier})`);
+      // Banked while the player is on the tier BELOW it: they cannot reach tier k
+      // before unlocking tier k. Measuring at the deepest tier would clear
+      // requirements nobody could actually deliver on time.
+      check(
+        requirement.item,
+        requirement.amount,
+        `milestone "${milestone.name}" (tier ${milestone.tier})`,
+        Math.max(0, milestone.tier - 1),
+      );
     }
   }
 
@@ -232,19 +259,20 @@ export function checkStorageLadderClimbable(bundle: Bundle): ValidationIssue[] {
     const item = items.get(curve.baseCostItem);
     if (item === undefined) continue;
 
-    // The cost item's OWN tier scales what it can be held in (spec B.4 as amended), so
-    // a ladder that self-terminates without the tier factor can be climbable with it.
+    // Caps only grow with progression, so "can this ladder EVER be climbed" is fairest
+    // asked at the deepest tier the bundle reaches.
+    const ladderTier = deepestTier(bundle);
     const qsCeiling =
       item.baseQuantumCap *
       Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel) *
-      Math.pow(bundle.quantumStorage.capPerTier, item.tier);
+      Math.pow(bundle.quantumStorage.capPerTier, ladderTier);
 
     for (let level = 0; level < curve.maxLevel; level += 1) {
       const cost = curve.baseCostAmount * Math.pow(curve.costGrowth, level);
       const hold =
         item.baseStorageCap *
           Math.pow(bundle.storage.capGrowth, level) *
-          Math.pow(bundle.storage.capPerTier, item.tier) +
+          Math.pow(bundle.storage.capPerTier, ladderTier) +
         qsCeiling;
       if (cost > hold) {
         issues.push(
