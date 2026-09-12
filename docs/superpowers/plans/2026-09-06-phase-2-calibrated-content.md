@@ -555,9 +555,102 @@ currently tuned for a player who never uses a core mechanic.** Whether `greedy` 
 reserve is a spec decision about E.2's policy definitions, not a calibration one. The
 size of the effect is unmeasured.
 
+### The pre-filter — DONE, and it made the scan affordable
+
+One run per scale instead of a whole amounts calibration. The ceiling run sets every
+requirement up to the deepest tier at the most a player could ever hold — the latest
+each tier can be made to land — and rejects a scale the moment a tier lands *before* its
+target. It abandons the run at that first failure, since everything after it is wasted:
+the ten-tier measurement went from **899 s to under 4 s**, about 65× faster, and the
+pre-filter stopped being the dominant cost of the scan.
+
+Two defects found building it, both recorded in the commits: `withREffScale` moved
+`rEff` and left `costRatio` alone, so a "scaled" bundle **simulated as if unscaled**
+while reporting the new `r_eff`; and the ceiling run's budget was authored data, so a
+typo in `targetCollectionsToTier` asked for two and a half million years of simulated
+time instead of complaining.
+
+### Task 9 — nothing ever reassigned a machine (blocking) — **DONE** (unplanned)
+
+The full run then stalled at tier 4, and not on content or `r_eff`. Measured:
+
+```
+make_reinforced_iron_plate   81 machines   RIP  5,010,283  ← exactly its maximum cap
+make_rotor                    0 machines   rotor        0
+make_concrete                95 machines   concrete 8,350,472
+tier 4 needs: concrete 1, rotor 1          → never reached
+```
+
+Tier 4 was unreachable with its requirement bisected all the way down to **one rotor**,
+which cost 34 simulated runs to discover.
+
+The engine was not at fault: bought on that state, a new assembler goes to `make_rotor`,
+and moving 40 of the idle 81 produces **143 rotor/s immediately**. The gap is that
+nothing ever revisits an assignment, and `greedy` had stopped buying assemblers because
+they were never the cheapest thing on offer. The machines existed, the verb to move them
+existed (`ASSIGN_MACHINES`, two calls — shrink one, grow the other), and no policy used
+it.
+
+> An earlier probe appeared to show the auto-assign rule itself was broken. It was not:
+> the probe funded *every* item to make the purchase affordable, which pushed rotor over
+> its own cap, so every recipe read FULL and the rule correctly fell back to ranking. The
+> probe created the behaviour it then blamed on the rule.
+
+`idleReassignments` moves half of a fully-idle recipe's machines to a live sibling in the
+same lane-class that has **exactly zero**. Narrow on purpose: the receiving condition can
+be true at most once before it has machines, so it cannot oscillate the way a general
+"rebalance toward the busiest" rule would.
+
+**This is deliberately not the strategy question `SET_RESERVE` and `REORDER_PRIORITY`
+raise.** Those are choices about what a player wants. Leaving machines you already own
+idle while a sibling starves is not a strategy, it models no player, and spec E.2 does
+not describe any of its policies as doing it. Proposed as an amendment to E.2.
+
+Also fixed: `purchases` counted every action a policy returned, so reassignments would
+have been reported as purchases. A purchase is a spend.
+
+### The wall moved from tier 3 to tier 4 — and the real limit is the storage caps
+
+| | scale 1 (authored) | scale 2 |
+|---|---|---|
+| tier 1 (target 2) | 5.21 clears | 7.15 clears |
+| tier 2 (target 5) | 6.70 clears | 15.24 clears |
+| tier 3 (target 11) | **8.93 short** | 17.66 clears |
+| tier 4 (target 24) | — | **19.50 short** |
+
+Real progress — scale 2 now clears three tiers where tier 4 was previously unreachable
+at any requirement. But the shape is the problem:
+
+```
+targets  grow ~2.15x per tier
+ceilings grow ~1.13x per tier   (7.15 → 15.24 → 17.66 → 19.50)
+```
+
+**The ceilings flatten because the maximum bankable amount does not grow with the tier.**
+`maxAttainableCap` is `baseStorageCap · s^20 + baseQuantumCap · q^15`, and the slice's
+base caps are flat — *declining*, in fact:
+
+| tier | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| mean base liquid cap | 3000 | 3000 | 3500 | 2500 | 4000 | 1500 | 2400 | 2000 | 1500 |
+
+A player can bank **half** as much of a tier-8 item as of a tier-0 item, while production
+accelerates the whole way. So the time to bank the maximum keeps shrinking relative to
+targets that double.
+
+**No `r_eff` scale fixes this**, because it is not a rate problem. It is the storage
+lever — B.7's `s`/`sc` and `q`, plus per-item base caps that scale with tier — and it is
+the next task rather than a defect in the solver.
+
 ### Still to do
 
-1. **Pre-filter the scan by ceiling**, then re-run the full ten-tier calibration.
+1. **Solve the storage curves and scale the per-item base caps with tier.** This is what
+   lifts the ceilings; until it lands no tier past 3 has a solution, so there is still no
+   ten-tier `derived.yaml` worth committing.
+2. Re-run the full calibration and commit `derived.yaml` with its target-vs-observed
+   claim.
+3. Decide `SET_RESERVE` / `REORDER_PRIORITY` — still implemented and still emitted by no
+   policy.
 2. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is now a
    validated constraint, which is what makes that search well posed, and
    `pacing.storageBindingCadence` (12 machines between storage binding) is the target.
