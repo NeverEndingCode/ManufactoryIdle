@@ -665,10 +665,32 @@ describe("smallestClearing", () => {
   // bigger caps mean a player banking more of everything, which is a real cost to the
   // game's feel, not a free win.
   it("finds the smallest input that satisfies the predicate", () => {
-    const result = smallestClearing((x) => x >= 10, { seed: 1 });
+    // Precision pinned rather than left to the default: the default is deliberately
+    // loose because every probe in real use is a full ceiling measurement, and a test
+    // that asserts tightly while relying on a loose default passes by luck.
+    const result = smallestClearing((x) => x >= 10, { seed: 1, precision: 1e-4 });
     expect(result.value).toBeGreaterThanOrEqual(10);
-    expect(result.value).toBeLessThan(10.05);
+    expect(result.value).toBeLessThan(10.01);
     expect(result.cleared).toBe(true);
+  });
+
+  it("spends fewer probes at the default precision than at a tight one", () => {
+    const loose = smallestClearing((x) => x >= 10, { seed: 1 });
+    const tight = smallestClearing((x) => x >= 10, { seed: 1, precision: 1e-6 });
+    expect(loose.evaluations).toBeLessThan(tight.evaluations);
+    // Still close enough that the difference is invisible in a game.
+    expect(loose.value).toBeLessThan(10.5);
+  });
+
+  it("reports each probe and what it cost", () => {
+    const seen: { x: number; cleared: boolean }[] = [];
+    smallestClearing((x) => x >= 10, {
+      seed: 1,
+      onProbe: (x, cleared) => seen.push({ x, cleared }),
+    });
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.some((p) => p.cleared)).toBe(true);
+    expect(seen.some((p) => !p.cleared)).toBe(true);
   });
 
   it("returns the seed when the seed already clears", () => {

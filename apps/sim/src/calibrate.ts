@@ -439,8 +439,16 @@ export interface ClearingOptions {
   floor?: number;
   maxExpansions?: number;
   maxIterations?: number;
-  /** Stop splitting once the bracket is this close, relative. */
+  /**
+   * Stop splitting once the bracket is this close, relative.
+   *
+   * Loose on purpose. Every probe here is a full ceiling measurement -- minutes at ten
+   * tiers -- and the difference between a cap factor of 2.00 and 2.02 is invisible in a
+   * game, so the extra splits buy nothing but an hour.
+   */
   precision?: number;
+  /** Called with each probe and its verdict, so an hour-long search is not silent. */
+  onProbe?: (x: number, cleared: boolean, elapsedMs: number) => void;
 }
 
 export interface ClearingResult {
@@ -468,11 +476,14 @@ export function smallestClearing(
   const floor = options.floor ?? 1;
   const maxExpansions = options.maxExpansions ?? 24;
   const maxIterations = options.maxIterations ?? 24;
-  const precision = options.precision ?? 1e-3;
+  const precision = options.precision ?? 2e-2;
   const counter = { n: 0 };
   const test = (x: number): boolean => {
     counter.n += 1;
-    return clears(x);
+    const started = Date.now();
+    const result = clears(x);
+    options.onProbe?.(x, result, Date.now() - started);
+    return result;
   };
 
   const seed = Math.max(floor, options.seed ?? 1);
@@ -753,7 +764,18 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
           }),
           headroom,
         ),
-      { seed: capPerTier, floor: 1 },
+      {
+        // Seeded at 2 rather than 1 because the targets themselves roughly double each
+        // tier, so a cap factor near 2 is where the answer plausibly lives. Starting at
+        // 1 spends its first probes on values that obviously fail.
+        seed: Math.max(capPerTier, 2),
+        floor: 1,
+        onProbe: (value, cleared, elapsedMs) =>
+          report(
+            `  capPerTier ${value.toFixed(4).padStart(9)}  ${cleared ? "clears" : "short "}  ` +
+              `${(elapsedMs / 1000).toFixed(0)}s`,
+          ),
+      },
     );
     capPerTier = solved.value;
     base = withCapPerTier(options.bundle, capPerTier);
