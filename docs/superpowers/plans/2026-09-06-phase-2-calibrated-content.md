@@ -626,30 +626,50 @@ targets  grow ~2.15x per tier
 ceilings grow ~1.13x per tier   (7.15 → 15.24 → 17.66 → 19.50)
 ```
 
-**The ceilings flatten because the maximum bankable amount does not grow with the tier.**
-`maxAttainableCap` is `baseStorageCap · s^20 + baseQuantumCap · q^15`, and the slice's
-base caps are flat — *declining*, in fact:
+**The ceilings flatten within a scale because the maximum bankable amount does not grow
+with the tier.** `maxAttainableCap` is `baseStorageCap · s^20 + baseQuantumCap · q^15`,
+and the slice's base caps are flat — *declining*, in fact:
 
 | tier | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 |---|---|---|---|---|---|---|---|---|---|
 | mean base liquid cap | 3000 | 3000 | 3500 | 2500 | 4000 | 1500 | 2400 | 2000 | 1500 |
 
 A player can bank **half** as much of a tier-8 item as of a tier-0 item, while production
-accelerates the whole way. So the time to bank the maximum keeps shrinking relative to
-targets that double.
+accelerates the whole way.
 
-**No `r_eff` scale fixes this**, because it is not a rate problem. It is the storage
-lever — B.7's `s`/`sc` and `q`, plus per-item base caps that scale with tier — and it is
-the next task rather than a defect in the solver.
+> **Correction.** On that evidence this plan first said *"no `r_eff` scale fixes this,
+> because it is not a rate problem."* **That was wrong, and scale 4 disproved it:**
+>
+> | tier | 1 | 2 | 3 | 4 | 5 | 6 |
+> |---|---|---|---|---|---|---|
+> | target | 2 | 5 | 11 | 24 | 52 | 110 |
+> | ceiling | 19.41 | 66.14 | 87.16 | 105.15 | 106.90 | **109.03** |
+>
+> Five tiers clear and the sixth misses by **0.9%**. The asymptote is not fixed: it moved
+> from about 19.5 at scale 2 to about 109 at scale 4 — 5.6× for a 2× scale. `r_eff` has
+> far more reach than the scale-2 numbers alone suggested.
+>
+> What survives is narrower and still worth acting on: **within a fixed scale the
+> ceilings asymptote** (87.16 → 105.15 → 106.90 → 109.03, ratios 1.21, 1.02, 1.02), and
+> the flat base caps are why. So each scale has a deepest tier it can support, and
+> raising `r_eff` to reach tier 10 means a very steep game in the early tiers — scale 4
+> already puts tier 1's ceiling at 19.41 against a target of 2.
+>
+> Whether some scale reaches tier 10's 2100 is **unmeasured**: scale 8 was still running
+> when its 1500 s budget expired. Cost grows steeply with scale — scale 2 took 94 s,
+> scale 4 took 1245 s — which is now the scan's binding constraint.
 
 ### Still to do
 
-1. **Solve the storage curves and scale the per-item base caps with tier.** This is what
-   lifts the ceilings; until it lands no tier past 3 has a solution, so there is still no
-   ten-tier `derived.yaml` worth committing.
-2. Re-run the full calibration and commit `derived.yaml` with its target-vs-observed
+1. **Measure how deep the scale needs to go, and what it costs.** Scale 8 timed out
+   unmeasured, and the answer decides whether storage work is required at all or merely
+   makes the curve gentler. Do this before authoring anything.
+2. **Solve the storage curves and scale the per-item base caps with tier** (B.7's `s`,
+   `sc`, `q`) if step 1 says `r_eff` alone cannot reach tier 10, or if the `r_eff` it
+   needs makes the early tiers absurd.
+3. Re-run the full calibration and commit `derived.yaml` with its target-vs-observed
    claim.
-3. Decide `SET_RESERVE` / `REORDER_PRIORITY` — still implemented and still emitted by no
+4. Decide `SET_RESERVE` / `REORDER_PRIORITY` — still implemented and still emitted by no
    policy.
 2. **Solve the storage curves** — B.7's `s`/`sc` and `q`. `costGrowth ≤ capGrowth` is now a
    validated constraint, which is what makes that search well posed, and
