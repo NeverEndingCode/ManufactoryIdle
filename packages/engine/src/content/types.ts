@@ -93,6 +93,8 @@ export interface StorageCurveDef {
   baseCostItem: ItemId | null;
   baseCostAmount: number;
   maxLevel: number;
+  /** Amends spec B.4: caps also grow with the item's own tier. See `capAtLevel`. */
+  capPerTier?: number | undefined;
 }
 
 export interface SoftcapDef {

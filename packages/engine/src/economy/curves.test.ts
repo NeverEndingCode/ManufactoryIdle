@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
+import { D } from "../numbers/decimal.js";
 import { indexContent } from "../graph/index-content.js";
 import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
 import {
@@ -311,5 +312,52 @@ describe("levelCostRange and capAtLevel", () => {
     // 600 * 1.6^2 = 1536
     expect(capAtLevel(600, content.bundle.storage, 2).toNumber()).toBeCloseTo(1536, 6);
     expect(capAtLevel(600, content.bundle.storage, 0).toNumber()).toBe(600);
+  });
+});
+
+// Phase 2, Task 3. Amends spec B.4's cap formula.
+//
+// Calibration could not lengthen any tier past the fourth, and the cause was that the
+// most a player can ever bank does not grow with progression: the slice's mean base
+// liquid cap by tier runs 3000, 3000, 3500, 2500, 4000, 1500, 2400, 2000, 1500 -- flat,
+// and in fact lower at tier 8 than at tier 0 -- while production accelerates the whole
+// way. Tier ceilings therefore asymptote (87.16, 105.15, 106.90, 109.03 measured at one
+// r_eff scale) against targets that double.
+//
+// `capPerTier` is the one solved number that fixes it: caps grow geometrically with the
+// item's own tier, so the amount a tier can ask for keeps pace with the rate at which it
+// is produced. Authored per-item caps stay the RELATIVE intent -- screws hold more than
+// rotors -- and the progression scaling is derived.
+describe("capAtLevel and capPerTier", () => {
+  const curve = { capGrowth: 1.6, costGrowth: 1.5, baseCostItem: null, baseCostAmount: 50, maxLevel: 20, capPerTier: 1 };
+
+  it("is unchanged when capPerTier is 1", () => {
+    expect(capAtLevel(500, curve, 2, 7).toNumber()).toBeCloseTo(500 * 1.6 ** 2, 9);
+  });
+
+  it("defaults to no tier scaling when the tier is not given", () => {
+    expect(capAtLevel(500, { ...curve, capPerTier: 2 }, 2).toNumber()).toBeCloseTo(
+      500 * 1.6 ** 2,
+      9,
+    );
+  });
+
+  it("multiplies by capPerTier raised to the item's own tier", () => {
+    // 500 * 1.6^2 * 2^3 = 500 * 2.56 * 8 = 10240
+    expect(capAtLevel(500, { ...curve, capPerTier: 2 }, 2, 3).toNumber()).toBeCloseTo(10240, 9);
+  });
+
+  it("leaves a tier-0 item alone however steep the growth", () => {
+    expect(capAtLevel(500, { ...curve, capPerTier: 3 }, 0, 0).toNumber()).toBeCloseTo(500, 9);
+  });
+
+  // Spec E.4 bans fractional powers from state-affecting paths because libm varies by
+  // platform. A tier is an integer, so this is exponentiation by squaring like every
+  // other power in this file, and two machines cannot disagree about a cap.
+  it("uses only integer exponentiation, so it is platform-stable", () => {
+    const byHand = D(500).times(powIntDecimal(1.6, 2)).times(powIntDecimal(1.25, 6));
+    expect(capAtLevel(500, { ...curve, capPerTier: 1.25 }, 2, 6).toNumber()).toBe(
+      byHand.toNumber(),
+    );
   });
 });

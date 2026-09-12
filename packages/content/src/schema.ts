@@ -159,6 +159,14 @@ export const StorageCurveSchema = z
     baseCostItem: Id.nullable(),
     baseCostAmount: z.number().positive(),
     maxLevel: z.number().int().positive(),
+    // Amends spec B.4: cap = base * capGrowth^level * capPerTier^tier.
+    //
+    // Without it the most a player can ever bank does not grow with progression, so
+    // tier ceilings asymptote against targets that double and no milestone amount can
+    // stretch a deep tier. Authored per-item caps stay the relative intent; this is the
+    // single number calibration solves for the progression scaling. 1 is the old
+    // behaviour exactly, which is why it defaults there.
+    capPerTier: z.number().gt(0).default(1),
   })
   .strict();
 
@@ -290,6 +298,7 @@ export const BundleSchema = z
       baseCostItem: null,
       baseCostAmount: 50,
       maxLevel: 20,
+      capPerTier: 1,
     }),
     quantumStorage: StorageCurveSchema.default({
       capGrowth: 1.6,
@@ -297,6 +306,7 @@ export const BundleSchema = z
       baseCostItem: null,
       baseCostAmount: 500,
       maxLevel: 15,
+      capPerTier: 1,
     }),
     softcaps: SoftcapsSchema.default({
       ladder: { threshold: 1000, slope: 0.25 },

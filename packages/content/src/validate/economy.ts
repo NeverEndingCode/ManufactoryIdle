@@ -72,10 +72,14 @@ export function checkRunawayGrowth(bundle: Bundle): ValidationIssue[] {
  * not reachable and this overstates what a player can hold.
  */
 export function maxAttainableCap(bundle: Bundle, item: Item): number {
-  const storage = item.baseStorageCap * Math.pow(bundle.storage.capGrowth, bundle.storage.maxLevel);
+  const storage =
+    item.baseStorageCap *
+    Math.pow(bundle.storage.capGrowth, bundle.storage.maxLevel) *
+    Math.pow(bundle.storage.capPerTier, item.tier);
   const quantum =
     item.baseQuantumCap *
-    Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel);
+    Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel) *
+    Math.pow(bundle.quantumStorage.capPerTier, item.tier);
   return storage + quantum;
 }
 
@@ -228,13 +232,20 @@ export function checkStorageLadderClimbable(bundle: Bundle): ValidationIssue[] {
     const item = items.get(curve.baseCostItem);
     if (item === undefined) continue;
 
+    // The cost item's OWN tier scales what it can be held in (spec B.4 as amended), so
+    // a ladder that self-terminates without the tier factor can be climbable with it.
     const qsCeiling =
       item.baseQuantumCap *
-      Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel);
+      Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel) *
+      Math.pow(bundle.quantumStorage.capPerTier, item.tier);
 
     for (let level = 0; level < curve.maxLevel; level += 1) {
       const cost = curve.baseCostAmount * Math.pow(curve.costGrowth, level);
-      const hold = item.baseStorageCap * Math.pow(bundle.storage.capGrowth, level) + qsCeiling;
+      const hold =
+        item.baseStorageCap *
+          Math.pow(bundle.storage.capGrowth, level) *
+          Math.pow(bundle.storage.capPerTier, item.tier) +
+        qsCeiling;
       if (cost > hold) {
         issues.push(
           issue(
