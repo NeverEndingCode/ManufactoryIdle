@@ -364,3 +364,38 @@ describe("the r_eff scan", () => {
     expect(miner.rEff).toBeCloseTo(slice.machineClasses.find((c) => c.id === "miner")!.rEff!, 9);
   }, 600_000);
 });
+
+describe("the scan and check 8", () => {
+  // r_eff below 1 + eps is spec D3's runaway: machine count grows linearly or faster
+  // and production explodes. The scan is handed its grid, so nothing stops a caller
+  // asking for a scale that lands there -- and a calibrator that emits content its own
+  // validator rejects is worse than one that fails, because the numbers look solved.
+  //
+  // It reuses checkRunawayGrowth rather than re-deriving the floor, so the calibrator
+  // and the validator cannot drift apart on what counts as runaway.
+  it("refuses a scale that drives r_eff below the runaway floor", () => {
+    const lines: string[] = [];
+    const result = calibrate({
+      bundle: slice,
+      maxTier: 1,
+      tolerance: 0.05,
+      rEffScales: [0.001, 1],
+      onProgress: (line) => lines.push(line),
+    });
+    expect(result.rEffScale).toBe(1);
+    expect(lines.some((l) => l.includes("runaway"))).toBe(true);
+  }, 600_000);
+
+  it("does not simulate a scale it has already refused", () => {
+    const lines: string[] = [];
+    calibrate({
+      bundle: slice,
+      maxTier: 1,
+      tolerance: 0.05,
+      rEffScales: [0.001, 1],
+      onProgress: (line) => lines.push(line),
+    });
+    const refused = lines.find((l) => l.includes("runaway"))!;
+    expect(refused).toMatch(/ 0s$/);
+  }, 600_000);
+});

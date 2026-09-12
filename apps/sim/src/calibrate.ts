@@ -23,7 +23,13 @@
 // Step 2 is then re-measured after step 3 and reported rather than re-solved: the
 // two do interact, and a number that has drifted should be visible rather than
 // chased round a loop that may not terminate.
-import { maxAttainableCap, type Bundle, type Derived, type MachineClass } from "@manufactory/content";
+import {
+  checkRunawayGrowth,
+  maxAttainableCap,
+  type Bundle,
+  type Derived,
+  type MachineClass,
+} from "@manufactory/content";
 import { indexContent, type ContentBundle } from "@manufactory/engine";
 import type { PolicyName } from "./policies.js";
 import { runSimulation, type RunCheckpoint } from "./run.js";
@@ -363,10 +369,34 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
   const authorsREff = options.bundle.machineClasses.some((c) => c.rEff !== undefined);
   const scan: { scale: number; miss: number }[] = [];
 
-  const score = (scale: number, coarse: boolean): { miss: number; result: AmountResult } => {
+  /**
+   * Why a scale cannot be used at all, or null if it can.
+   *
+   * Spec D3's invariant is `r_eff > 1 + ε`: below it, machine count grows linearly or
+   * faster and production explodes. The grid is a caller's parameter, so nothing else
+   * stops a scale landing there — and a calibrator that emits content its own validator
+   * rejects is worse than one that fails outright, because the numbers look solved.
+   *
+   * It asks `checkRunawayGrowth`, the same function `content:check` runs, rather than
+   * re-deriving the floor here. Two implementations of "what counts as runaway" would
+   * eventually disagree, and the one that mattered would be whichever ran last.
+   */
+  const refuse = (bundleAtScale: Bundle): string | null => {
+    const issues = checkRunawayGrowth(bundleAtScale);
+    return issues.length === 0
+      ? null
+      : `runaway: ${issues.length} class(es) at or below the floor — ${issues[0]!.message}`;
+  };
+
+  const score = (
+    scale: number,
+    coarse: boolean,
+  ): { miss: number; result?: AmountResult; refused?: string } => {
     const coarseTolerance = Math.max(tolerance, 0.15);
     const scaled = withREffScale(options.bundle, scale);
     const ratios = deriveCostRatios(scaled);
+    const refused = refuse(withCostRatios(scaled, ratios));
+    if (refused !== null) return { miss: Number.POSITIVE_INFINITY, refused };
     const result = calibrateAmounts({
       ...options,
       bundle: withCostRatios(scaled, ratios),
@@ -377,8 +407,16 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       // has to order candidates, so it does not need to watch an overshoot play out to
       // six times its target.
       overrunBudget: coarse ? 3 : options.overrunBudget,
-      // The scan makes tens of inner passes; their per-step lines would bury the scan.
-      onProgress: coarse ? undefined : options.onProgress,
+      // The scan makes tens of inner passes, so their per-step lines would bury it --
+      // but total silence inside a point that can run for minutes is the same defect
+      // the per-step reporting fixed one level down. Tier lines only, prefixed.
+      // `calibrateAmounts` indents its per-step lines and not its per-tier ones, which
+      // is what makes them separable here.
+      onProgress: coarse
+        ? (line: string): void => {
+            if (!line.startsWith("  ")) report(`  [scale ${scale.toFixed(3)}] ${line}`);
+          }
+        : options.onProgress,
     });
     return { miss: curveMiss(result.tiers, coarse ? coarseTolerance : 0), result };
   };
@@ -391,11 +429,13 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       // amounts calibration and can take minutes, and the scan has eleven of them.
       report(`r_eff scale ${scale.toFixed(3).padStart(8)}  ...`);
       const started = Date.now();
-      const { miss } = score(scale, true);
+      const { miss, refused } = score(scale, true);
       scan.push({ scale, miss });
+      const elapsed = `${((Date.now() - started) / 1000).toFixed(0)}s`;
       report(
-        `r_eff scale ${scale.toFixed(3).padStart(8)}  curve miss ${miss.toFixed(4)}  ` +
-          `${((Date.now() - started) / 1000).toFixed(0)}s`,
+        refused === undefined
+          ? `r_eff scale ${scale.toFixed(3).padStart(8)}  curve miss ${miss.toFixed(4)}  ${elapsed}`
+          : `r_eff scale ${scale.toFixed(3).padStart(8)}  refused, ${refused}  ${elapsed}`,
       );
       if (miss < best) {
         best = miss;
@@ -415,7 +455,14 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     report(`r_eff -> r   ${ratio.id.padEnd(18)} ${ratio.costRatio.toFixed(6)}`);
   }
 
-  const final = score(bestScale, false).result;
+  const chosen = score(bestScale, false);
+  if (chosen.result === undefined) {
+    throw new Error(
+      `every r_eff scale tried was refused (${chosen.refused ?? "unknown"}). ` +
+        `Widen --max-tier's grid upward, or raise the authored r_eff.`,
+    );
+  }
+  const final = chosen.result;
   const rEffById = new Map(scaled.machineClasses.map((c) => [c.id, c.rEff]));
 
   const derived: Derived = {
