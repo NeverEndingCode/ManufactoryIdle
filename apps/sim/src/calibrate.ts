@@ -223,17 +223,30 @@ export function withREffScale(bundle: Bundle, scale: number): Bundle {
  * would make every bad candidate equally bad, and the scan needs to prefer "two tiers
  * unreachable" over "five tiers unreachable" in order to climb out. The penalty sits
  * far above any relative miss a reachable tier can produce, so a reachable curve
- * always beats an unreachable one.
+ * always beats an unreachable one. A deadband never forgives it — not reaching a tier
+ * is a different kind of answer from landing near it.
+ *
+ * `deadband` exists because the ranking pass fits amounts loosely. A tier fitted to a
+ * 15% tolerance lands within 15% by construction, so across three tiers up to 0.45 of
+ * pure fitting noise accumulates — larger than the differences between the scales
+ * being ranked. Measured: scale 1 scored 0.5389 on a curve whose real miss was 0.33.
+ * Scoring from the edge of the band instead of from the target leaves only the misses
+ * the fitting could not close, which is the thing the scan is actually comparing.
  */
 export const UNREACHABLE_PENALTY = 1e6;
 
-export function curveMiss(tiers: { target: number; observed: number | null }[]): number {
+export function curveMiss(
+  tiers: { target: number; observed: number | null }[],
+  deadband = 0,
+): number {
   let total = 0;
   for (const tier of tiers) {
-    total +=
-      tier.observed === null
-        ? UNREACHABLE_PENALTY
-        : Math.abs(tier.observed - tier.target) / tier.target;
+    if (tier.observed === null) {
+      total += UNREACHABLE_PENALTY;
+      continue;
+    }
+    const relative = Math.abs(tier.observed - tier.target) / tier.target;
+    total += Math.max(0, relative - deadband);
   }
   return total;
 }
@@ -351,12 +364,13 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
   const scan: { scale: number; miss: number }[] = [];
 
   const score = (scale: number, coarse: boolean): { miss: number; result: AmountResult } => {
+    const coarseTolerance = Math.max(tolerance, 0.15);
     const scaled = withREffScale(options.bundle, scale);
     const ratios = deriveCostRatios(scaled);
     const result = calibrateAmounts({
       ...options,
       bundle: withCostRatios(scaled, ratios),
-      tolerance: coarse ? Math.max(tolerance, 0.15) : tolerance,
+      tolerance: coarse ? coarseTolerance : tolerance,
       maxIterationsPerTier: coarse ? 6 : options.maxIterationsPerTier,
       // A tighter leash while ranking. The scan gets dearer as the scale rises -- a
       // slower game means every run simulates for longer -- and the coarse pass only
@@ -366,7 +380,7 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       // The scan makes tens of inner passes; their per-step lines would bury the scan.
       onProgress: coarse ? undefined : options.onProgress,
     });
-    return { miss: curveMiss(result.tiers), result };
+    return { miss: curveMiss(result.tiers, coarse ? coarseTolerance : 0), result };
   };
 
   let bestScale = 1;

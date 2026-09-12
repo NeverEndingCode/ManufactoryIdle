@@ -7,6 +7,7 @@ import {
   bisectMonotone,
   calibrate,
   curveMiss,
+  UNREACHABLE_PENALTY,
   deriveCostRatios,
   withREffScale,
   withMilestoneAmounts,
@@ -291,6 +292,26 @@ describe("curveMiss", () => {
   it("scores an unreachable tier worse than any reachable one", () => {
     const unreachable = curveMiss([{ target: 2, observed: null }]);
     expect(unreachable).toBeGreaterThan(curveMiss([{ target: 2, observed: 1e6 }]));
+  });
+
+  // The coarse ranking pass fits amounts to a loose tolerance, so each tier lands
+  // within about 15% rather than on the number. Across three tiers that is up to 0.45
+  // of accumulated fitting noise -- larger than the differences between the scales
+  // being ranked, which is how scale 1 scored 0.5389 when its real curve miss was
+  // 0.33. A deadband makes "landed within the tolerance it was fitted to" score zero,
+  // so only genuine misses survive into the comparison.
+  it("ignores misses inside the deadband it was fitted to", () => {
+    const tiers = [{ target: 10, observed: 11 }, { target: 100, observed: 105 }];
+    expect(curveMiss(tiers, 0.15)).toBe(0);
+    expect(curveMiss(tiers)).toBeCloseTo(0.1 + 0.05, 9);
+  });
+
+  it("measures a genuine miss from the edge of the deadband, not from the target", () => {
+    expect(curveMiss([{ target: 10, observed: 15 }], 0.15)).toBeCloseTo(0.5 - 0.15, 9);
+  });
+
+  it("still scores an unreachable tier at full penalty inside a deadband", () => {
+    expect(curveMiss([{ target: 10, observed: null }], 0.9)).toBe(UNREACHABLE_PENALTY);
   });
 
   it("counts a tier that was never attempted as unreachable", () => {
