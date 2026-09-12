@@ -659,11 +659,47 @@ accelerates the whole way.
 > when its 1500 s budget expired. Cost grows steeply with scale — scale 2 took 94 s,
 > scale 4 took 1245 s — which is now the scan's binding constraint.
 
+### Storage: `capPerTier` — amends spec B.4's cap formula
+
+```
+cap = base · capGrowth^level · capPerTier^tier
+```
+
+The diagnosis pointed at one number, so that is what was added rather than 31 hand-tuned
+item caps. Authored per-item caps stay the **relative** intent — screws hold more than
+rotors — and the progression scaling is the single value calibration solves. It defaults
+to 1, exactly the old behaviour, so every existing bundle and every hand-verified fixture
+number is untouched.
+
+A tier is an integer, so the new power is exponentiation by squaring like every other
+power in `curves.ts`: spec E.4's ban on fractional powers in state-affecting paths holds,
+and two machines cannot disagree about a cap.
+
+`maxAttainableCap` and check 12 both read caps and both account for it. **Two
+expectations written for check 12 were wrong, and the measurements corrected them:**
+
+- A constant multiplier does *not* rescue a self-terminating ladder. `costGrowth >
+  capGrowth` is cost outgrowing capacity **per level** — a difference in growth rate, and
+  a constant cannot beat a rate. It only moves the crossover level.
+- But the ladder is **finite**, so a large enough factor moves the crossover past
+  `maxLevel` entirely. That is a legitimate pass, not a hole: a ladder climbable to its
+  own top has no wall in it, which is all check 12 claims.
+
+Both are now asserted rather than assumed.
+
+**It is solved first**, before `r_eff` and before the amounts, because it decides what is
+*reachable* while the other two decide where inside the reachable range things land. A
+tier whose ceiling is below its target has no solution at any `r_eff` and no solution at
+any amount, so fitting either of those first is fitting inside a box known to be too
+small. And unlike `r_eff`, it genuinely bisects: raising a cap can only make a tier take
+longer to fill, never less. `smallestClearing` takes the **smallest** sufficient value —
+bigger caps mean a player hoarding more of everything, which is a real cost to the game's
+feel rather than a free win.
+
 ### Still to do
 
-1. **Measure how deep the scale needs to go, and what it costs.** Scale 8 timed out
-   unmeasured, and the answer decides whether storage work is required at all or merely
-   makes the curve gentler. Do this before authoring anything.
+1. **Measure how deep the `r_eff` scale needs to go, and what it costs.** Scale 8 timed
+   out unmeasured.
 2. **Solve the storage curves and scale the per-item base caps with tier** (B.7's `s`,
    `sc`, `q`) if step 1 says `r_eff` alone cannot reach tier 10, or if the `r_eff` it
    needs makes the early tiers absurd.

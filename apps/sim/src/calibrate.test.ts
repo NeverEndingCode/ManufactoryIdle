@@ -8,9 +8,11 @@ import {
   calibrate,
   curveMiss,
   refinementScales,
+  smallestClearing,
   tierCeilings,
   clearsTargets,
   withAllMilestonesAtCap,
+  withCapPerTier,
   REFINEMENT_FACTORS,
   UNREACHABLE_PENALTY,
   deriveCostRatios,
@@ -146,7 +148,7 @@ describe("calibrate", () => {
   // against a target of 2 -- a hundredfold miss. This is the whole job of the phase,
   // reduced to one tier so it runs in a test.
   it("moves an observed tier time onto its target", () => {
-    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveREff: false });
+    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveREff: false, solveCapPerTier: false });
     const tier1 = result.tiers[0]!;
     expect(tier1.target).toBe(2);
     expect(tier1.observed).not.toBeNull();
@@ -159,7 +161,7 @@ describe("calibrate", () => {
   // with the derived block on top produced anything else, every number in it would be
   // a claim about a bundle nobody ran.
   it("emits a derived block that reproduces the measurement it reports", () => {
-    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveREff: false });
+    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveREff: false, solveCapPerTier: false });
     const reloaded = applyDerived({ ...slice, derived: result.derived });
     const run = runSimulation({
       policy: "greedy",
@@ -183,7 +185,7 @@ describe("calibrate", () => {
       bundle: slice,
       maxTier: 1,
       tolerance: 0.05,
-      solveREff: false,
+      solveREff: false, solveCapPerTier: false,
       onProgress: (l) => lines.push(l),
     });
     const steps = lines.filter((l) => l.includes("try"));
@@ -195,7 +197,7 @@ describe("calibrate", () => {
   }, 300_000);
 
   it("records the targets and the observations side by side", () => {
-    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveREff: false });
+    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveREff: false, solveCapPerTier: false });
     expect(result.derived.run!.targetCollectionsToTier).toEqual(
       slice.pacing.targetCollectionsToTier,
     );
@@ -227,7 +229,7 @@ describe("a requirement nobody could ever deliver", () => {
       bundle: unreachable,
       maxTier: 1,
       tolerance: 0.05,
-      solveREff: false,
+      solveREff: false, solveCapPerTier: false,
       onProgress: (line) => seen.push(line),
     });
     const overCap = seen.filter((l) => l.includes("above the maximum"));
@@ -349,7 +351,7 @@ describe("the r_eff scan", () => {
   // nothing but three more scans -- about seventy seconds of the suite.
   let shared: ReturnType<typeof calibrate> | undefined;
   const scan = (): ReturnType<typeof calibrate> => {
-    shared ??= calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, rEffScales: scales });
+    shared ??= calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveCapPerTier: false, rEffScales: scales });
     return shared;
   };
 
@@ -384,7 +386,7 @@ describe("the r_eff scan", () => {
       bundle: slice,
       maxTier: 1,
       tolerance: 0.05,
-      solveREff: false,
+      solveREff: false, solveCapPerTier: false,
     });
     expect(result.rEffScale).toBe(1);
     expect(result.rEffScan).toEqual([]);
@@ -403,6 +405,7 @@ describe("the scan and check 8", () => {
         bundle: slice,
         maxTier: 1,
         tolerance: 0.05,
+        solveCapPerTier: false,
         rEffScales: [0.001, 1],
         onProgress: (line) => lines.push(line),
       });
@@ -456,6 +459,7 @@ describe("the scan's refinement pass", () => {
       bundle: slice,
       maxTier: 1,
       tolerance: 0.05,
+      solveCapPerTier: false,
       rEffScales: coarse,
     });
     const refinements = result.rEffScan.slice(coarse.length).map((s) => s.scale);
@@ -548,6 +552,7 @@ describe("the scan's use of the pre-filter", () => {
       bundle: slice,
       maxTier: 3,
       tolerance: 0.05,
+      solveCapPerTier: false,
       rEffScales: [1, 0.5],
       // This asserts which passes RAN, not how well they fitted, so the fallback's
       // amounts search is capped to a couple of steps. Fitting it properly is the
@@ -577,6 +582,7 @@ describe("the scan's use of the pre-filter", () => {
       bundle: impossible,
       maxTier: 1,
       tolerance: 0.05,
+      solveCapPerTier: false,
       rEffScales: [1, 2],
       maxIterationsPerTier: 2,
       onProgress: (line) => lines.push(line),
@@ -650,5 +656,102 @@ describe("the ceiling run's early exit", () => {
     }
     // The whole point: it must not have walked the remaining seven tiers to find out.
     expect(Date.now() - started).toBeLessThan(120_000);
+  }, 300_000);
+});
+
+describe("smallestClearing", () => {
+  // Feasibility, not a value: capPerTier only has to be big enough for every tier's
+  // ceiling to clear its target, and the SMALLEST such value is the one to take --
+  // bigger caps mean a player banking more of everything, which is a real cost to the
+  // game's feel, not a free win.
+  it("finds the smallest input that satisfies the predicate", () => {
+    const result = smallestClearing((x) => x >= 10, { seed: 1 });
+    expect(result.value).toBeGreaterThanOrEqual(10);
+    expect(result.value).toBeLessThan(10.05);
+    expect(result.cleared).toBe(true);
+  });
+
+  it("returns the seed when the seed already clears", () => {
+    const result = smallestClearing((x) => x >= 0.5, { seed: 1 });
+    expect(result.value).toBeLessThanOrEqual(1);
+    expect(result.cleared).toBe(true);
+  });
+
+  it("never goes below the floor, because a cap factor under 1 shrinks caps", () => {
+    const result = smallestClearing((x) => x >= 0.001, { seed: 1, floor: 1 });
+    expect(result.value).toBe(1);
+  });
+
+  it("reports failure rather than a wrong answer when nothing clears", () => {
+    const result = smallestClearing(() => false, { seed: 1, maxExpansions: 4 });
+    expect(result.cleared).toBe(false);
+  });
+
+  it("counts the evaluations it spent, which are simulated runs", () => {
+    let calls = 0;
+    const result = smallestClearing(
+      (x) => {
+        calls += 1;
+        return x >= 10;
+      },
+      { seed: 1 },
+    );
+    expect(result.evaluations).toBe(calls);
+  });
+});
+
+describe("solving the storage tier factor", () => {
+  // Storage is solved FIRST because it decides what is reachable, and r_eff and the
+  // amounts decide where inside the reachable range things land. A tier whose ceiling
+  // is below its target has no solution at any r_eff and no solution at any amount.
+  it("raises capPerTier until every tier's ceiling clears its target", () => {
+    const result = calibrate({
+      bundle: slice,
+      maxTier: 4,
+      tolerance: 0.05,
+      solveREff: false,
+      capHeadroom: 1.25,
+    });
+    expect(result.capPerTier).toBeGreaterThan(1);
+    const ceilings = tierCeilings({
+      bundle: withCapPerTier(slice, result.capPerTier),
+      maxTier: 4,
+      policy: "greedy",
+      seed: 42,
+    });
+    expect(clearsTargets(ceilings, 1.25)).toBe(true);
+  }, 1_800_000);
+
+  // The authored slice does NOT clear tier 3 at capPerTier 1 -- measured ceiling 8.93
+  // against a target of 11 -- so the solve has real work to do and a result of 1 would
+  // mean the search had not run.
+  it("does not leave it at 1, which the slice is measurably short at", () => {
+    expect(
+      clearsTargets(
+        tierCeilings({ bundle: withCapPerTier(slice, 1), maxTier: 4, policy: "greedy", seed: 42 }),
+      ),
+    ).toBe(false);
+  }, 300_000);
+
+  it("emits the solved factor into the derived block", () => {
+    const result = calibrate({
+      bundle: slice,
+      maxTier: 2,
+      tolerance: 0.05,
+      solveREff: false,
+    });
+    expect(result.derived.storage!.capPerTier).toBe(result.capPerTier);
+    expect(result.derived.quantumStorage!.capPerTier).toBe(result.capPerTier);
+  }, 1_800_000);
+
+  it("holds it where the bundle put it when asked not to solve", () => {
+    const result = calibrate({
+      bundle: slice,
+      maxTier: 1,
+      tolerance: 0.05,
+      solveREff: false,
+      solveCapPerTier: false,
+    });
+    expect(result.capPerTier).toBe(slice.storage.capPerTier);
   }, 300_000);
 });

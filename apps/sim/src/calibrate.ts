@@ -413,8 +413,108 @@ export function tierCeilings(options: CeilingOptions): TierCeiling[] {
  * beyond the budget, which is later than its target, not earlier. Reading "never" as
  * a failure would reject precisely the scales that stretch the game the most.
  */
-export function clearsTargets(ceilings: readonly TierCeiling[]): boolean {
-  return ceilings.every((c) => c.ceiling === null || c.ceiling >= c.target);
+export function clearsTargets(ceilings: readonly TierCeiling[], headroom = 1): boolean {
+  return ceilings.every((c) => c.ceiling === null || c.ceiling >= c.target * headroom);
+}
+
+/**
+ * A copy of `bundle` with the tier factor set on both cap curves (spec B.4 as amended).
+ *
+ * One number for storage and Quantum Storage together. They could differ, but the
+ * pacing intent offers no target that separates them, and two knobs against one
+ * constraint would make the answer arbitrary — the same reason `r_eff` is solved as one
+ * scale across all fourteen machine classes rather than per class.
+ */
+export function withCapPerTier(bundle: Bundle, capPerTier: number): Bundle {
+  return {
+    ...bundle,
+    storage: { ...bundle.storage, capPerTier },
+    quantumStorage: { ...bundle.quantumStorage, capPerTier },
+  };
+}
+
+export interface ClearingOptions {
+  seed?: number;
+  /** Never search below this. Defaults to 1: a cap factor under 1 shrinks caps. */
+  floor?: number;
+  maxExpansions?: number;
+  maxIterations?: number;
+  /** Stop splitting once the bracket is this close, relative. */
+  precision?: number;
+}
+
+export interface ClearingResult {
+  value: number;
+  cleared: boolean;
+  evaluations: number;
+}
+
+/**
+ * The smallest input that satisfies a monotone predicate.
+ *
+ * `capPerTier` is a feasibility knob, not a fitted value: it has to be big enough that
+ * every tier's ceiling clears its target, and past that point more is not better. Bigger
+ * caps mean a player hoarding more of everything and milestones asking for more of it,
+ * which is a real cost to how the game feels. So the search takes the SMALLEST value
+ * that works rather than the first or the largest.
+ *
+ * Monotone in a way `r_eff` is not: raising a cap can only make a tier take longer to
+ * fill, never less, so unlike the `r_eff` scan this genuinely can bisect.
+ */
+export function smallestClearing(
+  clears: (x: number) => boolean,
+  options: ClearingOptions = {},
+): ClearingResult {
+  const floor = options.floor ?? 1;
+  const maxExpansions = options.maxExpansions ?? 24;
+  const maxIterations = options.maxIterations ?? 24;
+  const precision = options.precision ?? 1e-3;
+  const counter = { n: 0 };
+  const test = (x: number): boolean => {
+    counter.n += 1;
+    return clears(x);
+  };
+
+  const seed = Math.max(floor, options.seed ?? 1);
+  if (test(seed)) {
+    // Already clears. Look below for something smaller, but never under the floor.
+    let good = seed;
+    let bad = floor;
+    if (seed <= floor) return { value: floor, cleared: true, evaluations: counter.n };
+    for (let i = 0; i < maxExpansions; i += 1) {
+      const candidate = Math.max(floor, good / 2);
+      if (candidate === good) break;
+      if (test(candidate)) {
+        good = candidate;
+        if (good <= floor) return { value: floor, cleared: true, evaluations: counter.n };
+      } else {
+        bad = candidate;
+        break;
+      }
+    }
+    for (let i = 0; i < maxIterations && good - bad > good * precision; i += 1) {
+      const mid = (good + bad) / 2;
+      if (test(mid)) good = mid;
+      else bad = mid;
+    }
+    return { value: good, cleared: true, evaluations: counter.n };
+  }
+
+  let bad = seed;
+  for (let i = 0; i < maxExpansions; i += 1) {
+    const candidate = bad * 2;
+    if (test(candidate)) {
+      let good = candidate;
+      for (let j = 0; j < maxIterations && good - bad > good * precision; j += 1) {
+        const mid = (good + bad) / 2;
+        if (test(mid)) good = mid;
+        else bad = mid;
+      }
+      return { value: good, cleared: true, evaluations: counter.n };
+    }
+    bad = candidate;
+  }
+  return { value: bad, cleared: false, evaluations: counter.n };
 }
 
 /**
@@ -474,6 +574,15 @@ export interface CalibrateOptions {
   maxIterationsPerTier?: number;
   /** Set false to hold `r_eff` at whatever the bundle authored and solve amounts only. */
   solveREff?: boolean;
+  /** Set false to hold the storage tier factor where the bundle authored it. */
+  solveCapPerTier?: boolean;
+  /**
+   * How far above its target each tier's ceiling must reach for `capPerTier` to count
+   * as sufficient. Above 1 so the amounts search has somewhere to land: a ceiling
+   * exactly ON the target is only reachable by asking for every last unit a player can
+   * hold, which is the knife edge the ceiling fill deliberately stays under.
+   */
+  capHeadroom?: number;
   /**
    * The coarse grid of `r_eff - 1` scales to rank. Geometric, because the useful range
    * spans more than an order of magnitude and the response is flat at the bottom of it.
@@ -500,6 +609,8 @@ export interface CalibrationResult {
   tiers: TierCalibration[];
   /** The scale applied to every class's `r_eff - 1`. 1 when nothing authored `r_eff`. */
   rEffScale: number;
+  /** The solved storage tier factor (spec B.4 as amended). */
+  capPerTier: number;
   /** Every scale tried, with the curve score it produced. The scan, shown. */
   rEffScan: { scale: number; miss: number }[];
 }
@@ -581,7 +692,7 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     coarse: boolean,
   ): { miss: number; result?: AmountResult; refused?: string } => {
     const coarseTolerance = Math.max(tolerance, 0.15);
-    const scaled = withREffScale(options.bundle, scale);
+    const scaled = withREffScale(base, scale);
     const refused = refuse(scaled);
     if (refused !== null) return { miss: Number.POSITIVE_INFINITY, refused };
     const result = calibrateAmounts({
@@ -617,6 +728,41 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     solvable[solvable.length - 1] ?? 0,
   );
 
+  // Storage first, because it decides what is REACHABLE and the other two decide where
+  // inside the reachable range things land. A tier whose ceiling is below its target has
+  // no solution at any r_eff and no solution at any amount, so solving either of those
+  // first would be fitting inside a box known to be too small.
+  //
+  // Solved at the bundle's authored r_eff. That does not guarantee every scale the scan
+  // then tries also clears -- the ceiling is not monotone in r_eff -- but it does not
+  // need to: the pre-filter rejects any scale that does not.
+  const headroom = options.capHeadroom ?? 1.25;
+  let base = options.bundle;
+  let capPerTier = options.bundle.storage.capPerTier;
+  if (options.solveCapPerTier !== false && deepestTier > 0) {
+    report(`capPerTier  ... solving so every tier clears its target by ${headroom}x`);
+    const started = Date.now();
+    const solved = smallestClearing(
+      (value) =>
+        clearsTargets(
+          tierCeilings({
+            bundle: withCapPerTier(options.bundle, value),
+            maxTier: deepestTier,
+            policy: options.policy ?? "greedy",
+            seed: options.seed ?? 42,
+          }),
+          headroom,
+        ),
+      { seed: capPerTier, floor: 1 },
+    );
+    capPerTier = solved.value;
+    base = withCapPerTier(options.bundle, capPerTier);
+    report(
+      `capPerTier  ${capPerTier.toFixed(4)}  ${solved.cleared ? "clears" : "NEVER CLEARED"}  ` +
+        `${solved.evaluations} runs  ${((Date.now() - started) / 1000).toFixed(0)}s`,
+    );
+  }
+
   let bestScale = 1;
   const shortfalls = new Map<number, number>();
   if (authorsREff && options.solveREff !== false) {
@@ -632,7 +778,7 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
       // nothing to fit. Measured on the slice, this discards three of the four scales
       // around the authored value without a single amounts calibration.
       if (!skipPreFilter) {
-        const scaled = withREffScale(options.bundle, scale);
+        const scaled = withREffScale(base, scale);
         if (refuse(scaled) === null) {
           const ceilings = tierCeilings({
             bundle: scaled,
@@ -697,7 +843,7 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     report(`r_eff scale chosen: ${bestScale.toFixed(3)}`);
   }
 
-  const scaled = withREffScale(options.bundle, bestScale);
+  const scaled = withREffScale(base, bestScale);
   const costRatios = deriveCostRatios(scaled);
   for (const ratio of costRatios) {
     report(`r_eff -> r   ${ratio.id.padEnd(18)} ${ratio.costRatio.toFixed(6)}`);
@@ -729,6 +875,8 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
           })),
         }
       : {}),
+    storage: { capPerTier },
+    quantumStorage: { capPerTier },
     milestones: final.tiers.map((t) => ({
       tier: t.tier,
       requires: final.bundle.milestones.find((m) => m.tier === t.tier)!.requires.map((r) => ({
@@ -743,6 +891,7 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
     derived,
     tiers: final.tiers,
     rEffScale: bestScale,
+    capPerTier,
     rEffScan: scan,
   };
 }
