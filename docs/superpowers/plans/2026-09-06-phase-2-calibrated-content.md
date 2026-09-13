@@ -891,14 +891,64 @@ A new fuzz property pins the class: a net rate is either meaningfully non-zero o
 zero, never a crumb in between. It fails against the old code with a concrete
 counterexample.
 
+### The ten-tier run: the content and the targets disagree
+
+It ran. **No `derived.yaml` was committed, and that is the correct outcome** — the
+numbers it produced are not a game.
+
+Scale 0.5 alone took **36,153 seconds — ten hours** — and scored `1000000.69`, the
+unreachable penalty. Its solved `capPerTier` was 14.75, and the tier curve underneath it
+says why:
+
+| tier | target | observed | verdict |
+|---|---|---|---|
+| 1 | 2 | 2.02 | ok |
+| 2 | 5 | 4.56 | −9% |
+| 3 | 11 | 11.35 | ok |
+| 4 | 24 | **44.17** | **too slow at its MINIMUM requirement** (1 concrete, 1 rotor) |
+| 5 | 52 | 44.21 | −15% |
+| 6 | 110 | 112.56 | ok |
+| 7 | 230 | 201.97 | −12% |
+| 8 | 480 | 437.27 | −9% |
+| 9 | 1000 | **never** | unreachable at 1 smart_plating, 1 polymer_resin |
+| 10 | 2100 | never | not reached |
+
+Two findings, and neither is a calibrator defect:
+
+**Tiers 4 and 9 are too slow at the smallest requirement the game allows.** Tier 4 asks
+for one concrete and one rotor and still lands at 44 collections against a target of 24 —
+after tier 3 completes at 11.35, it takes **33 collections to produce a single rotor**.
+That is the cost of bootstrapping a new lane from nothing, and no milestone amount can
+shorten it. Tier 9 is the same failure, harder.
+
+**The requirements the fit produced elsewhere are absurd.** Tier 6 wants 858,993,459,200
+modular frames; tier 8 wants 10,307,921,510,400 packaged fuel. Those follow from
+`capPerTier` 14.75 — a tier-9 item holding 4×10¹⁰ times its authored cap — which the
+search needed to stretch the tiers it *could* stretch.
+
+So `targetCollectionsToTier` — ten targets spanning 2 to 2,100, a thousandfold — is
+inconsistent with what the slice's content can express. The calibrator's job was to find
+that out, and it did; it just cost ten hours per scale to say so.
+
 ### Still to do
 
-This list had grown three copies of "re-run the calibration" and a storage item that is
-now half done, from being edited in place as each piece landed. Corrected:
-
-1. **Run the full ten-tier calibration and commit `derived.yaml`.** This is Task 3's
-   actual deliverable and the only thing between here and a paced game. Everything
-   needed for it is built and, at 1.37 ms a resolve, affordable.
+1. **Reconcile the pacing intent with the content.** Three routes, and this is a design
+   decision rather than a calibration one:
+   - **Retune `targetCollectionsToTier`** to the span the content actually supports.
+     Cheapest, and the measured curve above is the evidence for what that span is.
+   - **Shorten the inter-tier bootstrap.** 33 collections for one rotor is the binding
+     constraint on tiers 4 and 9, and it is a *policy* cost — `greedy` builds a new lane
+     slowly. `SET_RESERVE` and `REORDER_PRIORITY` (still emitted by nothing) are exactly
+     the levers a real player would use here.
+   - **Add content per tier**, so a tier has more to ask for than one item's cap allows.
+2. **Make a ten-tier run affordable before attempting another.** At ten hours a scale an
+   eleven-scale scan is a week. A clearing probe has to simulate the whole 700-game-day
+   run, so the cost is structural: either the scan gets far smaller, or the deep tiers
+   are calibrated against something cheaper than a full replay.
+3. **Stop the amounts search bisecting toward a floor it will never reach.** Tier 4 spent
+   34 runs halving its requirement to the minimum, and tier 9 another 34, when one run at
+   the minimum answers "even this overshoots". The unreachable case already short-circuits;
+   the overshoot case does not.
 2. **Decide what remains of B.7's storage list.** `capPerTier` is solved jointly with
    `r_eff`. The cost curves — `capGrowth`, `costGrowth`, `baseCostAmount`, `maxLevel` on
    both storage and Quantum Storage — are still authored, and
