@@ -819,9 +819,12 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
   /** Which tier a ceiling report falls short at, for the probe log. */
   const firstShort = (ceilings: readonly TierCeiling[]): string => {
     const short = ceilings.find((c) => c.ceiling !== null && c.ceiling < c.target * headroom);
+    // Against the headroom-adjusted threshold, not the bare target. Reporting "tops out
+    // at 11.34 of 11" for a tier that genuinely failed reads as though it cleared.
     return short === undefined
       ? "no tier short"
-      : `tier ${short.tier} tops out at ${short.ceiling!.toFixed(2)} of ${short.target}`;
+      : `tier ${short.tier} tops out at ${short.ceiling!.toFixed(2)}, needs ` +
+        `${(short.target * headroom).toFixed(2)} (target ${short.target} + headroom)`;
   };
 
   /** The smallest capPerTier clearing every target at this scale, or null if none does. */
