@@ -961,6 +961,27 @@ that out, and it did; it just cost ten hours per scale to say so.
    number is therefore tuned for a player who never uses two core mechanics. A spec
    decision about E.2's policy definitions, not a calibration one.
 
+### Calibration must not read its own output
+
+Committing `derived.yaml` changed what `loadBundleDir` returns, and it returns it to
+*everyone* — including the calibrator. The next run would have searched outward from the
+last run's answer instead of from the authored seeds, so two runs over unchanged content
+would disagree and each run's scale factors would compound on the previous one's. That is
+spec B.1 read backwards: intent authored, numbers solved, in that direction only.
+
+`loadBundleDir(dir, { applyDerived: false })` is the opt-out, and the calibrator is the
+one production caller that takes it. The default stays "apply", because the game, the
+validator and the simulator must all see one bundle and none of them should be able to
+read the seeds by accident.
+
+The tests found this, but only by accident, and they were coupled the same way: five
+asserted calibrator *mechanics* ("this ceiling falls short", "this scale is rejected")
+against `pacing.yaml`'s targets, so retuning the slice to what it can actually pace
+turned them green for no reason — the content moved underneath an assertion about the
+machinery. Each now pins the targets its measurements were taken against, via
+`withTargets`. A mechanics test that borrows a tuning decision is not testing the
+mechanism.
+
 **Do not hand-tune `curves.yaml` values to move a tier time.** The shape constraint is an
 authoring decision; the numbers inside it are the calibrator's output.
 
