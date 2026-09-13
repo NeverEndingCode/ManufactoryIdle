@@ -15,6 +15,8 @@ export interface CalibrationCliOptions {
   tolerance: number;
   write: boolean;
   solveREff: boolean;
+  scales?: number[] | undefined;
+  refine?: boolean | undefined;
 }
 
 function formatScan(result: CalibrationResult): string {
@@ -57,7 +59,9 @@ function formatTable(tiers: TierCalibration[], tolerance: number): string {
 
 export function runCalibration(options: CalibrationCliOptions): number {
   const dir = options.contentDir ?? FIXTURE_BUNDLE_DIR;
-  const bundle = loadBundleDir(dir);
+  // Authored seeds, not the last run's output: calibration has to be idempotent, so
+  // it must not search outward from a solution it already wrote (see LoadOptions).
+  const bundle = loadBundleDir(dir, { applyDerived: false });
 
   const result = calibrate({
     bundle,
@@ -66,6 +70,8 @@ export function runCalibration(options: CalibrationCliOptions): number {
     maxTier: options.maxTier,
     tolerance: options.tolerance,
     solveREff: options.solveREff,
+    rEffScales: options.scales,
+    refine: options.refine,
     // Progress goes to stderr so that stdout stays the result, and a run that takes
     // an hour is not a silent one.
     onProgress: (line) => stderr.write(`${line}\n`),

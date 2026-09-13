@@ -911,12 +911,37 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
         bestCap = cap;
       }
     };
-    for (const scale of options.rEffScales ?? COARSE_SCALES) consider(scale);
+    const grid = options.rEffScales ?? COARSE_SCALES;
+    if (grid.length === 1) {
+      // Nothing to rank. The coarse pass exists to order candidates cheaply before the
+      // full fit; with one candidate it is a whole amounts calibration spent choosing
+      // between it and itself -- measured at 417s on the slice, half the total.
+      const only = grid[0]!;
+      const scaled = withREffScale(options.bundle, only);
+      const refused = refuse(scaled);
+      if (refused === null) {
+        const cap = requiredCap(only, scaled);
+        if (cap !== null) {
+          capByScale.set(only, cap);
+          bestScale = only;
+          bestCap = cap;
+          best = 0;
+          report(
+            `r_eff scale ${only.toFixed(3).padStart(8)}  capPerTier ${cap.toFixed(4)}  ` +
+              `(single scale: ranking pass skipped)`,
+          );
+        }
+      } else {
+        report(`r_eff scale ${only.toFixed(3).padStart(8)}  refused, ${refused}`);
+      }
+    } else {
+      for (const scale of grid) consider(scale);
+    }
     // Read ONCE. `consider` writes to `bestScale`, so computing each refinement point
     // from it inside the loop meant that as soon as one refinement won, the next was
     // measured relative to that instead of to the coarse winner -- a grid that walks,
     // whose shape depends on the order it happened to be evaluated in.
-    if (Number.isFinite(best) && options.refine !== false) {
+    if (Number.isFinite(best) && options.refine !== false && (options.rEffScales ?? COARSE_SCALES).length > 1) {
       const coarseWinner = bestScale;
       for (const scale of refinementScales(coarseWinner)) consider(scale);
     } else if (Number.isFinite(best)) {
@@ -1091,13 +1116,35 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
         captureCheckpoints: true,
       });
       const mark = run.tierTimes.find((t) => t.tier === tier);
-      return {
-        collections: mark?.collections ?? null,
-        checkpoint: run.checkpoints.find((c) => c.tier === tier),
-      };
+      if (mark !== undefined) {
+        return {
+          collections: mark.collections,
+          checkpoint: run.checkpoints.find((c) => c.tier === tier),
+        };
+      }
+
+      // Already unlocked before this run began, so it recorded nothing.
+      //
+      // One `resolve` can unlock several tiers at once, and `runSimulation` pushes a
+      // checkpoint per tier that all share the same state -- so the checkpoint labelled
+      // "tier k" can already have `state.tier` past k. Resuming from it, the loop
+      // condition `state.tier < untilTier` is false immediately and no tierTime is
+      // recorded, which reads as "never reached" whatever the requirement was. Measured
+      // on the slice: all 34 of tier 10's search steps returned never in 0s, while the
+      // run itself reported reachedTier 10 with 54 collections of budget unspent.
+      //
+      // Its landing time is the checkpoint's: the tiers unlocked at the same instant.
+      if (checkpoint !== undefined && checkpoint.state.tier >= tier) {
+        return { collections: checkpoint.nowMs / offlineCapMs, checkpoint };
+      }
+      return { collections: null, checkpoint: undefined };
     };
 
     let step = 0;
+    // Amounts are whole numbers with a floor of 1, so distinct factors routinely produce
+    // the SAME requirement -- and each repeat is a full simulated run of an input already
+    // measured. Observed: 27 of tier 10's 34 steps were byte-identical.
+    const measured = new Map<string, number>();
     const search = bisectMonotone(
       (factor) => {
         step += 1;
@@ -1107,6 +1154,16 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
           .find((m) => m.tier === tier)!
           .requires.map((r) => `${r.item} ${r.amount}`)
           .join(", ");
+
+        const seen = measured.get(amounts);
+        if (seen !== undefined) {
+          report(
+            `  tier ${String(tier).padStart(2)} try ${String(step).padStart(2)}  ` +
+              `${(Number.isFinite(seen) ? seen.toFixed(2) : "never").padStart(8)} of ` +
+              `${target.toFixed(2)}  0s  (same amounts as an earlier try)`,
+          );
+          return seen;
+        }
 
         const impossible = unsatisfiable(candidate);
         if (impossible !== null) {
@@ -1118,6 +1175,7 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
         }
 
         const { collections } = runAt(factor);
+        measured.set(amounts, collections ?? Number.POSITIVE_INFINITY);
         // Per step, not per tier. One tier can take tens of minutes -- every step is
         // a real run, and an overshoot simulates all the way to the overrun budget
         // before it can report "never" -- so a per-tier line made a slow search
