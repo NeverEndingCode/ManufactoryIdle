@@ -36,7 +36,21 @@ function mergeInto(target: Record<string, unknown>, source: Record<string, unkno
   }
 }
 
-export function loadBundleDir(dir: string): Bundle {
+export interface LoadOptions {
+  /**
+   * Overlay `derived.yaml` onto the authored numbers. Default true: the game, the
+   * validator and the simulator must all run on the solved values.
+   *
+   * The calibrator passes false. It is the thing that *writes* derived.yaml, so if it
+   * read its own last output it would search from there instead of from the authored
+   * seeds — two runs over unchanged content would disagree, and each run's scale
+   * factors would compound on the previous one's. Tests that assert on authored
+   * intent pass false for the same reason.
+   */
+  applyDerived?: boolean;
+}
+
+export function loadBundleDir(dir: string, options: LoadOptions = {}): Bundle {
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
     .sort();
@@ -57,11 +71,13 @@ export function loadBundleDir(dir: string): Bundle {
   // Check 1: schema conformance. Throwing here is deliberate — nothing
   // downstream can run against a bundle that is not even shaped right.
   //
-  // The derived overlay is applied here rather than left to callers so that there
-  // is exactly one notion of "the bundle": the validator, the engine, the simulator
-  // and the calibrator all see the calibrated numbers, and none of them can be
-  // looking at the authored seeds by accident.
-  return applyDerived(BundleSchema.parse(merged));
+  // The derived overlay is applied here rather than left to callers so that there is
+  // one notion of "the bundle" by default: the validator, the engine and the simulator
+  // all see the calibrated numbers, and none of them can be looking at the authored
+  // seeds by accident. The calibrator is the one caller that must opt out — see
+  // LoadOptions.applyDerived.
+  const bundle = BundleSchema.parse(merged);
+  return options.applyDerived === false ? bundle : applyDerived(bundle);
 }
 
 

@@ -21,10 +21,44 @@ import {
 } from "./calibrate.js";
 import { runSimulation } from "./run.js";
 
-const slice = loadBundleDir(SLICE_BUNDLE_DIR);
+// The calibrator's own view of content: authored numbers, never the derived.yaml a
+// previous run emitted. These assertions are about what the search does to the seeds.
+const raw = { applyDerived: false } as const;
+
+/**
+ * Give a test its own pacing targets.
+ *
+ * Tests that assert calibrator MECHANICS -- a ceiling falls short, a scale is
+ * rejected, a search has work to do -- need a target the slice measurably cannot
+ * reach. Borrowing `pacing.yaml`'s targets for that couples them to a tuning
+ * decision: retuning the slice to what it can actually pace silently turned five of
+ * these green-for-no-reason, because the content moved under an assertion about the
+ * machinery. The targets below are the ones each test's measurements were taken
+ * against, pinned here so they stay put.
+ */
+const withTargets = (bundle: typeof slice, targets: number[]): typeof slice => ({
+  ...bundle,
+  pacing: { ...bundle.pacing, targetCollectionsToTier: targets },
+});
+const slice = loadBundleDir(SLICE_BUNDLE_DIR, raw);
 const fixture = loadBundleDir(
   fileURLToPath(new URL("../../../packages/content/bundles/fixture", import.meta.url)),
+  raw,
 );
+
+// A guard on the fixture rather than on any one assertion. The slice ships a
+// derived.yaml, and every "the slice is measurably short here" claim below is about
+// the authored numbers; if `raw` ever stopped working, those tests would quietly start
+// measuring the last calibration's output against itself.
+describe("the fixture the calibrator sees", () => {
+  it("is the authored slice, not the calibrated one", () => {
+    const calibrated = loadBundleDir(SLICE_BUNDLE_DIR);
+    expect(calibrated.derived).toBeDefined();
+    expect(slice.milestones.find((m) => m.tier === 1)!.requires[0]!.amount).not.toBe(
+      calibrated.milestones.find((m) => m.tier === 1)!.requires[0]!.amount,
+    );
+  });
+});
 
 describe("bisectMonotone", () => {
   it("finds the input that hits the target", () => {
@@ -148,7 +182,7 @@ describe("calibrate", () => {
   // against a target of 2 -- a hundredfold miss. This is the whole job of the phase,
   // reduced to one tier so it runs in a test.
   it("moves an observed tier time onto its target", () => {
-    const result = calibrate({ bundle: slice, maxTier: 1, tolerance: 0.05, solveREff: false, solveCapPerTier: false });
+    const result = calibrate({ bundle: withTargets(slice, [2]), maxTier: 1, tolerance: 0.05, solveREff: false, solveCapPerTier: false });
     const tier1 = result.tiers[0]!;
     expect(tier1.target).toBe(2);
     expect(tier1.observed).not.toBeNull();
@@ -520,9 +554,10 @@ describe("the ceiling pre-filter", () => {
   it("rejects a scale whose ceiling falls short and keeps one that clears it", () => {
     // Measured: at the authored r_eff, tier 3's ceiling is 7.72 against a target of
     // 11; at twice the authored distance above the floor it is 12.45.
-    const authored = tierCeilings({ bundle: slice, maxTier: 3, policy: "greedy", seed: 42 });
+    const demanding = withTargets(slice, [2, 5, 11]);
+    const authored = tierCeilings({ bundle: demanding, maxTier: 3, policy: "greedy", seed: 42 });
     const doubled = tierCeilings({
-      bundle: withREffScale(slice, 2),
+      bundle: withREffScale(demanding, 2),
       maxTier: 3,
       policy: "greedy",
       seed: 42,
@@ -549,7 +584,7 @@ describe("the scan's use of the pre-filter", () => {
   it("does not fit amounts to a scale whose ceiling cannot reach the target", () => {
     const lines: string[] = [];
     calibrate({
-      bundle: slice,
+      bundle: withTargets(slice, [2, 5, 11]),
       maxTier: 3,
       tolerance: 0.05,
       solveCapPerTier: false,
@@ -650,7 +685,7 @@ describe("the ceiling run's early exit", () => {
   it("stops at the first tier that tops out below its target", () => {
     const started = Date.now();
     const ceilings = tierCeilings({
-      bundle: slice,
+      bundle: withTargets(slice, [2, 5, 11, 24, 52, 110, 230, 480, 1000, 2100]),
       maxTier: 10,
       policy: "greedy",
       seed: 42,
@@ -786,7 +821,12 @@ describe("solving the storage tier factor", () => {
   it("does not leave it at 1, which the slice is measurably short at", () => {
     expect(
       clearsTargets(
-        tierCeilings({ bundle: withCapPerTier(slice, 1), maxTier: 4, policy: "greedy", seed: 42 }),
+        tierCeilings({
+          bundle: withCapPerTier(withTargets(slice, [2, 5, 11, 24]), 1),
+          maxTier: 4,
+          policy: "greedy",
+          seed: 42,
+        }),
       ),
     ).toBe(false);
   }, 300_000);
@@ -937,4 +977,61 @@ describe("solving r_eff and capPerTier jointly", () => {
     });
     expect(result.capPerTier).toBe(slice.storage.capPerTier);
   }, 900_000);
+});
+
+describe("a tier already unlocked at the resume point", () => {
+  // One `resolve` can unlock several tiers at once, and `runSimulation` pushes a
+  // checkpoint per tier that all share the same state -- so "tier k's checkpoint" can
+  // already have `state.tier` past k. Resuming from it to time tier k+1, the loop
+  // condition `state.tier < untilTier` is false immediately, nothing is recorded, and
+  // the tier reads as unreachable whatever its requirement is.
+  //
+  // Measured on the slice: every one of tier 10's 34 search steps returned "never" in
+  // 0s -- including the first, whose 4,000 smart plating was already covered by
+  // 1,570,313 in stock -- while the run itself reported `reachedTier` 10 with 54
+  // collections of budget unspent. A direct replay reaches tier 10 at 12.99 collections.
+  //
+  // Its true landing time is the checkpoint's: the two tiers unlocked at the same
+  // instant.
+  const twoAtOnce: typeof fixture = {
+    ...fixture,
+    milestones: fixture.milestones.map((m) =>
+      m.tier === 3 ? { ...m, requires: m.requires.map((r) => ({ ...r, amount: 1 })) } : m,
+    ),
+  };
+
+  it("reports the tier as reached, not as never", () => {
+    const result = calibrate({
+      bundle: twoAtOnce,
+      maxTier: 3,
+      tolerance: 0.05,
+      solveREff: false,
+      solveCapPerTier: false,
+      maxIterationsPerTier: 2,
+      overrunBudget: 1,
+      refine: false,
+    });
+    const tier3 = result.tiers.find((t) => t.tier === 3);
+    expect(tier3).toBeDefined();
+    expect(tier3!.observed).not.toBeNull();
+  }, 300_000);
+
+  it("does not spend its whole iteration budget re-running identical amounts", () => {
+    const lines: string[] = [];
+    calibrate({
+      bundle: twoAtOnce,
+      maxTier: 3,
+      tolerance: 0.05,
+      solveREff: false,
+      solveCapPerTier: false,
+      overrunBudget: 1,
+      refine: false,
+      onProgress: (line) => lines.push(line),
+    });
+    // Every requirement bottoms out at 1, so once the search reaches the floor further
+    // halving changes nothing and each extra step is a simulated run of the same input.
+    const steps = lines.filter((l) => /tier +3 try/.test(l));
+    const atFloor = steps.filter((l) => /iron_plate 1\b/.test(l));
+    expect(atFloor.length).toBeLessThanOrEqual(2);
+  }, 300_000);
 });

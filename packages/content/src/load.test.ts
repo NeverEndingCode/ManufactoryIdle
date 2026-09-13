@@ -176,3 +176,30 @@ describe("the derived block", () => {
     ).toThrow(/nope/);
   });
 });
+
+// Spec B.1 runs one way: intent is authored, numbers are solved. A calibration that
+// starts from the PREVIOUS calibration's output breaks that -- its amounts search scales
+// from whatever the last run emitted, so factors compound and two runs of the same
+// script on the same content give different answers.
+//
+// It also makes the slice unusable as a test fixture: every test that loads it starts
+// seeing calibrated numbers the moment derived.yaml lands.
+describe("loading without the derived overlay", () => {
+  const DERIVED = `derived:\n  machineClasses:\n    - { id: miner, costRatio: 1.9 }\n`;
+
+  it("ignores derived.yaml when asked for the authored bundle", () => {
+    const dir = writeBundle({ ...ALL, "z-derived.yaml": DERIVED });
+    expect(loadBundleDir(dir).machineClasses[0]!.costRatio).toBe(1.9);
+    expect(loadBundleDir(dir, { applyDerived: false }).machineClasses[0]!.costRatio).toBe(1.09);
+  });
+
+  it("still parses and returns the block, so a caller can read the provenance", () => {
+    const dir = writeBundle({ ...ALL, "z-derived.yaml": DERIVED });
+    expect(loadBundleDir(dir, { applyDerived: false }).derived).toBeDefined();
+  });
+
+  it("applies the overlay by default, because the game must run on solved numbers", () => {
+    const dir = writeBundle({ ...ALL, "z-derived.yaml": DERIVED });
+    expect(loadBundleDir(dir).machineClasses[0]!.costRatio).toBe(1.9);
+  });
+});
