@@ -40,6 +40,25 @@ const withTargets = (bundle: typeof slice, targets: number[]): typeof slice => (
   ...bundle,
   pacing: { ...bundle.pacing, targetCollectionsToTier: targets },
 });
+
+/**
+ * Pin a test to the storage depth its measurements were taken against.
+ *
+ * Same hazard as `withTargets`, from the other direction. Tests that need a bundle
+ * which measurably CANNOT clear a target -- the whole point of the capPerTier search --
+ * were reading the slice's shipped ladder, so deepening it to 22/16 made the slice clear
+ * unaided and `capPerTier` correctly stop rising. Four of them then asserted against a
+ * premise the content had removed, and one spent 23 minutes doing the expensive fit it
+ * exists to prove is skipped. 20/15 is the pre-fix depth those ceilings were measured at.
+ */
+const withLadder = (bundle: typeof slice, storage: number, quantum: number): typeof slice => ({
+  ...bundle,
+  storage: { ...bundle.storage, maxLevel: storage },
+  quantumStorage: { ...bundle.quantumStorage, maxLevel: quantum },
+});
+
+/** The ladder the capPerTier tests' short-of-target measurements were taken against. */
+const shallow = (bundle: typeof slice): typeof slice => withLadder(bundle, 20, 15);
 const slice = loadBundleDir(SLICE_BUNDLE_DIR, raw);
 const fixture = loadBundleDir(
   fileURLToPath(new URL("../../../packages/content/bundles/fixture", import.meta.url)),
@@ -584,7 +603,7 @@ describe("the scan's use of the pre-filter", () => {
   it("does not fit amounts to a scale whose ceiling cannot reach the target", () => {
     const lines: string[] = [];
     calibrate({
-      bundle: withTargets(slice, [2, 5, 11]),
+      bundle: shallow(withTargets(slice, [2, 5, 11])),
       maxTier: 3,
       tolerance: 0.05,
       solveCapPerTier: false,
@@ -779,7 +798,7 @@ describe("solving the storage tier factor", () => {
   // astronomical amounts. The first version of this test used 12 and did not finish in
   // nine minutes. Pick the demand from the response curve, not from taste.
   const demandingTargets: typeof slice = {
-    ...slice,
+    ...shallow(slice),
     pacing: {
       ...slice.pacing,
       targetCollectionsToTier: [2, 7, ...slice.pacing.targetCollectionsToTier.slice(2)],
@@ -923,7 +942,7 @@ describe("solving r_eff and capPerTier jointly", () => {
   // -- about 1,340 -- and every probe on the way there simulates a game demanding
   // astronomical amounts. This describe kept 12 after the other one was corrected.
   const demanding: typeof slice = {
-    ...slice,
+    ...shallow(slice),
     pacing: { ...slice.pacing, targetCollectionsToTier: [2, 7, ...slice.pacing.targetCollectionsToTier.slice(2)] },
   };
 

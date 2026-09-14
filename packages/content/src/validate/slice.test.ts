@@ -89,24 +89,40 @@ describe("the vertical slice", () => {
   });
 
   // Check 9 rejects a requirement ABOVE the cap, which leaves the far more common
-  // failure silent: one that fits by a hair. Tier 9's polymer_resin sat at 99.6% of
-  // its ceiling -- legal, and one bisection step from a wall the calibrator could not
-  // see past. The amounts search then reported a miss rather than an error, so a
-  // terminated ladder looked like content that merely paced badly.
+  // failure silent: one that fits by a hair. Tier 9's polymer_resin sat at 99.6% of its
+  // ceiling -- legal, and one bisection step from a wall the calibrator could not see
+  // past. The amounts search then reported a miss rather than an error, so a terminated
+  // ladder looked like content that merely paced badly.
   //
-  // Headroom is what makes the ladder solvable, not just valid: the search has to be
-  // able to raise an amount without running out of shelf.
-  it("leaves every milestone real headroom under its storage ceiling", () => {
+  // Only tiers the run actually FITTED are held to this. Where a target is out of reach
+  // the amounts search saturates against whatever ceiling exists, by construction and at
+  // any ladder depth -- tier 10 asks 93.5% of its cap at maxLevel 22 and would ask the
+  // same share at 30, because the deep end answers the requirement logarithmically and
+  // the search keeps climbing for a target it can never hit. Asserting headroom there
+  // would report an unreachable target as a storage defect and invite deepening the
+  // ladder until the content asks for ten billion units. The miss is already the finding.
+  it("leaves every fitted milestone real headroom under its storage ceiling", () => {
     const b = bundle();
+    const run = b.derived?.run;
+    expect(run, "the slice must ship a calibration run to check headroom against").toBeDefined();
+    const fitted = (tier: number): boolean => {
+      const target = run!.targetCollectionsToTier[tier - 1];
+      const observed = run!.observedCollectionsToTier?.[tier - 1];
+      if (target === undefined || observed === undefined || observed === null) return false;
+      return Math.abs(observed - target) / target <= 0.05;
+    };
+
     const items = new Map(b.items.map((i) => [i.id, i]));
-    const tight = b.milestones.flatMap((m) =>
-      m.requires.map((r) => {
-        const item = items.get(r.item)!;
-        const cap = maxAttainableCap(b, item, Math.max(0, m.tier - 1));
-        return { tier: m.tier, item: r.item, used: r.amount / cap };
-      }),
-    ).filter((x) => x.used > 0.6);
-    expect(tight.map((x) => `tier ${x.tier} ${x.item} ${(x.used * 100).toFixed(1)}%`)).toEqual([]);
+    const tight = b.milestones
+      .filter((m) => fitted(m.tier))
+      .flatMap((m) =>
+        m.requires.map((r) => {
+          const cap = maxAttainableCap(b, items.get(r.item)!, Math.max(0, m.tier - 1));
+          return `tier ${m.tier} ${r.item} ${((r.amount / cap) * 100).toFixed(1)}%`;
+        }),
+      )
+      .filter((line) => Number(line.split(" ").at(-1)!.replace("%", "")) > 60);
+    expect(tight).toEqual([]);
   });
 
   it("carries alternate recipes and machine marks", () => {

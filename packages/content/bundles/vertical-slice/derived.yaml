@@ -12,7 +12,7 @@
 # observed column has drifted from its target column is visibly stale.
 derived:
   run:
-    calibratedAt: 2026-09-13T21:55:49.333Z
+    calibratedAt: 2026-09-14T22:43:27.271Z
     policy: greedy
     seed: 42
     targetCollectionsToTier:
@@ -35,8 +35,8 @@ derived:
       - 4.183417723432568
       - 7.1363928200329205
       - 10.995386584769314
-      - 16.047603454251753
-      - 16.10199865254347
+      - 15.727795553366235
+      - 15.767157819676168
   machineClasses:
     - id: assembler
       costRatio: 1.070689897576949
@@ -130,15 +130,15 @@ derived:
     - tier: 9
       requires:
         - item: smart_plating
-          amount: 1664000
+          amount: 2048000
         - item: polymer_resin
-          amount: 6656000
+          amount: 8192000
     - tier: 10
       requires:
         - item: smart_plating
-          amount: 2560000
+          amount: 7168000
         - item: encased_industrial_beam
-          amount: 1920000
+          amount: 5376000
   storage:
     capPerTier: 1
   quantumStorage:

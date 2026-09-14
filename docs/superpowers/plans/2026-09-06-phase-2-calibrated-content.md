@@ -995,6 +995,40 @@ authoring decision; the numbers inside it are the calibrator's output.
 - `r_eff > 1 + ε` with every multiplier maxed
 - Replay determinism: same log twice, identical discrete state
 
+### The storage ladder terminated under the slice's own milestones
+
+Check 9 rejects a requirement *above* the cap. Nothing warned about one that fits by a
+hair, and that is the failure that actually happened: tier 9's `polymer_resin` sat at
+**99.6%** of the most a player can ever hold and tier 10's `smart_plating` at 76.6%. Both
+legal, and the amounts search was bisecting against a wall rather than against the
+economy — then reporting the result as a pacing miss rather than as a ladder that had run
+out.
+
+`storage.maxLevel` 20 → 22 and `quantumStorage.maxLevel` 15 → 16: the smallest pair that
+puts every milestone under 50%. Deeper was rejected deliberately — §3.3 wants capacity to
+block production *periodically*, so the ladder must stay finite enough to bind during
+play. What it must not do is run out. Check 12 still passes: `costGrowth` 1.5 stays under
+`capGrowth` 1.6, so the cost term falls further behind at every level added.
+
+Re-calibrated against the new ladder, tier 9 is unpinned and the fit holds:
+
+| | before | after |
+|---|---|---|
+| tier 9 `polymer_resin` | 99.6% of cap | 53.4% |
+| tier 9 `smart_plating` | 49.8% | 26.7% |
+| tier 9 observed | 16.05 (+0.3%) | 15.73 (−1.7%) |
+| tier 10 `smart_plating` | 76.6% | 93.5% |
+
+**Tier 10 went the other way, and that is the tell.** Its target is unreachable, so the
+amounts search climbs until something stops it — at maxLevel 22 that is 93.5% of the cap,
+and at maxLevel 30 it would be the same share of a bigger number. A ladder cannot fix a
+target the economy cannot reach; it only sets how absurd the requirement gets first.
+
+So the slice test holds only tiers the run actually **fitted** to a headroom bound.
+Verified against the pre-fix content at commit `5399d15`: the guard flags
+`tier 9 polymer_resin 99.6%` and stays silent on tier 10 — it catches the real defect
+without reporting an unreachable target as a storage problem.
+
 ### The deep end is logarithmic, and that is the real pacing wall
 
 Tier 10 missed its target by 35% and the storage cap was the visible cause: the
