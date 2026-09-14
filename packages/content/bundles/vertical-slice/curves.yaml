@@ -16,14 +16,21 @@ storage:
   costGrowth: 1.5
   baseCostItem: iron_plate
   baseCostAmount: 50
-  maxLevel: 20
+  # 20 and 15 terminated under the slice's own milestones: tier 9's polymer_resin sat
+  # at 99.6% of its ceiling and tier 10's smart_plating at 76.6%, so the amounts search
+  # was bisecting against a wall rather than against the economy. 22 and 16 put every
+  # milestone under 50% (worst: polymer_resin 43.4%), which is the smallest pair that
+  # does. Deeper was rejected on purpose -- §3.3 wants capacity to block production
+  # PERIODICALLY, so the ladder has to stay finite enough to bind during play. What it
+  # must not do is run out.
+  maxLevel: 22
 
 quantumStorage:
   capGrowth: 1.6
   costGrowth: 1.55
   baseCostItem: iron_plate
   baseCostAmount: 500
-  maxLevel: 15
+  maxLevel: 16
 
 # Spec D3: applied per multiplier category and again on the product, so neither one
 # system nor the four stacking can drive r_eff below 1. Piecewise-linear (spec E.4).

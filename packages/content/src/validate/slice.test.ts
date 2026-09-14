@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadBundleDir } from "../load.js";
 import { validateBundle } from "./index.js";
+import { maxAttainableCap } from "./economy.js";
 
 // The B.5 vertical slice — the content the game actually runs on, and the
 // content Task 3 calibrates. It was authored with no test and no script
@@ -85,6 +86,27 @@ describe("the vertical slice", () => {
     // Coal generation is water-gated, which is what makes power contend with
     // the Oil lane's extractors.
     expect(inputIds("burn_coal")).toContain("water");
+  });
+
+  // Check 9 rejects a requirement ABOVE the cap, which leaves the far more common
+  // failure silent: one that fits by a hair. Tier 9's polymer_resin sat at 99.6% of
+  // its ceiling -- legal, and one bisection step from a wall the calibrator could not
+  // see past. The amounts search then reported a miss rather than an error, so a
+  // terminated ladder looked like content that merely paced badly.
+  //
+  // Headroom is what makes the ladder solvable, not just valid: the search has to be
+  // able to raise an amount without running out of shelf.
+  it("leaves every milestone real headroom under its storage ceiling", () => {
+    const b = bundle();
+    const items = new Map(b.items.map((i) => [i.id, i]));
+    const tight = b.milestones.flatMap((m) =>
+      m.requires.map((r) => {
+        const item = items.get(r.item)!;
+        const cap = maxAttainableCap(b, item, Math.max(0, m.tier - 1));
+        return { tier: m.tier, item: r.item, used: r.amount / cap };
+      }),
+    ).filter((x) => x.used > 0.6);
+    expect(tight.map((x) => `tier ${x.tier} ${x.item} ${(x.used * 100).toFixed(1)}%`)).toEqual([]);
   });
 
   it("carries alternate recipes and machine marks", () => {
