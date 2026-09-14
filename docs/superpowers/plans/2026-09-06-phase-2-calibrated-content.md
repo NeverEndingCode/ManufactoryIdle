@@ -995,6 +995,46 @@ authoring decision; the numbers inside it are the calibrator's output.
 - `r_eff > 1 + ε` with every multiplier maxed
 - Replay determinism: same log twice, identical discrete state
 
+### What a gate run costs — measured
+
+`sim run --policy <p> --seed 42 --until tier:10 --max-days 120`, serial, on the
+calibrated slice:
+
+| policy | wall clock |
+|---|---|
+| `greedy` | 173.7s |
+| `bottleneck` | 232.5s |
+| `casual` | 240.7s |
+| `optimal` | **did not finish in 33 minutes** (killed; worker pegged at 100% CPU, so slow rather than stuck) |
+
+**The three gated policies cost ~10.8 minutes together.** That is on top of an 11-minute
+`pnpm test`, so the full gate is ~22 minutes a commit: too slow for per-commit CI, fine
+nightly. Split it — keep a cheap per-commit smoke (`sim:ci` is already greedy to tier 2 in
+30 days) plus `content:check` and the determinism replay, and run the ten-tier three-policy
+gate nightly or pre-merge.
+
+**One run answers every E.5 check.** A single `--report json` already carries
+`reachedTier`, `tierTimes`, `maxDeadTimeMs`, `rEff` and `bindingConstraints`, so the gate
+does not need a run per assertion — three runs total, not fifteen.
+
+Two of the five checks already pass on the calibrated slice: max dead time is 0.50
+game-hours, and the minimum observed `r_eff` is 1.023285, comfortably above the 1 + 1e-3
+runaway floor (19 of 23 lane/class pairs ever run; the other four never get built).
+
+**`optimal` must stay out of the gate, and its cost is a finding.** It is >10x the other
+three on identical content. E.5 names `greedy`, `casual` and `bottleneck`, so nothing is
+blocked, but a policy that cannot replay the slice in half an hour needs its own look.
+
+**The calibration reproduces exactly.** A plain `sim run` against the committed bundle
+returns the same ten tier times `derived.yaml` reports, to seven significant figures --
+so the derived block is verified end to end, not merely self-consistent. Tier 10 is the
+one that differs at all (16.1156 vs 16.1020, 0.08%), which is where the run stops rather
+than where the milestone completes.
+
+**Storage is the top binding constraint**, at `storage:iron_plate` for 306.7M ms -- twice
+the next entry (`make_iron_plate`, 153.4M). That is independent confirmation of what caps
+tier 10, and it points at the content fix rather than at a target retune.
+
 **Assert absolute tier times, never a policy ordering.** Carried forward from Phase 0 and
 now doubly earned: `greedy` can legitimately reach a tier *after* `casual`, because it
 spends plate on miners that do not raise plate output. A `greedy < casual` assertion fails
