@@ -995,6 +995,42 @@ authoring decision; the numbers inside it are the calibrator's output.
 - `r_eff > 1 + ε` with every multiplier maxed
 - Replay determinism: same log twice, identical discrete state
 
+### The deep end is logarithmic, and that is the real pacing wall
+
+Tier 10 missed its target by 35% and the storage cap was the visible cause: the
+amounts search hit `smart_plating 3341500 is above the maximum 3340189 a player can
+hold`. That reading was wrong, and measurement overturned it — the third time in this
+project, so treat the pattern as expected rather than unlucky.
+
+With the ladder raised past any plausible need (`maxLevel` 30/24, caps in the hundreds
+of millions) tier 10 still tops out near 20 collections. Its response to the
+requirement is **logarithmic**:
+
+| factor | smart_plating | collections |
+|---|---|---|
+| 1x | 2,560,000 | 15.80 |
+| 4x | 10,240,000 | 17.17 |
+| 8x | 20,480,000 | 18.35 |
+| 32x | 81,920,000 | 20.26 |
+
+**32x the material buys 4.5 collections.** Each doubling is worth about 0.65, so
+reaching a target of 25 by amounts alone needs roughly 4,000x — ten billion units, which
+is not content anybody would ship.
+
+The cause is `r_eff` compounding. By tier 9 production has grown so fast that the time
+to accumulate anything is `log(amount) / growth`, and the milestone amount — the only
+lever the amounts search has — has almost stopped being a lever. This is the same fact
+the ceiling measurements reported additively (`+~2` a tier) seen from the other side.
+
+**So the deep end cannot be paced by asking for more stuff.** The levers that still work
+there are `r_eff` (the scale), the softcaps, and content breadth — a tier that gates on
+something other than a bigger pile. `targetCollectionsToTier` for tiers 9 and 10 has to
+be set against that, not against a geometric curve.
+
+It also means the slice has no room for a tenth tier as authored: tier 9 lands near 16
+and tier 10's reachable band starts right behind it. Either the economy has to be slowed
+where it runs away, or tier 10 needs a different kind of gate.
+
 ### What a gate run costs — measured
 
 `sim run --policy <p> --seed 42 --until tier:10 --max-days 120`, serial, on the
