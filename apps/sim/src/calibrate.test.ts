@@ -57,8 +57,20 @@ const withLadder = (bundle: typeof slice, storage: number, quantum: number): typ
   quantumStorage: { ...bundle.quantumStorage, maxLevel: quantum },
 });
 
-/** The ladder the capPerTier tests' short-of-target measurements were taken against. */
-const shallow = (bundle: typeof slice): typeof slice => withLadder(bundle, 20, 15);
+/**
+ * The storage curve every short-of-target measurement below was taken against: depth
+ * 20/15 AND costGrowth 1.5.
+ *
+ * Both halves are load-bearing and each was learned by breaking the suite. Deepening the
+ * ladder to 22/16 gave the slice enough shelf to clear targets it used to miss; raising
+ * costGrowth to 1.8 slowed the late game enough to move the ceilings again. Either one
+ * alone turns "this bundle measurably cannot clear" -- the premise the capPerTier and
+ * ceiling-prefilter tests are built on -- quietly false.
+ */
+const shallow = (bundle: typeof slice): typeof slice => ({
+  ...withLadder(bundle, 20, 15),
+  storage: { ...bundle.storage, maxLevel: 20, costGrowth: 1.5 },
+});
 const slice = loadBundleDir(SLICE_BUNDLE_DIR, raw);
 const fixture = loadBundleDir(
   fileURLToPath(new URL("../../../packages/content/bundles/fixture", import.meta.url)),
@@ -455,7 +467,7 @@ describe("the scan and check 8", () => {
     if (shared === undefined) {
       const lines: string[] = [];
       const result = calibrate({
-        bundle: slice,
+        bundle: shallow(slice),
         maxTier: 1,
         tolerance: 0.05,
         solveCapPerTier: false,
@@ -573,7 +585,7 @@ describe("the ceiling pre-filter", () => {
   it("rejects a scale whose ceiling falls short and keeps one that clears it", () => {
     // Measured: at the authored r_eff, tier 3's ceiling is 7.72 against a target of
     // 11; at twice the authored distance above the floor it is 12.45.
-    const demanding = withTargets(slice, [2, 5, 11]);
+    const demanding = shallow(withTargets(slice, [2, 5, 11]));
     const authored = tierCeilings({ bundle: demanding, maxTier: 3, policy: "greedy", seed: 42 });
     const doubled = tierCeilings({
       bundle: withREffScale(demanding, 2),
@@ -704,7 +716,7 @@ describe("the ceiling run's early exit", () => {
   it("stops at the first tier that tops out below its target", () => {
     const started = Date.now();
     const ceilings = tierCeilings({
-      bundle: withTargets(slice, [2, 5, 11, 24, 52, 110, 230, 480, 1000, 2100]),
+      bundle: shallow(withTargets(slice, [2, 5, 11, 24, 52, 110, 230, 480, 1000, 2100])),
       maxTier: 10,
       policy: "greedy",
       seed: 42,

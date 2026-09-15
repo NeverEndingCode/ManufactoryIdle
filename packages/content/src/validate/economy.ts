@@ -281,8 +281,11 @@ export function checkStorageLadderClimbable(bundle: Bundle): ValidationIssue[] {
             `the ${label} ladder stops at level ${level}: that level costs ` +
               `${cost.toFixed(0)} "${curve.baseCostItem}" but the most a player can hold ` +
               `there is ${hold.toFixed(0)}, so it can never be bought and no level above ` +
-              `it is reachable. costGrowth ${curve.costGrowth} outruns capGrowth ` +
-              `${bundle.storage.capGrowth}; cost growth must not exceed capacity growth.`,
+              `it is reachable. costGrowth ${curve.costGrowth} against capGrowth ` +
+              `${bundle.storage.capGrowth} crosses over here, so either end the ladder ` +
+              `below level ${level} or slow the cost curve. Cost growth ABOVE capacity ` +
+              `growth is intended (§3.3 wants capacity to bind); outliving the crossover ` +
+              `is not.`,
           ),
         );
         break;

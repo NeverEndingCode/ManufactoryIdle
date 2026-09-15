@@ -12,7 +12,7 @@
 # observed column has drifted from its target column is visibly stale.
 derived:
   run:
-    calibratedAt: 2026-09-14T22:43:27.271Z
+    calibratedAt: 2026-09-15T01:43:08.858Z
     policy: greedy
     seed: 42
     targetCollectionsToTier:
@@ -28,15 +28,15 @@ derived:
       - 25
     observedCollectionsToTier:
       - 0.4193672839506173
-      - 0.8679861111111111
-      - 1.173415038940746
-      - 1.944890351884811
-      - 3.0573911030769203
-      - 4.183417723432568
-      - 7.1363928200329205
-      - 10.995386584769314
-      - 15.727795553366235
-      - 15.767157819676168
+      - 0.7940972222222222
+      - 1.18881186433757
+      - 1.8327114501738706
+      - 3.0483883970705383
+      - 4.41999810399619
+      - 6.844546325827082
+      - 10.753853182409864
+      - 15.487724035771214
+      - 15.53649284278617
   machineClasses:
     - id: assembler
       costRatio: 1.070689897576949
@@ -88,27 +88,27 @@ derived:
     - tier: 2
       requires:
         - item: reinforced_iron_plate
-          amount: 1
+          amount: 200
         - item: iron_rod
-          amount: 1
+          amount: 1200
     - tier: 3
       requires:
         - item: cable
-          amount: 1400
+          amount: 2000
         - item: reinforced_iron_plate
-          amount: 1050
+          amount: 1500
     - tier: 4
       requires:
         - item: concrete
-          amount: 4000
+          amount: 1600
         - item: rotor
-          amount: 1000
+          amount: 400
     - tier: 5
       requires:
         - item: steel_ingot
-          amount: 6334
+          amount: 4859
         - item: copper_sheet
-          amount: 2375
+          amount: 1822
     - tier: 6
       requires:
         - item: modular_frame
@@ -118,21 +118,21 @@ derived:
     - tier: 7
       requires:
         - item: plastic
-          amount: 36000
+          amount: 14400
         - item: rubber
-          amount: 36000
+          amount: 14400
     - tier: 8
       requires:
         - item: packaged_fuel
-          amount: 96000
+          amount: 38400
         - item: modular_frame
-          amount: 128000
+          amount: 51200
     - tier: 9
       requires:
         - item: smart_plating
-          amount: 2048000
+          amount: 512000
         - item: polymer_resin
-          amount: 8192000
+          amount: 2048000
     - tier: 10
       requires:
         - item: smart_plating

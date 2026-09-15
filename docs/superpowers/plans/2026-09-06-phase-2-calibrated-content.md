@@ -1029,6 +1029,90 @@ Verified against the pre-fix content at commit `5399d15`: the guard flags
 `tier 9 polymer_resin 99.6%` and stays silent on tier 10 — it catches the real defect
 without reporting an unreachable target as a storage problem.
 
+### Slowing the deep end: three levers measured, one works
+
+The deep end runs away — tier 9 at 15.73 and tier 10 at 16.89 against targets of 16 and
+25, barely a collection apart. Three candidate brakes, measured rather than reasoned
+about, because two of the three move the game the *opposite* way from the obvious guess.
+
+**1. The ladder softcap — inert.** Details below; slopes 0.25 to 0.02 give identical tier
+times.
+
+**2. `r_eff` — backwards.** Raising it makes the game FASTER. Scaling the calibrated
+`r_eff` up moves every tier *earlier*:
+
+| scale | r_eff | t1 | t5 | t9 | t10 |
+|---|---|---|---|---|---|
+| 1 | 1.02334 | 0.42 | 3.06 | 15.73 | 16.89 |
+| 2 | 1.04669 | 0.33 | 2.58 | 12.55 | 13.92 |
+| 3 | 1.07003 | 0.28 | 2.27 | 10.84 | 14.60 |
+
+Pricier machines mean `greedy` reinvests less and banks more toward a requirement that is
+*fixed*, so a weaker economy delivers it sooner. `r_eff` only slows things where amounts
+sit at the storage cap — which is the regime the earlier ceiling numbers were measured in,
+and why they pointed the other way. Both readings are right about their own regime.
+
+**3. Storage `costGrowth` — works, and is tier-targeted for free.** Early levels stay
+cheap and late levels compound, so the effect grows with depth:
+
+| costGrowth | t1 | t2 | t3 | t8 | t9 | t10 |
+|---|---|---|---|---|---|---|
+| 1.5 (was) | 0.42 | 0.87 | 1.17 | 11.00 | 15.73 | 16.89 |
+| 1.6 | 0.42 | 0.87 | 1.17 | 11.61 | 17.33 | 18.16 |
+| 1.7 | 0.42 | 0.87 | 1.17 | 12.15 | 18.92 | 19.79 |
+| 1.8 | 0.42 | 0.74 | 1.04 | 12.44 | 28.12 | 28.38 |
+| 2.0 | rejected by check 12 — the ladder stops at level 17 |
+
+Tiers 1–3 are byte-identical through 1.7. `baseCostAmount` was measured too and is the
+wrong knob: 50 → 400 moves tier 1 from 0.42 to 1.10, because it is a uniform scale on
+every level rather than a growth rate.
+
+**The slice ships `costGrowth: 1.8`**, above `capGrowth` 1.6 — which is what §3.3 asks for
+("caps grow *slightly slower than build costs*") and what check 12 permits. The check tests
+`cost <= holdable` per level, so outgrowing capacity is fine until the crossover; all it
+requires is that the ladder end first. Check 12's message claimed the stricter rule
+"cost growth must not exceed capacity growth", which the check never implemented and which
+forbids the configuration §3.3 wants — corrected, with tests either side of the crossover.
+
+**What this does not fix:** tiers 9 and 10 stay glued together at every value (28.12 and
+28.38 at 1.8). Slowing shifts the whole deep end later; it does not *separate* two tiers
+whose requirements are both storage-capped in a logarithmic regime. A 16-to-25 gap needs
+tier 10 to gate on something other than a bigger pile.
+
+### The ladder softcap is not a live lever on this content
+
+Where the runaway is, measured per tier as the largest ladder multiplier over all
+(lane, class) pairs — every class is authored `step 1.5, interval 10`, so the raw
+multiplier is `1.5^(machines/10)`:
+
+| tier | lane/class | machines | raw ladder | after softcap |
+|---|---|---|---|---|
+| 5 | power/collector | 170 | 9.85e2 | 9.85e2 |
+| 6 | iron/constructor | 254 | 2.53e4 | 7.06e3 |
+| 7 | iron/miner | 381 | 4.91e6 | 1.23e6 |
+| 8 | iron/smelter | 501 | 6.38e8 | 1.59e8 |
+| 9 | iron/smelter | 681 | 9.42e11 | 2.36e11 |
+| 10 | iron/smelter | 729 | 4.77e12 | 1.19e12 |
+
+The threshold (1000) is crossed at exactly tier 5 → 6, so the softcap engages precisely
+where the runaway starts — it looks like the tier-targeted brake the deep end wants.
+
+**It does nothing.** Slopes 0.25, 0.1, 0.05 and 0.02 give byte-identical tier times
+across all ten tiers. Two reasons, and the second is the one that matters:
+
+1. A piecewise-**linear** softcap cannot bend an exponential. For `v >> threshold`,
+   `threshold + (v - threshold) * slope ≈ slope * v` — it rescales by a constant and
+   leaves the growth *rate* untouched. Spec D3 wants it linear (monotonic, E.4-safe), so
+   this is a property of the design, not a bug in the values.
+2. **Production is not the constraint.** `bindingConstraints` puts `storage:iron_plate`
+   at 306.7M ms of a 464M ms run — two thirds of the game is spent bound on storage, not
+   waiting for output. Dividing an already-surplus multiplier by twelve changes nothing,
+   because nothing was waiting on it.
+
+So the deep end is cost- and storage-bound, and the lever that moves it is the cost side:
+`r_eff`. Do not reach for the softcaps again without first checking
+`bindingConstraints` — if storage tops that list, no multiplier change will register.
+
 ### The deep end is logarithmic, and that is the real pacing wall
 
 Tier 10 missed its target by 35% and the storage cap was the visible cause: the

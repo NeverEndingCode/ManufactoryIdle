@@ -204,6 +204,30 @@ describe("checkStorageLadderClimbable (check 12)", () => {
     expect(checkStorageLadderClimbable(b)).toEqual([]);
   });
 
+  // §3.3 wants caps to grow *slightly slower than build costs*, so that capacity
+  // periodically blocks production -- which means costGrowth is SUPPOSED to sit above
+  // capGrowth. That reads like the thing check 12 forbids, and it is not: the check
+  // tests each level for `cost <= holdable`, so outgrowing capacity is fine right up
+  // until the crossover, and all the check requires is that the ladder ENDS first.
+  // The slice ships costGrowth 1.8 against capGrowth 1.6 on exactly this basis. This
+  // fixture's crossover is level 20 (its base caps are smaller than the slice's), so 18
+  // is below it and 40 is past it.
+  it("allows cost growth above capacity growth when the ladder ends before the crossover", () => {
+    const b = withCostItem(bundle());
+    b.storage = { ...b.storage, costGrowth: 1.8, maxLevel: 18 };
+    b.quantumStorage = { ...b.quantumStorage, costGrowth: 1.55 };
+    expect(checkStorageLadderClimbable(b)).toEqual([]);
+  });
+
+  // ...and the same growth is rejected once the ladder runs PAST the crossover, which
+  // is the distinction the check actually draws.
+  it("flags that same cost growth when the ladder outlives the crossover", () => {
+    const b = withCostItem(bundle());
+    b.storage = { ...b.storage, costGrowth: 1.8, maxLevel: 40 };
+    b.quantumStorage = { ...b.quantumStorage, costGrowth: 1.55 };
+    expect(checkStorageLadderClimbable(b)).toHaveLength(1);
+  });
+
   // The very first level has to be affordable too, and that is a different sum: no
   // amount of favourable growth rescues a base cost above the base cap.
   it("flags a first level nobody could ever afford", () => {
