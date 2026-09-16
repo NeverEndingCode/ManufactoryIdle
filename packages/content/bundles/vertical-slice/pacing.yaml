@@ -30,8 +30,41 @@
 # somewhere to land. Ten tiers now span about 25 collections, roughly eight days of play:
 # the right size for a 44-recipe vertical slice, and NOT the shipping game's pacing. The
 # original targets come back with the full catalogue, against content that can carry them.
+#
+# TIER 1 RETUNED 0.5 -> 0.42 IN PHASE 2, because 0.5 is not a reachable number.
+#
+# A tier's time is QUANTISED by the liquid storage cap of whichever requirement item
+# is satisfied last. `tierProgress` (policies.ts) reads 0 for a requirement above the
+# cap -- correctly, since waiting never delivers it and only buying a level does -- so
+# a requirement one unit over the cap pins the purchase cadence at
+# `purchaseIntervalEarlySeconds` for the WHOLE run instead of ramping to
+# `purchaseIntervalLateSeconds`. That is a binary regime switch, and it is worth far
+# more time than any amount of extra stuff.
+#
+# Measured on tier 1, sweeping `iron_plate` (base liquid cap 500 + 2000 = 2500):
+#
+#   amount   2400    2500    2600    2900    3300    4100
+#   colls    0.250   0.260   0.418   0.746   1.063   1.388
+#
+# Below the cap the curve is smooth and fine-grained (~0.0104 collections per 100
+# plate) and tops out at 0.2604. The first value above the cap is 0.4194. The whole
+# band between them is unreachable, and 0.5 is in the next gap up.
+#
+# A second requirement item does NOT give a finer knob, which was the standing guess.
+# An item that fills to its own cap before the binding one is FREE: tier 1 with
+# `iron_plate` 2800 plus `iron_ingot` at anything from 200 to 3300 measures 0.419367
+# every time. Only an item pushed above ITS own cap adds anything, and then it adds a
+# whole cliff: `biomass` 3400 takes the same tier from 0.419 to 0.688, straight over
+# the target. A grid over all five tier-0 items x both plate plateaus x ~100 amounts
+# found NOTHING in [0.44, 0.58].
+#
+# So 0.42 is the honest target: it is the centre of the window of targets whose 5%
+# band contains a reachable value (0.3994 .. 0.4415), and the shipped 2800 lands at
+# 0.4194 inside it. The cost is that tier 1 -> tier 2 is a 1.90x step against the
+# ladder's ~1.55, which is defensible for a first milestone and is recorded here
+# rather than hidden.
 pacing:
-  targetCollectionsToTier: [0.5, 0.8, 1.2, 1.9, 2.9, 4.4, 6.8, 11, 16, 25]
+  targetCollectionsToTier: [0.42, 0.8, 1.2, 1.9, 2.9, 4.4, 6.8, 11, 16, 25]
   activeHoursPerDay: 2.5
   offlineCollectionsPerDay: 3
   purchaseIntervalEarlySeconds: 120

@@ -12,11 +12,11 @@
 # observed column has drifted from its target column is visibly stale.
 derived:
   run:
-    calibratedAt: 2026-09-15T01:43:08.858Z
+    calibratedAt: 2026-09-16T22:48:41.171Z
     policy: greedy
     seed: 42
     targetCollectionsToTier:
-      - 0.5
+      - 0.42
       - 0.8
       - 1.2
       - 1.9
@@ -27,16 +27,16 @@ derived:
       - 16
       - 25
     observedCollectionsToTier:
-      - 0.4193672839506173
-      - 0.7940972222222222
-      - 1.18881186433757
-      - 1.8327114501738706
-      - 3.0483883970705383
-      - 4.41999810399619
-      - 6.844546325827082
-      - 10.753853182409864
-      - 15.487724035771214
-      - 15.53649284278617
+      - 0.41782407407407407
+      - 0.7980235042735043
+      - 1.192738146388852
+      - 1.8366377322251524
+      - 2.964915181423969
+      - 4.4227138656561955
+      - 6.847262087487087
+      - 10.75656894406987
+      - 15.49043979743122
+      - 15.539208604446177
   machineClasses:
     - id: assembler
       costRatio: 1.070689897576949
@@ -84,7 +84,7 @@ derived:
     - tier: 1
       requires:
         - item: iron_plate
-          amount: 2800
+          amount: 2600
     - tier: 2
       requires:
         - item: reinforced_iron_plate
@@ -106,9 +106,9 @@ derived:
     - tier: 5
       requires:
         - item: steel_ingot
-          amount: 4859
+          amount: 4700
         - item: copper_sheet
-          amount: 1822
+          amount: 3308
     - tier: 6
       requires:
         - item: modular_frame

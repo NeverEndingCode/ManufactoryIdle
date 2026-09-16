@@ -486,9 +486,21 @@ describe("the scan and check 8", () => {
   //
   // It reuses checkRunawayGrowth rather than re-deriving the floor, so the calibrator
   // and the validator cannot drift apart on what counts as runaway.
+  //
+  // It asserts that the refused scale is not the one CHOSEN, and deliberately not that
+  // the winner is 1. The grid here has two entries, so the refinement pass runs and
+  // searches the octave around the coarse winner; at tier 1's retuned target a scale of
+  // 0.6 fits better than 1 and legitimately wins. Pinning the winner made this test fail
+  // the moment `targetCollectionsToTier[0]` moved 0.5 -> 0.42 -- reporting a content
+  // retune as a refusal bug. Refusal is what this test is for; which of the surviving
+  // scales fits best is the r_eff scan's business and is asserted there.
   it("refuses a scale that drives r_eff below the runaway floor", () => {
     const { result, lines } = scan();
-    expect(result.rEffScale).toBe(1);
+    const refused = result.rEffScan.find((entry) => entry.scale === 0.001);
+    expect(refused, "the refused scale must still be reported in the scan").toBeDefined();
+    expect(refused!.miss).toBe(Number.POSITIVE_INFINITY);
+    expect(refused!.capPerTier).toBeUndefined();
+    expect(result.rEffScale).not.toBe(0.001);
     expect(lines.some((l) => l.includes("runaway"))).toBe(true);
   }, 600_000);
 
