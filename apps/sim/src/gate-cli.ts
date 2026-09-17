@@ -47,11 +47,14 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     knownRed: [
       {
         tier: 10,
-        observed: 20.8696,
+        observed: 20.8722,
         why:
-          "target 25, measured 20.87 (-16.5%). A content-design decision, and the " +
-          "calibrator's tier-10 amounts search is inert besides -- it short-circuits " +
-          "and returns one constant for every candidate. See the Phase 2 handoff.",
+          "target 25, measured 20.87 (-16.5%), and this is now a MEASURED ceiling " +
+          "rather than a fitting failure. The requirement cannot exceed what a player " +
+          "can ever hold -- maxAttainableCap(smart_plating, tier 9) is 7,665,440 -- and " +
+          "the solved 7,663,000 is 99.97% of it. Even at the ceiling the tier lands at " +
+          "20.87, so no amount reaches 25. Needs a gate the amounts search can move: " +
+          "recipe depth, a power or throughput wall, or more storage depth at tier 9->10.",
       },
     ],
   },

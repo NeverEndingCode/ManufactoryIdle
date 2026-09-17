@@ -45,13 +45,13 @@ Current fit — **9 of 10 tiers within 5%** (was 7; tiers 1 and 5 fixed 2026-09-
 | 2 | 0.80 | 0.7980 | −0.2% | | 7 | 6.80 | 6.8473 | +0.7% |
 | 3 | 1.20 | 1.1927 | −0.6% | | 8 | 11.00 | 10.7566 | −2.2% |
 | 4 | 1.90 | 1.8366 | −3.3% | | 9 | 16.00 | 15.4904 | −3.2% |
-| 5 | 2.90 | 2.9649 | +2.2% | | 10 | 25.00 | 15.54 | **−37.8%** |
+| 5 | 2.90 | 2.9649 | +2.2% | | 10 | 25.00 | 20.8722 | **−16.5%** |
 
-A plain `sim run` against the committed bundle reproduces `derived.yaml`'s tier times to
-seven significant figures **for tiers 1 through 9**. It does NOT for tier 10, and that
-was true of the previous bundle too: `derived.yaml` claims 15.54, a plain run measures
-**20.87**. See "tier 10's amounts search is inert" below — that gap is a calibrator
-defect, not content.
+A plain `sim run` against the committed bundle reproduces `derived.yaml`'s tier times
+exactly, **all ten of them**. That was not true until 2026-09-17: tier 10's column said
+15.54 where the game did 20.87, because its amounts search short-circuited and reported
+one constant for every candidate. Fixed; see below. Tier 10's miss was −37.8% against a
+number nothing measured, and is −16.5% against the real one.
 
 ---
 
@@ -120,30 +120,45 @@ lands between steel's two and the tier fits at +2.2% where the old ratio could o
 +5.1%. Tier 1 has no such landing spot: a grid over all five tier-0 items x both plate
 plateaus x ~100 amounts found NOTHING in [0.44, 0.58]. Its target is now an honest 0.42.
 
-**Tier 10's amounts search is inert — every probe returns the same number.** When the
-calibrator confirms tier 9, tier 10 is still at its AUTHORED SEED (`smart_plating` 4000,
-`encased_industrial_beam` 3000), small enough that one `resolve` unlocks both. The
-checkpoint labelled "tier 9" therefore carries `state.tier = 10`. Every tier-10 probe
-resumes from it, `state.tier < untilTier` is false immediately, no tierTime is recorded,
-and `runAt` short-circuits to the checkpoint's clock -- returning **15.539209 for every
-candidate amount, including 7,168,000**. Verified directly: the tier-9 checkpoint built
-with tier 10 at its seeds reports `state.tier = 10, nowMs = 15.539209`, which is exactly
-what `derived.yaml` calls tier 10's observed time.
+**Tier 10's amounts search WAS inert — fixed 2026-09-17.** `resolve` can unlock several
+tiers in one step, and `runSimulation` pushes a checkpoint per tier that all share the
+same state, so the checkpoint saved for tier 9 carried `state.tier = 10`. Every tier-10
+probe resumed from it, recorded no tierTime, and hit a branch that returned the
+checkpoint's clock — **15.539209 for every candidate, including 7,168,000
+smart_plating**. `derived.yaml` claimed 15.54 where a plain run measured 20.87.
 
-Two consequences, and they matter before any tier-10 decision is taken:
+The fix is `withMilestonesUpTo` in `calibrate.ts`: the run for tier k is given only the
+milestones up to k, so nothing above it can ride along in the same resolve. Truncating
+rather than suppressing the unlock, because unlocking two tiers at once is CORRECT
+behaviour for a real player and the engine is shared with the game. Nothing in a prefix
+can read a milestone above the one it runs to — `tierProgress` reads `state.tier + 1` and
+the loop exits when `state.tier` reaches its target — so the truncation changes no
+decision the run would otherwise have made. The same fix is applied to `tierCeilings`,
+which walked the same checkpoint chain and would have read a co-unlock as "ceiling beyond
+the budget, so it clears its target", the opposite of what happened.
 
-- **The "tiers 9 and 10 sit 0.05 apart" observation is an artefact.** 15.539209 -
-  15.490440 = 0.0488 is the gap between tier 9's in-step event time and the END of that
-  same resolve step. It is one step, not a property of the content. The real tier-10 time
-  is 20.87, which is 5.4 collections past tier 9, not 0.05.
-- **Any lever "ruled out by measurement" on tier 10 via the amounts search was ruled out
-  against a search returning a constant.** Re-check those before treating them as closed.
+The short-circuit branch is gone. It rescued the symptom and kept the defect: the value
+it returned did not depend on the candidate, so the search reported one constant and
+called it a measurement.
 
-The short-circuit is the code's own documented workaround (`calibrate.ts`, "all 34 of
-tier 10's search steps returned never in 0s") -- it converted an honest "never" into a
-confident wrong number. Fixing it means deciding what `runAt` should do when the prefix
-checkpoint has already over-unlocked; re-running the prefix with the candidate amounts in
-place is the obvious answer and is not free.
+**All ten tiers now reproduce.** `derived.yaml` and a plain `sim run` agree exactly on
+every tier, which was the invariant this broke.
+
+**What tier 10 actually is, measured honestly.** The search now returns distinct values
+(15.54, 20.14, 20.87) where it used to return one. It says:
+
+- Any requirement up to about **1,024,000** smart_plating is FREE — tier 9 already banks
+  that much, so tier 10 unlocks in the same resolve and lands at 15.54.
+- Anything above **7,665,440** is infeasible: that is
+  `maxAttainableCap(smart_plating, tier 9)`, the most a player can ever hold, and ruling
+  R7 pays deliveries from liquid stock.
+- The solved amount, 7,663,000, is **99.97% of that ceiling**, and it lands at 20.87.
+
+So tier 10 is hard-capped at 20.87 against a target of 25, and the cap is storage, not
+patience. The earlier conclusion — that tier 10 must gate on something the amounts search
+can move — survives, but it is now supported by a search that works rather than one
+returning a constant. The options are recipe depth, a power or throughput wall, or more
+storage depth across the tier 9 -> 10 step. **Still your call.**
 
 **`greedy` buys storage alphabetically.** `levelCostRange` ignores the item, so every
 level-0 silo costs exactly the same, all ~23 candidates tie on score, and `cheapest` breaks
@@ -219,28 +234,26 @@ stale loudly when the underlying tier starts hitting its target, so they cannot 
 the problem. `sim gate --emit-pins` prints a paste-ready block from current measurements
 — re-pin with that after any calibration run rather than by hand.
 
-**Do not assert tier 10 against `derived.yaml`'s observed column.** For tiers 1-9 that
-column and a plain `sim run` agree to seven significant figures; for tier 10 the column
-says 15.54 and the game does 20.87, because the amounts search short-circuits (above).
-The gate therefore pins greedy's tier 10 at the measured 20.8696, not at the derived
-number.
+The gate pins greedy's tier 10 at 20.8722, which is now both what `derived.yaml` says and
+what the game does. Before the short-circuit fix those were different numbers and the
+column was the wrong one to assert against.
 
-**3. Tier 10, now the only off-target tier — and the measurement under it is broken.**
-Tiers 1 and 5 are DONE (2026-09-16); see the quantisation facts above for what they were
-and why. Tier 10 remains a content-design decision, but take it with the new evidence:
+**3. Tier 10 — the only off-target tier, and now honestly measured.**
+Tiers 1 and 5 are DONE (2026-09-16); the calibrator short-circuit is FIXED (2026-09-17).
+What is left is the content-design decision, and it now rests on a search that works:
 
-- **Its amounts search returns a constant** (above). Nothing the search "ruled out" was
-  actually measured through it, and the 0.05 gap to tier 9 is a resolve-step artefact.
-  The honest miss is 20.87 against a target of 25, i.e. **−16.5%, not −37.8%** — still off,
-  but a different size of problem from the one the previous table implied.
+- **The ceiling is storage, not patience.** The requirement cannot exceed
+  `maxAttainableCap(smart_plating, tier 9)` = 7,665,440, because ruling R7 pays
+  deliveries from liquid stock. The solved 7,663,000 is 99.97% of that, and it lands at
+  20.87 against a target of 25. **No amount reaches 25.** Anything up to ~1,024,000 is
+  free, because tier 9 already banks that much.
 - The standing reading — that tier 10 must gate on something the amounts search can move
-  (recipe depth, a power or throughput wall) rather than a bigger pile — may well still be
-  right. It just has not been tested against a working search yet. **Fix the short-circuit
-  first, re-measure, then decide.**
-- The quantisation fact gives tier 10 the same lever that fixed tier 5: the authored RATIO
-  between its two requirement items decides which one binds, and only an item pushed past
-  its own cap adds time. That is untried on tier 10 and is cheap to try once the search
-  reports real numbers.
+  — is confirmed rather than merely suspected. The options are recipe depth, a power or
+  throughput wall, or more storage depth across the tier 9 -> 10 step.
+- **Untried, and cheap:** the authored RATIO between tier 10's two requirement items, the
+  same lever that fixed tier 5. Only an item pushed past its own cap adds time, and
+  `encased_industrial_beam` at 5,747,250 may not be the binding one. Worth one measurement
+  before reaching for new content.
 
 **4. Test-fixture coupling — a correctness problem, not a speed one.**
 Three times this session a content change silently invalidated mechanics-test premises

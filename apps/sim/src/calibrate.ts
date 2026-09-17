@@ -385,9 +385,7 @@ export function tierCeilings(options: CeilingOptions): TierCeiling[] {
     targets[options.maxTier - 1] ?? 0,
     options.maxCollections ?? CEILING_BUDGET_CAP,
   );
-  const content = indexContent(
-    withAllMilestonesAtCap(options.bundle, options.maxTier) as ContentBundle,
-  );
+  const atCap = withAllMilestonesAtCap(options.bundle, options.maxTier);
 
   const out: TierCeiling[] = [];
   for (let tier = 1; tier <= options.maxTier; tier += 1) {
@@ -404,7 +402,10 @@ export function tierCeilings(options: CeilingOptions): TierCeiling[] {
     const run = runSimulation({
       policy: options.policy,
       seed: options.seed,
-      content,
+      // Truncated per tier for `withMilestonesUpTo`'s reason. Here a co-unlock would
+      // leave the next iteration with no tierTime, which this loop reads as "ceiling
+      // beyond the budget, so it clears its target" -- the opposite of what happened.
+      content: indexContent(withMilestonesUpTo(atCap, tier) as ContentBundle),
       untilTier: tier,
       // Absolute, and stopping at the deepest target: past it, every unlanded tier has
       // already proven its ceiling exceeds its own target.
@@ -593,6 +594,34 @@ export function withMilestoneAmounts(bundle: Bundle, tier: number, factor: numbe
         : milestone,
     ),
   };
+}
+
+/**
+ * A copy of `bundle` carrying only the milestones up to `tier`.
+ *
+ * `resolve` can unlock SEVERAL tiers in one step, and `runSimulation` pushes a
+ * checkpoint per tier unlocked with all of them sharing the same state. So a run asked
+ * to stop at tier k could hand back a checkpoint labelled "tier k" whose `state.tier`
+ * was already k+1 -- and every probe for tier k+1 then resumed from a world where it
+ * was already unlocked, recorded no tierTime, and reported the checkpoint's clock
+ * instead of a measurement.
+ *
+ * That made the amounts search for the deepest tier INERT. Measured on the slice:
+ * tier 10 returned 15.539209 for every candidate it tried, including 7,168,000
+ * smart_plating, and `derived.yaml` claimed 15.54 where a plain `sim run` of the same
+ * committed bundle measured 20.87. Every lever "ruled out by measurement" on that tier
+ * had been ruled out against a constant.
+ *
+ * Truncating is the fix rather than suppressing the unlock, because unlocking two tiers
+ * at once is CORRECT: a real player who banks enough for both gets both, and the engine
+ * is shared with the real game. What is wrong is a search measuring tier k+1 against a
+ * prefix that presumed tier k+1's seed. Nothing in the prefix can read a milestone above
+ * the one it is running to -- `tierProgress` reads `state.tier + 1`, and the loop exits
+ * the moment `state.tier` reaches its target -- so removing them changes no decision the
+ * run would otherwise have made.
+ */
+export function withMilestonesUpTo(bundle: Bundle, tier: number): Bundle {
+  return { ...bundle, milestones: bundle.milestones.filter((m) => m.tier <= tier) };
 }
 
 export interface CalibrateOptions {
@@ -1109,7 +1138,9 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
       const run = runSimulation({
         policy,
         seed,
-        content: indexContent(candidate as ContentBundle),
+        // Truncated, so this tier cannot be unlocked by a milestone ABOVE it riding
+        // along in the same resolve. See `withMilestonesUpTo`.
+        content: indexContent(withMilestonesUpTo(candidate, tier) as ContentBundle),
         untilTier: tier,
         maxSimMs: deadlineMs,
         startFrom: checkpoint,
@@ -1123,20 +1154,15 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
         };
       }
 
-      // Already unlocked before this run began, so it recorded nothing.
+      // No tierTime means the budget ran out before the tier landed, and that is now
+      // the only thing it can mean.
       //
-      // One `resolve` can unlock several tiers at once, and `runSimulation` pushes a
-      // checkpoint per tier that all share the same state -- so the checkpoint labelled
-      // "tier k" can already have `state.tier` past k. Resuming from it, the loop
-      // condition `state.tier < untilTier` is false immediately and no tierTime is
-      // recorded, which reads as "never reached" whatever the requirement was. Measured
-      // on the slice: all 34 of tier 10's search steps returned never in 0s, while the
-      // run itself reported reachedTier 10 with 54 collections of budget unspent.
-      //
-      // Its landing time is the checkpoint's: the tiers unlocked at the same instant.
-      if (checkpoint !== undefined && checkpoint.state.tier >= tier) {
-        return { collections: checkpoint.nowMs / offlineCapMs, checkpoint };
-      }
+      // There used to be a branch here returning the checkpoint's clock when
+      // `checkpoint.state.tier >= tier`, to rescue a prefix that had already unlocked
+      // this tier. It rescued the symptom and kept the defect: the value it returned
+      // did not depend on the candidate, so the search reported one constant for every
+      // amount and called it a measurement. The prefix can no longer arrive
+      // over-unlocked (see `withMilestonesUpTo`), so an honest "never" is correct again.
       return { collections: null, checkpoint: undefined };
     };
 

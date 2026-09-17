@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { applyDerived, loadBundleDir, maxAttainableCap } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
-import { SLICE_BUNDLE_DIR } from "./bootstrap.js";
+import { FIXTURE_BUNDLE_DIR, SLICE_BUNDLE_DIR } from "./bootstrap.js";
 import { indexContent } from "@manufactory/engine";
 import {
   bisectMonotone,
@@ -1077,4 +1077,62 @@ describe("a tier already unlocked at the resume point", () => {
     const atFloor = steps.filter((l) => /iron_plate 1\b/.test(l));
     expect(atFloor.length).toBeLessThanOrEqual(2);
   }, 300_000);
+});
+
+describe("a tier whose seed is already met when the tier below unlocks", () => {
+  // The defect this fixes, in one sentence: `resolve` can unlock several tiers in ONE
+  // step, so the checkpoint the calibrator saves for tier k can carry `state.tier` of
+  // k+1 -- and every probe for tier k+1 then resumes from a world where it is already
+  // unlocked, records no tierTime, and reports the checkpoint's clock instead of a
+  // measurement. Measured on the slice before the fix: tier 10's search returned
+  // 15.539209 for EVERY candidate, including 7,168,000 smart_plating, and `derived.yaml`
+  // claimed 15.54 where a plain `sim run` measured 20.87.
+  //
+  // It is reproduced here rather than on the slice because the slice costs an hour.
+  // Tier 2 asking for a single plate is met the instant tier 1's are banked, which is
+  // the same co-unlock on a bundle that calibrates in seconds.
+  const fixture = loadBundleDir(FIXTURE_BUNDLE_DIR, raw);
+  const coUnlocking = {
+    ...fixture,
+    milestones: [
+      { tier: 1, name: "One", requires: [{ item: "iron_plate", amount: 200 }], laneMultipliers: {} },
+      { tier: 2, name: "Two", requires: [{ item: "iron_plate", amount: 1 }], laneMultipliers: {} },
+    ],
+  } as typeof fixture;
+
+  const solve = (targets: number[]) =>
+    calibrate({
+      bundle: withTargets(coUnlocking, targets),
+      maxTier: 2,
+      tolerance: 0.05,
+      solveREff: false,
+      solveCapPerTier: false,
+    });
+
+  // The property that actually broke: what the calibrator REPORTS has to be what the
+  // content it EMITS really does. Nothing else catches a search reporting a constant.
+  it("reports a tier-2 time that a plain run of the emitted bundle reproduces", () => {
+    const result = solve([0.5, 2]);
+    const emitted = applyDerived({ ...coUnlocking, derived: result.derived });
+    const run = runSimulation({
+      policy: "greedy",
+      seed: 42,
+      content: indexContent(emitted),
+      untilTier: 2,
+      maxSimMs: 400 * 24 * 60 * 60 * 1000,
+    });
+    const observed = result.tiers.find((t) => t.tier === 2)!.observed;
+    const measured = run.tierTimes.find((t) => t.tier === 2)?.collections;
+    expect(measured).toBeDefined();
+    expect(observed).toBeCloseTo(measured!, 6);
+  }, 300_000);
+
+  // With the bug the search is inert, so two different targets produce the identical
+  // number -- the checkpoint's clock -- and neither is a measurement of anything.
+  it("moves tier 2 when its target moves", () => {
+    const near = solve([0.5, 2]).tiers.find((t) => t.tier === 2)!.observed!;
+    const far = solve([0.5, 8]).tiers.find((t) => t.tier === 2)!.observed!;
+    expect(far).toBeGreaterThan(near * 1.5);
+  }, 300_000);
+
 });
