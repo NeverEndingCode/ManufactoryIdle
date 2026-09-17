@@ -27,7 +27,7 @@ the runs), in two depths:
 | | what it runs | cost | where |
 |---|---|---|---|
 | `pnpm --filter @manufactory/sim gate:smoke` | greedy to tier 4, twice | **2.6 s** | every commit, in `check` |
-| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **15m54s** | `pacing` job, PRs + nightly |
+| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **15m54s** local, **38m38s** in CI | `pacing` job, PRs + nightly |
 
 Both currently PASS. It fails the build on a tier time outside tolerance, a known-red
 pin that has drifted *or gone stale*, dead time over threshold, an observed `r_eff` at

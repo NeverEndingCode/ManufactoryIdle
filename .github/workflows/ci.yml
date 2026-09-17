@@ -33,7 +33,13 @@ jobs:
   # every pull request.
   pacing:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Measured 38m38s on a GitHub runner against 15m54s locally -- these are shared
+    # two-core boxes and the gate is CPU-bound single-threaded simulation. The cap is a
+    # guard against a hang, NOT a performance budget: at 45 it sat 6 minutes from a
+    # timeout, and a timeout reads as a gate failure, which is how a gate stops being
+    # believed. Raise the SIMULATION's cost deliberately if it ever needs raising; do
+    # not tune this number to fit it.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
