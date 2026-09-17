@@ -3,6 +3,7 @@
 // sim run --policy casual --seed 42
 // sim play --seed 42
 // sim calibrate --content <dir> --max-tier 3 --write
+// sim gate --smoke
 import { parseArgs } from "node:util";
 import { argv, exit, stderr, stdout } from "node:process";
 import { POLICY_NAMES, type PolicyName } from "./policies.js";
@@ -16,6 +17,14 @@ const USAGE = `usage:
   sim calibrate [--content <dir>] [--policy <name>] [--seed <n>] [--max-tier <n>]
            [--tolerance <f>] [--write] [--no-solve-reff]
            [--scales a,b,c] [--no-refine]
+  sim gate [--content <dir>] [--seed <n>] [--smoke] [--max-days <n>] [--emit-pins]
+
+  gate is spec E.5's pacing gate: it runs the policies and fails the build on a
+  tier time outside tolerance, dead time over threshold, an observed r_eff at the
+  runaway floor, or a determinism divergence. --smoke runs greedy to tier 4 in
+  seconds and is the per-commit form; the full gate runs three policies to tier 10
+  and takes about fifteen minutes. --emit-pins prints a paste-ready known-red block
+  from the current measurements, for re-pinning after a calibration run.
 
   calibrate solves the free content numbers against pacing.targetCollectionsToTier
   by running the simulator (spec B.7): it scans r_eff, then bisects each tier's
@@ -36,7 +45,7 @@ function parseUntilTier(value: string | undefined): number {
 
 async function main(): Promise<number> {
   const mode = argv[2];
-  if (mode !== "run" && mode !== "play" && mode !== "calibrate") {
+  if (mode !== "run" && mode !== "play" && mode !== "calibrate" && mode !== "gate") {
     stderr.write(USAGE);
     return 2;
   }
@@ -56,8 +65,21 @@ async function main(): Promise<number> {
       "no-solve-reff": { type: "boolean", default: false },
       scales: { type: "string" },
       "no-refine": { type: "boolean", default: false },
+      smoke: { type: "boolean", default: false },
+      "emit-pins": { type: "boolean", default: false },
     },
   });
+
+  if (mode === "gate") {
+    const { runGate } = await import("./gate-cli.js");
+    return runGate({
+      contentDir: values.content,
+      seed: Number(values.seed),
+      smoke: values.smoke,
+      emitPins: values["emit-pins"],
+      maxDays: Number(values["max-days"]),
+    });
+  }
 
   if (mode === "calibrate") {
     const { runCalibration } = await import("./calibrate-cli.js");

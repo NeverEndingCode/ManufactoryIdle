@@ -18,10 +18,24 @@ replace it — it says where that plan is now and which parts of it have gone st
   44 recipes, 14 machine classes.
 - `derived.yaml` in that directory is **generated**. Do not hand-edit it.
 
-## State: Task 3 done, Task 4 not started
+## State: Tasks 3 and 4 done; two policies are not gateable
 
-Phase 2's deliverable is a calibrated `derived.yaml` plus CI pacing gates. The
-calibration ships and reproduces; the gates do not exist yet.
+Phase 2's deliverable is a calibrated `derived.yaml` plus CI pacing gates. Both now
+ship. The gate is `sim gate` (`apps/sim/src/gate.ts` for the rules, `gate-cli.ts` for
+the runs), in two depths:
+
+| | what it runs | cost | where |
+|---|---|---|---|
+| `pnpm --filter @manufactory/sim gate:smoke` | greedy to tier 4, twice | **2.6 s** | every commit, in `check` |
+| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **15m54s** | `pacing` job, PRs + nightly |
+
+Both currently PASS. It fails the build on a tier time outside tolerance, a known-red
+pin that has drifted *or gone stale*, dead time over threshold, an observed `r_eff` at
+the runaway floor, or a determinism divergence. Verified to actually fail: pointed at
+the pre-retune bundle it exits 1 with `tier 1 at 0.4194 against target 0.5 (-16.1%)`.
+
+The rules are a pure function over `RunReport`s, unit-tested in 0.3 s (21 tests), so the
+judgement is not hidden behind a fifteen-minute run.
 
 Current fit — **9 of 10 tiers within 5%** (was 7; tiers 1 and 5 fixed 2026-09-16):
 
@@ -46,6 +60,41 @@ defect, not content.
 Every line here cost a run to establish, and several overturned a confident reading.
 Three root-cause claims were wrong in this session alone; instrumentation settled all of
 them. Check a claim against a measurement before acting on it.
+
+**Spec E.5's "all three policies within tolerance" is not achievable, and not for a
+content reason.** Calibration fits ONE set of milestone amounts, against `greedy`.
+Measured to tier 10, seed 42:
+
+| policy | reaches | tier times vs target | dead time | note |
+|---|---|---|---|---|
+| `greedy` | 10 | 9 of 10 within 5% | 0.061 colls | the calibrated policy |
+| `casual` | 10 | **+378% to +720%** | 1.000 colls | checks in once per window |
+| `bottleneck` | **1** | tier 1 −77.9%, then nothing | **102.9 colls** | stalled; see below |
+
+A player checking in every two minutes and one checking in three times a day cannot both
+land on the same tier times unless the game is entirely idle-bound. `casual` is pinned
+rather than chased. Both readings pre-date this session's content change — the baseline
+bundle measures the same.
+
+**`casual`'s dead time is exactly 1.0000 collections, by construction.** Its check-in
+interval IS the offline cap, so it acts once per window. That is the policy's cadence,
+not pace decay, and it is why the gate's dead-time threshold is 2 collections and not 1:
+at 1 the gate would be decided by the last bit of a float.
+
+**`bottleneck` stalls at tier 1, and it is an ADVICE defect.** Measured 20 days in: the
+player holds **2,307,820 `iron_plate` and 430,367 `screw`**, owns **zero assemblers**, and
+tier 2 needs 200 `reinforced_iron_plate` — which only an assembler makes. The reporter
+names `mine_iron_ore` and advises **"buy 3 miners"**. It optimises throughput of the top
+PRIORITY item rather than naming what blocks the MILESTONE, and the policy buys only what
+the reporter names, so it can never buy the one machine class it needs.
+
+Spec E.2: *"if `bottleneck` lands materially worse than `greedy`, the UI is lying to
+players and no amount of balance tuning fixes that."* It does, and it is. This is the same
+shape as the Task 0 defect — the reporter cannot name the real blocker, so it falls
+through to one it can — and Task 0's stated acceptance criterion ("if it does not land
+near greedy, the advice still needs work and this task is not done") is therefore not met
+on calibrated content. Task 0's 0.07-collection result was measured on the OLD
+uncalibrated fixture and nobody re-checked it afterwards.
 
 **Tier times are QUANTISED by the binding item's liquid storage cap.** This is the
 single fact that explains both staircase misses. `tierProgress` returns 0 for a
@@ -152,22 +201,31 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. Task 4 — CI pacing gates (spec E.5). The remaining deliverable.**
-`content:check` all twelve checks; `greedy`/`casual`/`bottleneck` within tolerance of
-`targetCollectionsToTier`; max dead time under threshold; `r_eff > 1 + eps` with every
-multiplier maxed; replay determinism. **Assert absolute tier times, never a policy
-ordering** — `greedy` can honestly finish after `casual`, because it spends plate on miners
-that do not raise plate output. At ~22 min a commit including `pnpm test`, the gate wants
-splitting: a cheap per-commit smoke (`sim:ci` already exists) plus the ten-tier
-three-policy run nightly or pre-merge. Needs a decision on how known-red tiers are treated.
+**1. `bottleneck`'s advice defect — now the biggest open item.**
+The evidence is above. It is not a pacing problem and no calibration fixes it: the
+reporter answers "what limits throughput of the top priority item" when the question is
+"what blocks the next milestone". A fix has to make the reporter milestone-aware, which
+is a spec amendment to 4.5/E.2 of exactly the kind Task 0 made. Until then the gate pins
+`bottleneck` at tier 1 and the game ships advice that tells a player sitting on 2.3M
+plate to buy more miners.
+
+**2. `SET_RESERVE` and `REORDER_PRIORITY` are related, and may be the same fix.**
+Still emitted by no policy (carried forward below). A milestone-aware reporter would
+naturally want to reorder priority toward the blocking item, which is the mechanic
+already implemented and unused.
+
+**Gate hygiene.** Known-red pins are asserted, not excused: they fail on drift AND go
+stale loudly when the underlying tier starts hitting its target, so they cannot outlive
+the problem. `sim gate --emit-pins` prints a paste-ready block from current measurements
+— re-pin with that after any calibration run rather than by hand.
 
 **Do not assert tier 10 against `derived.yaml`'s observed column.** For tiers 1-9 that
 column and a plain `sim run` agree to seven significant figures; for tier 10 the column
-says 15.54 and the game does 20.87, because the amounts search short-circuits (above). A
-gate written against it would be asserting a number no run produces. Nine tiers are
-assertable today; tier 10 wants the short-circuit fixed first.
+says 15.54 and the game does 20.87, because the amounts search short-circuits (above).
+The gate therefore pins greedy's tier 10 at the measured 20.8696, not at the derived
+number.
 
-**2. Tier 10, now the only off-target tier — and the measurement under it is broken.**
+**3. Tier 10, now the only off-target tier — and the measurement under it is broken.**
 Tiers 1 and 5 are DONE (2026-09-16); see the quantisation facts above for what they were
 and why. Tier 10 remains a content-design decision, but take it with the new evidence:
 
@@ -184,7 +242,7 @@ and why. Tier 10 remains a content-design decision, but take it with the new evi
   its own cap adds time. That is untried on tier 10 and is cheap to try once the search
   reports real numbers.
 
-**3. Test-fixture coupling — a correctness problem, not a speed one.**
+**4. Test-fixture coupling — a correctness problem, not a speed one.**
 Three times this session a content change silently invalidated mechanics-test premises
 (5 tests on retuned targets, 4 on the deeper ladder, 6 on `costGrowth`). One test had
 stopped testing its claim entirely: the pre-filter test that exists to prove the expensive
@@ -203,20 +261,20 @@ says in a comment why it must not pin the winner. Fix: a frozen `bundles/calibra
 explicitly never tuned, with the ceiling and capPerTier tests pointed at it. Keep one
 cheap end-to-end test against the live slice so the calibrator still has a canary.
 
-**4. Two decisions open since the plan was written.**
+**5. One decision open since the plan was written.**
 - **B.7's storage list.** `costGrowth` is now authored with measurements behind it, but
   `capGrowth`, `baseCostAmount` and `maxLevel` are still placeholders, and
   `pacing.storageBindingCadence: 12` is read by nothing. Solve against it or delete the
   intent — an authored pacing knob nothing consumes is the `purchaseIntervalLateSeconds`
   pattern for a third time.
-- **`SET_RESERVE` and `REORDER_PRIORITY`.** Implemented in the engine and reachable from
-  `sim play`; no automated policy emits either. Every calibrated number is therefore tuned
-  for a player who never uses two core mechanics. A spec decision about E.2.
 
-**5. Eleven carried-forward items** from Phases 0/1, none blocking. See the plan's
+(`SET_RESERVE` and `REORDER_PRIORITY` were the second decision here; promoted to item 2,
+since the `bottleneck` finding gives them a concrete reason to exist.)
+
+**6. Eleven carried-forward items** from Phases 0/1, none blocking. See the plan's
 "Carried forward, still open" table.
 
-**6. Plan hygiene.** The plan's "Still to do" list has duplicated numbering, claims a
+**7. Plan hygiene.** The plan's "Still to do" list has duplicated numbering, claims a
 ten-tier scan costs "ten hours a scale" (~1 hour since the `resolve` fix), and still cites
 "33 collections for one rotor", which the floor measurement disproved.
 
@@ -243,6 +301,11 @@ ten-tier scan costs "ten hours a scale" (~1 hour since the `resolve` fix), and s
 pnpm lint && pnpm typecheck && pnpm content:check
 cd packages/content && npx vitest run     # 136 tests
 cd apps/sim && npx vitest run             # 163 tests, ~10 min
+
+# the pacing gate (spec E.5) -- exits non-zero on any finding
+cd apps/sim && npm run gate:smoke     # greedy to tier 4, ~3s, runs on every commit
+cd apps/sim && npm run gate           # three policies to tier 10, ~16 min
+cd apps/sim && npx tsx src/bin.ts gate --content <dir> --emit-pins   # re-pin
 
 # one gate-shaped run
 cd apps/sim && npx tsx src/bin.ts run --policy greedy \
