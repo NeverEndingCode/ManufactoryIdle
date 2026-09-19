@@ -143,10 +143,15 @@ function resolveBlocker(
       kind: "recipe",
       recipeId,
       limitingTarget: `item:${targetId}`,
-      // One, deliberately, and not from `machinesToClearRecipe` -- that returns 0
-      // when `limitedBy` is null, which this case always is. One machine is the
-      // honest minimum and the caller re-solves after buying, the same argument the
-      // storage branch makes for only ever recommending one level.
+      // One, deliberately, and not from `machinesToClearRecipe`. That function
+      // answers "how many machines of `entry.limitedBy`", and for a zero-capacity
+      // target `limitedBy` need not name this recipe at all: measured on the fixture
+      // at tier 2, `plastic` comes back limited by `extract_oil` rather than
+      // `refine_plastic`, because both oil recipes sit at ratio 0 with no machines
+      // and the tie breaks on `content.recipeIds` order. Quoting its count would
+      // attach a number to the wrong recipe. One machine is the honest minimum and
+      // the caller re-solves after buying -- the same argument the storage branch
+      // makes for only ever recommending one level.
       machinesToClear: 1,
     };
   }

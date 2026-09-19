@@ -132,10 +132,14 @@ cycle — `alt_recycled_plastic → alt_recycled_rubber`, the known-acceptable c
 — so an unguarded walk terminates only by luck.
 
 `machinesToClear` for the zero-capacity case is the literal 1, not a call to
-`machinesToClearRecipe`. That function returns 0 immediately when `entry.limitedBy` is
-null, which for a zero-capacity entry it always is. One machine is the honest minimum
-and the caller re-solves after buying — the same argument the storage branch already
-makes for only ever recommending one level.
+`machinesToClearRecipe`. That function answers "how many machines of
+`entry.limitedBy`", and for a zero-capacity target `limitedBy` need not name the
+recipe being reported: measured on the fixture at tier 2, `plastic` comes back
+limited by `extract_oil` rather than `refine_plastic`, because both oil recipes sit
+at ratio 0 with no machines and the tie breaks on `content.recipeIds` order. Quoting
+its count would attach a number to the wrong recipe. One machine is the honest
+minimum and the caller re-solves after buying — the same argument the storage branch
+already makes for only ever recommending one level.
 
 ### What this does not change
 
