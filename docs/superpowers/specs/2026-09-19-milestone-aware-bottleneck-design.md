@@ -108,18 +108,29 @@ From an unmet requirement item `I`, with a visited set:
    exactly as the existing FULL branch does. A cap is still a cap.
 4. Else if `I`'s entry has `limitedBy !== null` → return `{ kind: "recipe", recipeId:
    entry.limitedBy, … }` with today's `machinesToClearRecipe`.
-5. Else if `r` is producing `I` at zero, or is starved of an input, recurse into those
-   starved inputs in authored order, skipping visited items.
-6. Else **this requirement is not blocked — it is merely accumulating.** Continue to the
+5. Else **this requirement is not blocked — it is merely accumulating.** Continue to the
    next requirement.
 
-Step 6 is the one that keeps this branch honest, and it is easy to get wrong. A milestone
+Step 5 is the one that keeps this branch honest, and it is easy to get wrong. A milestone
 requirement is unmet for two very different reasons: something is stopping it, or the
-player simply has not banked enough yet. Only the first is a bottleneck. Without step 6
-the walk would descend into a healthy production chain and name the tightest thing it
-found there, hijacking the report on a factory with nothing wrong with it — the same class
-of error as the current defect, pointed the other way. If every unmet requirement reaches
-step 6, the milestone branch reports nothing and the priority scan runs exactly as today.
+player simply has not banked enough yet. Only the first is a bottleneck. If every unmet
+requirement reaches step 5, the milestone branch reports nothing and the priority scan
+runs exactly as today.
+
+**Implemented and measured, this design's original step 5 does not exist in the shipped
+code.** The design originally specified a step here, between today's steps 4 and 5: if `r`
+is producing `I` at zero, or is starved of an input, recurse into those starved inputs in
+authored order, skipping visited items. It was implemented exactly as specified, instrumented
+with a hit counter on the recursion's entry, and run against the vertical slice (seed 42) at
+`--until tier:2 --max-days 5` — tier 2 being exactly the tier `bottleneck` could never pass
+before this design, so the tier where this walk does the most work. The counter never
+incremented. The reason is structural, not a gap in the measurement: by the time this walk
+reaches step 4, the waterfall has already run and `entries.find` already returns the
+*deepest* limiting recipe for anything genuinely starved — `limitedBy` does not stop at the
+first constraint, it chases the chain itself. An item that clears steps 2–4 has therefore
+already had its whole input chain checked by the waterfall; there is nothing left upstream
+for a second, recipe-engine-side walk to find. The recursive step was removed rather than
+shipped on unexercised faith, and `computeBottleneck`'s walk ends at step 5 above.
 
 `limitingTarget` is set to the milestone item's entry id (`item:<I>`) rather than the
 recursed-into item's, so the advice reads "this is what is stopping the thing you need"
@@ -127,9 +138,16 @@ rather than naming an intermediate the player never asked for. The blocker's own
 still travels in `recipeId` or `itemId`, so "your screw storage is full" and "you need
 this for reinforced iron plate" are both recoverable.
 
-**The visited set is load-bearing, not defensive.** The slice ships a deliberate recipe
-cycle — `alt_recycled_plastic → alt_recycled_rubber`, the known-acceptable check 6 warning
-— so an unguarded walk terminates only by luck.
+**The visited set stays even though the walk no longer recurses.** With the recursive step
+removed (above), every top-level call from `computeBottleneck` visits at most one item, so
+today's walk cannot loop by construction — the guard is currently dormant, not load-bearing.
+It is kept anyway, at no cost, because it still fences `resolveBlocker`'s entry point against
+being re-walked for an item two requirements share within one sweep, and because acceptance
+criterion 1 below still requires a cyclic chain to terminate: the slice ships a deliberate
+recipe cycle — `alt_recycled_plastic → alt_recycled_rubber`, the known-acceptable check 6
+warning — and if a later change reintroduces recursion into this walk, or some other call
+path reaches it more than once per item, the guard is what makes that terminate rather than
+loop forever by luck.
 
 `machinesToClear` for the zero-capacity case is the literal 1, not a call to
 `machinesToClearRecipe`. That function answers "how many machines of
@@ -174,7 +192,7 @@ design does not get to repeat that.
 1. Engine unit tests over `computeBottleneck`: an unmet milestone item with no machines
    names its own recipe; a FULL milestone item names storage; a satisfied milestone falls
    back to the priority scan unchanged; **an unmet-but-flowing requirement falls back to
-   the priority scan** (step 6); a cyclic chain terminates.
+   the priority scan** (step 5); a cyclic chain terminates.
 2. `bottleneck` on the vertical slice reaches materially further than tier 1, and **how
    far is reported as a number**, not asserted to be "fixed".
 3. The pacing gate's `bottleneck` pins — tier 1 at 0.0927 and dead time at 102.8917 — are

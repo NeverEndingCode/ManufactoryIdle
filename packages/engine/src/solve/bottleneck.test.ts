@@ -153,7 +153,21 @@ describe("the milestone branch", () => {
   it("names the limiting recipe when the milestone item is merely constrained", () => {
     // Tier 1 of the fixture needs 200 iron_plate. Production is live and below cap,
     // so the walk must reach the limited branch rather than returning null.
-    const sol = solve(initialWorld(content, 1, 0), content, NO_FLOOR);
+    //
+    // iron_plate is moved to the end of the priority list here too: it is also the
+    // priority scan's first limited entry in the fixture's default state, so
+    // leaving it in place lets the OLD priority-scan fallback produce the exact
+    // same { kind: "recipe", limitingTarget: "item:iron_plate" } and the test would
+    // pass whether or not the milestone branch's limited case does anything at all.
+    const base = initialWorld(content, 1, 0);
+    const state = {
+      ...base,
+      priority: [
+        ...base.priority.filter((e) => e.itemId !== "iron_plate"),
+        ...base.priority.filter((e) => e.itemId === "iron_plate"),
+      ],
+    };
+    const sol = solve(state, content, NO_FLOOR);
     expect(sol.bottleneck?.kind).toBe("recipe");
     expect(sol.bottleneck?.limitingTarget).toBe("item:iron_plate");
   });
