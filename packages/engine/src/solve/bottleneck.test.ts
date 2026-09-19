@@ -172,3 +172,26 @@ describe("the milestone branch", () => {
     expect(sol.bottleneck?.limitingTarget).toBe("item:iron_plate");
   });
 });
+
+describe("the milestone walk on real content", () => {
+  // This is the only test coverage of the milestone branch against real content at all
+  // ten tiers. The fixture tests above demonstrate the walk's behavior on individual
+  // cases, but only on the 7-recipe fixture; this assertion exercises the actual
+  // 44-recipe bundle that ships with the engine.
+  //
+  // The slice deliberately ships a recipe cycle (alt_recycled_plastic ->
+  // alt_recycled_rubber, the documented check 6 validator warning). Ruling R6
+  // prevents in-cycle recipes from ever being live, so the walk should never reach
+  // them. This test confirms that guard holds across all tiers. The walk currently
+  // has no recursive call site, so this is a safeguard against future content changes
+  // rather than a live hazard today.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+
+  it("terminates at every tier of the vertical slice", () => {
+    for (let tier = 0; tier <= slice.maxTier; tier += 1) {
+      const state = { ...initialWorld(slice, 1, 0), tier };
+      expect(() => solve(state, slice, NO_FLOOR), `tier ${tier}`).not.toThrow();
+    }
+  });
+});
