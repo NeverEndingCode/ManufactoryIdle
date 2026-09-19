@@ -33,13 +33,24 @@ jobs:
   # every pull request.
   pacing:
     runs-on: ubuntu-latest
-    # Measured 38m38s on a GitHub runner against 15m54s locally -- these are shared
-    # two-core boxes and the gate is CPU-bound single-threaded simulation. The cap is a
-    # guard against a hang, NOT a performance budget: at 45 it sat 6 minutes from a
-    # timeout, and a timeout reads as a gate failure, which is how a gate stops being
-    # believed. Raise the SIMULATION's cost deliberately if it ever needs raising; do
-    # not tune this number to fit it.
-    timeout-minutes: 90
+    # The cap is a guard against a hang, NOT a performance budget. A timeout reads as a
+    # gate failure, which is how a gate stops being believed.
+    #
+    # History, because the number has moved twice and the reason matters. It was 45,
+    # measured at 38m38s on a GitHub runner against 15m54s locally -- shared two-core
+    # boxes running CPU-bound single-threaded simulation, a 2.43x factor. Then the
+    # bottleneck reporter was made milestone-aware, and the `bottleneck` policy went
+    # from dying at tier 1 to reaching tier 6: greedy 141.8s, casual 382.8s,
+    # **bottleneck 2273.9s**, ~49 minutes locally and ~119 projected in CI.
+    #
+    # A policy that makes progress simulates far more than one sitting dead, so fixing
+    # the game made the gate slower. Almost all of that 37.9 minutes is bottleneck
+    # simulating a stall the gate has ALREADY pinned: it reaches tier 6 at 1.17
+    # collections, about half a day, then runs the remaining ~119 simulated days to
+    # confirm what `reachesTier: 6` already asserts. The right fix is a per-policy day
+    # budget, not a bigger number here -- see the Phase 2 handoff. Until that lands,
+    # 180 leaves roughly 50% headroom over the projection.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

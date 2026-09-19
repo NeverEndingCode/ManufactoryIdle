@@ -335,6 +335,29 @@ ten-tier scan costs "ten hours a scale" (~1 hour since the `resolve` fix), and s
 
 ---
 
+## Follow-ups from the milestone-aware bottleneck change (2026-09-19)
+
+**The pacing gate needs a per-policy day budget.** Fixing the advice made the gate three
+times slower, for a reason worth understanding: a policy that makes progress simulates far
+more steps than one sitting dead. Measured after the change — greedy 141.8s, casual 382.8s,
+**bottleneck 2273.9s**, ~49 minutes locally against 15m54s before, and ~119 projected in CI
+at the measured 2.43x runner factor. The CI cap was raised 90 -> 180 minutes as a stopgap.
+
+Almost all of that 37.9 minutes is `bottleneck` simulating a stall the gate has ALREADY
+pinned. It reaches tier 6 at 1.17 collections — about half a simulated day — and then runs
+the remaining ~119 days to establish what `reachesTier: 6` already asserts. The gate passes
+one `--max-days` to every policy, and it cannot go below ~69 because `casual` needs 68.3
+days to reach tier 10. So the fix is a per-policy budget on `PolicyGate`, not a smaller
+global one.
+
+**And a subtler thing that fix must handle:** a stalled policy's dead-time pin — currently
+356.3315 collections — is largely an ARTIFACT of the 120-day budget rather than a property
+of the game. Shorten the budget and the number moves, because dead time for a stalled
+policy is essentially "budget minus time-to-stall". Whatever budget the per-policy fix
+picks, `bottleneck`'s dead time has to be re-pinned against it, and the pin's `why` should
+say that the number is budget-relative. Pinning it as though it were a measured property of
+the content would be pinning an artifact.
+
 ## Working rules learned the hard way
 
 - **Never run `pnpm format`.** It rewrites 69 files / ~5,900 lines against the committed
