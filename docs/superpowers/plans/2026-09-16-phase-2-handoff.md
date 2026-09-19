@@ -69,7 +69,7 @@ Measured to tier 10, seed 42:
 |---|---|---|---|---|
 | `greedy` | 10 | 9 of 10 within 5% | 0.061 colls | the calibrated policy |
 | `casual` | 10 | **+378% to +720%** | 1.000 colls | checks in once per window |
-| `bottleneck` | **1** | tier 1 −77.9%, then nothing | **102.9 colls** | stalled; see below |
+| `bottleneck` | **6** | 66–82% faster than target, then nothing | **356.3 colls** | stalls again; see below |
 
 A player checking in every two minutes and one checking in three times a day cannot both
 land on the same tier times unless the game is entirely idle-bound. `casual` is pinned
@@ -81,20 +81,29 @@ interval IS the offline cap, so it acts once per window. That is the policy's ca
 not pace decay, and it is why the gate's dead-time threshold is 2 collections and not 1:
 at 1 the gate would be decided by the last bit of a float.
 
-**`bottleneck` stalls at tier 1, and it is an ADVICE defect.** Measured 20 days in: the
-player holds **2,307,820 `iron_plate` and 430,367 `screw`**, owns **zero assemblers**, and
-tier 2 needs 200 `reinforced_iron_plate` — which only an assembler makes. The reporter
-names `mine_iron_ore` and advises **"buy 3 miners"**. It optimises throughput of the top
-PRIORITY item rather than naming what blocks the MILESTONE, and the policy buys only what
-the reporter names, so it can never buy the one machine class it needs.
+**`bottleneck` now reaches tier 6, then stalls again — a real win, not a closed defect.**
+The milestone-aware reporter (tasks 1-3 of this plan) fixed the failure described in the
+previous version of this section: a player sitting on 2,307,820 `iron_plate` and 430,367
+`screw`, owning zero assemblers, being advised to "buy 3 miners" while tier 2 needed an
+assembler-only item. That failure mode — optimising throughput of the top PRIORITY item
+instead of naming what blocks the MILESTONE — is gone. Measured 2026-09-19, seed 42,
+`--max-days 120`: `bottleneck` reaches tier 6 of 10 (was tier 1), 229 purchases, max dead
+time **356.3315 collections**.
+
+It stalls again at tier 6, bound by `refine_rubber` and `power:burn_biomass` (with
+`mine_copper_ore` and `make_screw` also binding). And every tier it does reach, it reaches
+66–82% FASTER than target (tier 1 −82%, tier 2 −79%, tier 3 −66%, tier 4 −69%, tier 5
+−76%, tier 6 −73%) by buying almost nothing — so reaching a tier faster is not the same as
+being well paced, and the same minimal-buying that let it race past the early tiers is
+plausibly why the right purchase never gets made by tier 6.
 
 Spec E.2: *"if `bottleneck` lands materially worse than `greedy`, the UI is lying to
-players and no amount of balance tuning fixes that."* It does, and it is. This is the same
-shape as the Task 0 defect — the reporter cannot name the real blocker, so it falls
-through to one it can — and Task 0's stated acceptance criterion ("if it does not land
-near greedy, the advice still needs work and this task is not done") is therefore not met
-on calibrated content. Task 0's 0.07-collection result was measured on the OLD
-uncalibrated fixture and nobody re-checked it afterwards.
+players and no amount of balance tuning fixes that."* `bottleneck` reaches tier 6 of 10;
+`greedy` reaches all 10 — nowhere near it yet. E.2's bar is not met. This is the same
+shape of defect as the one tasks 1-3 fixed (the reporter falls through to naming a
+blocker it CAN name instead of the one that actually blocks the milestone) and it may
+need the same kind of fix, but that is unconfirmed — nobody has yet looked at what the
+reporter says at the tier-6 stall the way tasks 1-3 looked at the tier-1 one.
 
 **Tier times are QUANTISED by the binding item's liquid storage cap.** This is the
 single fact that explains both staircase misses. `tierProgress` returns 0 for a
@@ -216,13 +225,20 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. `bottleneck`'s advice defect — now the biggest open item.**
-The evidence is above. It is not a pacing problem and no calibration fixes it: the
-reporter answers "what limits throughput of the top priority item" when the question is
-"what blocks the next milestone". A fix has to make the reporter milestone-aware, which
-is a spec amendment to 4.5/E.2 of exactly the kind Task 0 made. Until then the gate pins
-`bottleneck` at tier 1 and the game ships advice that tells a player sitting on 2.3M
-plate to buy more miners.
+**1. `bottleneck`'s tier-6 stall — still the biggest open item, now a different shape.**
+The milestone-aware reporter (tasks 1-3) fixed the tier-1 advice failure described in
+earlier versions of this doc: the reporter no longer optimises the top-priority item's
+throughput irrespective of what blocks the milestone. `bottleneck` now reaches tier 6 of
+10 (was tier 1), seed 42, `--max-days 120`: 229 purchases, max dead time 356.3315
+collections — a real fix, not a closed one. It stalls again at tier 6, bound by
+`refine_rubber` and `power:burn_biomass` (with `mine_copper_ore` and `make_screw` also
+binding), and it reaches every tier it touches 66–82% faster than target, still buying
+almost nothing. It remains far from `greedy` (tier 10), and spec E.2's bar ("if
+`bottleneck` lands materially worse than `greedy`, the UI is lying to players") is not
+yet met. The gate now pins `bottleneck` at tier 6 with six known-red tier entries plus a
+dead-time pin; whether the tier-6 stall is the same reporter shape (naming a blocker it
+CAN name instead of the one that actually blocks the milestone) needs the same kind of
+investigation tasks 1-3 did for tier 1, not yet done.
 
 **2. `SET_RESERVE` and `REORDER_PRIORITY` are related, and may be the same fix.**
 Still emitted by no policy (carried forward below). A milestone-aware reporter would
