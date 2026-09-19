@@ -18,7 +18,8 @@ import {
   type IndexedContent,
 } from "../graph/index-content.js";
 import { machineCostRange } from "../economy/curves.js";
-import { depositRefund, spendForBuild } from "../economy/storage.js";
+import { depositRefund, itemStateTag, spendForBuild } from "../economy/storage.js";
+import { solve } from "../solve/solve.js";
 import {
   assignedTotal,
   installedAt,
@@ -95,6 +96,17 @@ export function clampAssignments(
 }
 
 /**
+ * How close to nameplate a recipe's clock must be to count as fully utilised.
+ *
+ * Clocks come out of the waterfall as float64 quotients, so a recipe that is in
+ * fact unthrottled can report 1 - 1e-16 rather than exactly 1. The bound is the
+ * same 1e-9 SPEND_RESIDUAL_TOLERANCE and FULL_TOLERANCE use, and for the same
+ * reason: two to three orders above the accumulated round-off, far below any
+ * throttle a player would notice.
+ */
+const NAMEPLATE_TOLERANCE = 1e-9;
+
+/**
  * Where a newly bought machine goes. Pillar 3 says there is no management surface,
  * so the engine assigns rather than asking — but it must assign somewhere the player
  * actually wants.
@@ -111,6 +123,35 @@ export function clampAssignments(
  * forever, so `make_iron_rod` never got a machine and a tier requiring 300 iron rods
  * was unreachable. Existing assignment survives only as a tie-break, which keeps the
  * old single-recipe behaviour byte-identical.
+ *
+ * Rank ALONE is still winner-take-all, and swapping busiest-recipe for it only moved
+ * which recipe starved. Measured on the slice: across 1,639 greedy purchases
+ * `make_iron_rod` received exactly zero machines while 194k iron_plate sat pinned at
+ * cap, so tier 2 (300 iron rods) was unreachable at any milestone amount. One level
+ * down the same shape recurred for a different reason: `cable` ranks above `wire`
+ * and is never full because it is never made, so 99 copper constructors went to
+ * `make_cable` and none to `make_wire`, which makes cable's only input.
+ *
+ * So rank decides only among recipes that can actually USE another machine, which
+ * takes two conditions:
+ *
+ *   1. Its primary output is not FULL -- there is somewhere to put the result.
+ *   2. It is either unstaffed, or already running at nameplate. A recipe running
+ *      below nameplate has machines it cannot feed; another one changes nothing.
+ *
+ * The solver already computes (2) exactly, as the recipe's clock, so this reads it
+ * rather than re-deriving a cheaper approximation that could disagree with what the
+ * player is shown. `solve` is pure in (state, content) and costs microseconds, and
+ * the single-live-recipe case returns before reaching it, so nothing in the fixture
+ * pays for this at all.
+ *
+ * The rule is self-correcting rather than a fixed ratio: wire takes machines until
+ * cable can run at nameplate, at which point cable outranks it again and takes them
+ * until its clock drops. That settles at the ratio the recipes' own rates imply.
+ *
+ * When no live recipe qualifies -- everything at cap, or a brownout throttling the
+ * whole lane -- the ranking decides over all of them, because then the top of the
+ * player's list is as good an answer as any.
  */
 function autoAssignTarget(
   content: IndexedContent,
@@ -141,23 +182,40 @@ function autoAssignTarget(
     return rankByItem.get(recipe.primaryOutput) ?? Number.POSITIVE_INFINITY;
   };
 
-  let best = recipeIds[0]!;
-  let bestRank = rankOf(best);
-  for (const recipeId of recipeIds) {
-    const rank = rankOf(recipeId);
-    if (rank < bestRank) {
-      best = recipeId;
-      bestRank = rank;
-      continue;
+  const clocks = solve(state, content).clocks;
+
+  // A generator's primaryOutput is POWER_ITEM, which is not a stock item, so
+  // itemStateTag reads EMPTY for it and power is never treated as full.
+  const canUseAnother = (recipeId: RecipeId): boolean => {
+    const recipe = content.recipes.get(recipeId);
+    if (!recipe) return false;
+    if (itemStateTag(content, state, recipe.primaryOutput) === "FULL") return false;
+    if (assignmentOf(state, recipeId) === 0) return true;
+    return (clocks.get(recipeId) ?? 0) >= 1 - NAMEPLATE_TOLERANCE;
+  };
+
+  const pickBest = (from: readonly RecipeId[]): RecipeId => {
+    let best = from[0]!;
+    let bestRank = rankOf(best);
+    for (const recipeId of from) {
+      const rank = rankOf(recipeId);
+      if (rank < bestRank) {
+        best = recipeId;
+        bestRank = rank;
+        continue;
+      }
+      // Equal priority (or both unranked) falls back to the busiest recipe, so a
+      // lane-class the player has expressed no opinion about still concentrates
+      // rather than spreading thin.
+      if (rank === bestRank && assignmentOf(state, recipeId) > assignmentOf(state, best)) {
+        best = recipeId;
+      }
     }
-    // Equal priority (or both unranked) falls back to the busiest recipe, so a
-    // lane-class the player has expressed no opinion about still concentrates
-    // rather than spreading thin.
-    if (rank === bestRank && assignmentOf(state, recipeId) > assignmentOf(state, best)) {
-      best = recipeId;
-    }
-  }
-  return best;
+    return best;
+  };
+
+  const withRoom = recipeIds.filter(canUseAnother);
+  return pickBest(withRoom.length > 0 ? withRoom : recipeIds);
 }
 
 export function applyBuyMachine(

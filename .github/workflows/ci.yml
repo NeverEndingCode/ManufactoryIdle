@@ -3,6 +3,10 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request: { branches: [main] }
+  # The pacing gate is ~15 minutes, so it also runs nightly: a content change that
+  # lands green on a shallow smoke run still gets measured to tier 10 within a day.
+  schedule:
+    - cron: "0 5 * * *"
 
 jobs:
   check:
@@ -19,4 +23,43 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm content:check
-      - run: pnpm --filter @manufactory/sim run sim:ci
+      # Spec E.5's gate, shallow: greedy to tier 4 against its pacing targets, plus
+      # dead time, the r_eff floor and determinism. ~3 seconds, so it belongs on every
+      # commit. The deep form is the `pacing` job.
+      - run: pnpm --filter @manufactory/sim run gate:smoke
+
+  # A separate job so it runs ALONGSIDE `check` rather than after it: the two together
+  # are ~15 and ~11 minutes, and serialising them would put a 26-minute wall in front of
+  # every pull request.
+  pacing:
+    runs-on: ubuntu-latest
+    # The cap is a guard against a hang, NOT a performance budget. A timeout reads as a
+    # gate failure, which is how a gate stops being believed.
+    #
+    # History, because the number has moved twice and the reason matters. It was 45,
+    # measured at 38m38s on a GitHub runner against 15m54s locally -- shared two-core
+    # boxes running CPU-bound single-threaded simulation, a 2.43x factor. Then the
+    # bottleneck reporter was made milestone-aware, and the `bottleneck` policy went
+    # from dying at tier 1 to reaching tier 6: greedy 141.8s, casual 382.8s,
+    # **bottleneck 2273.9s**, ~49 minutes locally and ~119 projected in CI.
+    #
+    # A policy that makes progress simulates far more than one sitting dead, so fixing
+    # the game made the gate slower. Almost all of bottleneck's 37.9 minutes is
+    # simulating a stall the gate has ALREADY pinned: it reaches tier 6 at 1.17
+    # collections, about half a day, then runs the remaining ~119 simulated days to
+    # confirm what `reachesTier: 6` already asserts. The right fix is a per-policy day
+    # budget, not a bigger number here -- see the Phase 2 handoff. Until that lands,
+    # 180 leaves roughly 50% headroom over the projection.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # All three of spec E.5's policies to tier 10. Fails on a tier time outside
+      # tolerance, a known-red pin that has drifted OR gone stale, dead time over
+      # threshold, an observed r_eff at the runaway floor, or a determinism divergence.
+      - run: pnpm --filter @manufactory/sim run gate

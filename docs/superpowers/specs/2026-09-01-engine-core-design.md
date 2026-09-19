@@ -90,9 +90,37 @@ Statically checkable by the content validator (B.6 check 8) and dynamically by t
 simulator with the whole stack maxed. Far stronger than prose against original §16.4's
 "runaway growth".
 
-**Authoring inversion.** You author the **ladder** (a feel decision) and **`r_eff`** (a
-pacing decision). The calibration script derives **`r = r_eff × m`**. Retuning the
-ladder because it feels better therefore changes pacing by exactly zero.
+**Authoring inversion.** You author the **ladder** (a feel decision); `r` is never
+hand-authored. The calibration script **solves `r_eff`** against
+`pacing.targetCollectionsToTier` and derives **`r = r_eff × m`** from it (B.7). Retuning
+the ladder because it feels better therefore changes pacing by exactly zero.
+
+> **Amended in Phase 2.** This paragraph previously said the author writes `r_eff` and
+> calibration only derives `r` from it, which contradicted B.7's own list of what
+> calibration solves. B.7 is now the single reading: `r_eff` is solved, not authored.
+>
+> The contradiction was decided by measurement, not by preference. Milestone delivery
+> amounts — the only other lever with any reach over tier length — turn out to be
+> logarithmically weak *and* bounded: on the vertical slice, multiplying tier 3's
+> requirement by 33,000 bought 2.56 collections (5.30 → 7.86) and then ran into the
+> liquid cap, converging on 5,010,000 `reinforced_iron_plate` against a maximum
+> attainable 5,010,283. Its target of 11 was not in the reachable set at any amount.
+> `r_eff` moves the same tier over a range of 13× and is the only knob that does.
+>
+> An author who wants to fix `r_eff` by hand still can — it is authorable, and a bundle
+> that sets it is honoured — but a bundle meant to be paced leaves it to the script.
+
+**`r_eff`'s effect on tier length is not monotone**, which constrains how it can be
+solved. Raising it makes machines dearer, so a player buys fewer of them and banks more
+of the same currency instead. While a tier's requirement is small relative to production,
+that hoarding *wins*: measured on the slice at a fixed 22,400 `iron_plate`, scaling
+`r_eff − 1` by 1 → 2 → 4 took tier 1 from 1.95 collections to 1.65 to 1.42. Only once the
+requirement is large does slower production dominate — at 1,000,000 the same scaling runs
+3.94 → 3.76 → 9.39 → 23.58 → 53.71.
+
+So calibration **scans** `r_eff` rather than bisecting it, and scores each candidate on
+the whole tier curve. A bisection would assume the monotonicity this measurement
+disproves, and would settle in the flat corner.
 
 **Reframe: logarithmic base growth is correct, not a bug.** Cookie Clicker, AdVenture
 Communist, and ISEPS are all logarithmic and all run for years. The failure mode is not
@@ -521,6 +549,13 @@ pacing:
 Solves for: per-class `r_eff` (hence `r`), milestone delivery requirements, storage `s`
 and `sc`, QS `q` and its cost curve.
 
+`r_eff` is solved as a single scale on `r_eff − 1` across every class, not per class
+independently. `r_eff − 1` is the pacing quantity — the invariant above is `r_eff > 1 + ε`,
+so the distance above the floor is what carries meaning, and scaling it preserves the
+relative ordering the author chose between classes. Ten tier targets against fourteen
+independent per-class knobs would be underdetermined; one scale against the shape of the
+curve is not. §D3 records why the scan is a scan and not a bisection.
+
 **The calibration script is the simulator with a search wrapper.** It runs
 `sim run --policy greedy` and binary-searches the free parameters until the observed curve
 matches the target. There is therefore exactly one implementation of "how long does this
@@ -662,6 +697,24 @@ an iterative honest answer beats a "levels to clear" count derived from the same
 heuristic that produced the bad machine advice. `upgrade: null` is deliberately an empty
 recommendation rather than an invented one — that state is the permanent wall validator
 check 9 exists to make unreachable.
+
+**Amended 2026-09-19 (Phase 2): the scan is milestone-first.**
+
+§4.5 originally returned the constraint limiting the highest-priority *limited* target.
+Two measured defects follow from that wording. A target with zero machines has
+`limitedBy: null` and is invisible to the scan, since a recipe with no capacity is not
+limited by anything. And ranking by the authored priority list answers a question a
+stalled player is not asking.
+
+Measured on the vertical slice: `bottleneck` stalled at tier 1 for 120 simulated days
+holding 2,307,820 `iron_plate` and 430,367 `screw`, owning zero assemblers, needing 200
+`reinforced_iron_plate` — and was advised to buy three iron ore miners.
+
+The reporter now resolves the next milestone's unmet requirements first, resolving each
+unmet requirement to its own blocker (the waterfall has already chased its input chain),
+and falls back to the priority scan when the milestone is satisfied or nothing in it is
+blocked. The returned kinds are unchanged: a zero-capacity recipe is reported as
+`kind: "recipe"`, because it genuinely is the binding constraint.
 
 ### C.4 Power
 

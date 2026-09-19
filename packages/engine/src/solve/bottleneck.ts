@@ -1,7 +1,9 @@
-// Spec 4.5: the solver returns the bottleneck as first-class output, never something
-// the UI derives. Exactly one row per lane carries the treatment, so what is
-// returned is the recipe limiting the HIGHEST-PRIORITY limited target -- marking
-// every row under 100% teaches players to ignore the marking.
+// Spec 4.5, amended 2026-09-19: the solver returns the bottleneck as first-class
+// output, never something the UI derives. Exactly one row per lane carries the
+// treatment -- marking every row under 100% teaches players to ignore the marking.
+// The reporter resolves the next milestone's unmet requirements first; only when the
+// milestone is satisfied or nothing in it is blocked does it fall back to the recipe
+// limiting the HIGHEST-PRIORITY limited target.
 //
 // machinesToClear is the count that would make some other recipe the binding
 // constraint, which is what "6 more constructors clears it" means. The waterfall
@@ -9,7 +11,7 @@
 import { POWER_ITEM, type ItemId, type RecipeId } from "../content/types.js";
 import { isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
 import type { CapacityTable } from "../economy/capacity.js";
-import type { ItemStateTag } from "../economy/storage.js";
+import { liquid, type ItemStateTag } from "../economy/storage.js";
 import { levelCostRange } from "../economy/curves.js";
 import { D, type Dec } from "../numbers/decimal.js";
 import type { WorldState } from "../state/world.js";
@@ -98,6 +100,101 @@ function cheaperUpgrade(
   return total(qsCost).lt(total(storageCost)) ? "quantum" : "storage";
 }
 
+/**
+ * What is stopping `itemId`, or null if nothing is.
+ *
+ * `visited` is shared across one call's whole sweep rather than reset per
+ * requirement: an item that returned null once returns null again, so sharing is
+ * exact and saves re-walking an item two requirements have in common. The walk no
+ * longer recurses into recipe inputs -- see the comment at the bottom of this
+ * function for why -- so the guard is currently dormant, not load-bearing. It is
+ * kept anyway, at no cost, because ruling R6 keeping the live subgraph acyclic today
+ * is a property of content, not a guarantee, should recursion return.
+ */
+function resolveBlocker(
+  content: IndexedContent,
+  capacity: CapacityTable,
+  entries: readonly EntryAllocation[],
+  state: WorldState,
+  itemStates: ReadonlyMap<ItemId, ItemStateTag>,
+  itemId: ItemId,
+  /**
+   * The milestone requirement this walk started from. Every blocker reports it as
+   * `limitingTarget`, NOT the item the walk happens to have reached: the advice has
+   * to read "this is what is stopping the thing you need", not name an intermediate
+   * the player never asked for. The blocker's own identity travels in `recipeId` or
+   * `itemId`, so both halves are still recoverable.
+   */
+  targetId: ItemId,
+  visited: Set<ItemId>,
+): Bottleneck {
+  if (visited.has(itemId)) return null;
+  visited.add(itemId);
+
+  const recipeId = activeRecipeOf(state.activeRecipe, itemId);
+  if (recipeId === undefined) return null;
+  // A locked recipe is not advice. The player cannot buy a machine for a recipe that
+  // has not unlocked, and `unitsByRecipe` only carries live recipes, so without this
+  // guard every locked recipe downstream would read as a zero-capacity blocker.
+  if (!isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) return null;
+
+  // Zero machines is not "limited" -- nothing is constraining it, it has no capacity
+  // at all, and its waterfall entry reports `limitedBy: null`. That is exactly why
+  // the priority scan could never name it.
+  if ((capacity.unitsByRecipe.get(recipeId) ?? 0) <= 0) {
+    return {
+      kind: "recipe",
+      recipeId,
+      limitingTarget: `item:${targetId}`,
+      // One, deliberately, and not from `machinesToClearRecipe`. That function
+      // answers "how many machines of `entry.limitedBy`", and for a zero-capacity
+      // target `limitedBy` need not name this recipe at all: measured on the fixture
+      // at tier 2, `plastic` comes back limited by `extract_oil` rather than
+      // `refine_plastic`, because both oil recipes sit at ratio 0 with no machines
+      // and the tie breaks on `content.recipeIds` order. Quoting its count would
+      // attach a number to the wrong recipe. One machine is the honest minimum and
+      // the caller re-solves after buying -- the same argument the storage branch
+      // makes for only ever recommending one level.
+      machinesToClear: 1,
+    };
+  }
+
+  // A cap is a constraint no machine can clear. Ordered ahead of the limited branch
+  // for the same reason the priority scan orders it that way: a FULL item's producer
+  // is limited by backpressure, and naming the recipe would advise a purchase that
+  // cannot help.
+  if (itemStates.get(itemId) === "FULL") {
+    return {
+      kind: "storage",
+      itemId,
+      limitingTarget: `item:${targetId}`,
+      upgrade: cheaperUpgrade(content, state, itemId),
+    };
+  }
+
+  const entry = entries.find((candidate) => candidate.itemId === itemId);
+  if (entry !== undefined && entry.limitedBy !== null) {
+    return {
+      kind: "recipe",
+      recipeId: entry.limitedBy,
+      limitingTarget: `item:${targetId}`,
+      machinesToClear: machinesToClearRecipe(capacity, entry),
+    };
+  }
+
+  // Producing, uncapped, and getting everything it asked for: this requirement is
+  // not blocked, it is merely not banked yet. This branch used to recurse into the
+  // recipe's inputs in case one of THEM was stopped, but measurement found that
+  // branch dead: running `bottleneck` on the vertical-slice content at tier 2 --
+  // the tier the policy could never pass before this task, so the tier where this
+  // walk does the most work -- for 5 simulated days hit a counter placed at the top
+  // of that loop zero times. The waterfall's `limitedBy` already names the deepest
+  // limiting recipe by the time this function runs, so there was nothing left for
+  // the recursion to find. Deleted rather than shipped on faith; `visited` stays
+  // because it still guards this function's entry point.
+  return null;
+}
+
 export function computeBottleneck(
   content: IndexedContent,
   capacity: CapacityTable,
@@ -132,6 +229,23 @@ export function computeBottleneck(
       generatorRecipeId: live,
       machinesToClear: machines,
     };
+  }
+
+  // Spec §4.5 as amended 2026-09-19: what blocks the next milestone outranks what
+  // limits the top priority item. Falls through when the milestone is satisfied,
+  // when nothing in it is blocked, or at the last tier.
+  const nextMilestone = content.milestoneByTier.get(tier + 1);
+  if (nextMilestone !== undefined) {
+    const visited = new Set<ItemId>();
+    for (const requirement of nextMilestone.requires) {
+      // Ruling R7 pays deliveries from liquid stock, so liquid is the right measure.
+      if (liquid(state, requirement.item).gte(requirement.amount)) continue;
+      const blocker = resolveBlocker(
+        content, capacity, entries, state, itemStates,
+        requirement.item, requirement.item, visited,
+      );
+      if (blocker !== null) return blocker;
+    }
   }
 
   if (firstLimited === null || firstLimited.limitedBy === null) return null;

@@ -61,12 +61,42 @@ export function checkRunawayGrowth(bundle: Bundle): ValidationIssue[] {
  * `maxLevel`. Spec B.4: storage is per item, Quantum Storage is per lane, and the two
  * add.
  */
-function maxAttainableCap(bundle: Bundle, item: Item): number {
-  const storage = item.baseStorageCap * Math.pow(bundle.storage.capGrowth, bundle.storage.maxLevel);
+/**
+ * The most of an item a player can ever hold liquid: storage and Quantum Storage both
+ * at maximum level. Exported because it is not only check 9's notion — the calibration
+ * script needs the same number to know that a delivery requirement above it can never
+ * be met (ruling R7 pays deliveries from liquid stock), which it must not learn by
+ * simulating for a year and giving up.
+ *
+ * Sound only when check 12 passes: if the level ladder self-terminates, `maxLevel` is
+ * not reachable and this overstates what a player can hold.
+ *
+ * `playerTier` is required rather than defaulted, because there is no safe default: the
+ * cap grows with progression (spec B.4 as amended), so "the most a player can hold"
+ * means nothing until you say WHEN. Callers do not all give the same answer -- a
+ * milestone is banked on the tier below it, while a machine can be bought on any tier
+ * at or after it unlocks.
+ */
+export function maxAttainableCap(bundle: Bundle, item: Item, playerTier: number): number {
+  const storage =
+    item.baseStorageCap *
+    Math.pow(bundle.storage.capGrowth, bundle.storage.maxLevel) *
+    Math.pow(bundle.storage.capPerTier, playerTier);
   const quantum =
     item.baseQuantumCap *
-    Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel);
+    Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel) *
+    Math.pow(bundle.quantumStorage.capPerTier, playerTier);
   return storage + quantum;
+}
+
+/** The deepest tier the bundle defines, which is as far as a player can ever get. */
+export function deepestTier(bundle: Bundle): number {
+  let deepest = 0;
+  for (const milestone of bundle.milestones) deepest = Math.max(deepest, milestone.tier);
+  for (const cls of bundle.machineClasses) {
+    for (const mark of cls.marks) deepest = Math.max(deepest, mark.unlockTier);
+  }
+  return deepest;
 }
 
 /**
@@ -90,11 +120,11 @@ export function checkStorageReachesCosts(bundle: Bundle): ValidationIssue[] {
   const items = new Map(bundle.items.map((item) => [item.id, item]));
   const issues: ValidationIssue[] = [];
 
-  const check = (itemId: string, amount: number, what: string): void => {
+  const check = (itemId: string, amount: number, what: string, playerTier: number): void => {
     const item = items.get(itemId);
     // A dangling id is check 2's to report, not this one's.
     if (item === undefined) return;
-    const cap = maxAttainableCap(bundle, item);
+    const cap = maxAttainableCap(bundle, item, playerTier);
     if (amount > cap) {
       issues.push(
         issue(
@@ -105,17 +135,28 @@ export function checkStorageReachesCosts(bundle: Bundle): ValidationIssue[] {
     }
   };
 
+  // A machine can be bought on any tier at or after it unlocks, so "could this EVER be
+  // afforded" is asked at the deepest tier the bundle reaches.
+  const deepest = deepestTier(bundle);
   for (const cls of bundle.machineClasses) {
     for (const mark of cls.marks) {
       for (const cost of mark.buildCost) {
-        check(cost.item, cost.amount, `"${cls.id}" mk${mark.mark}`);
+        check(cost.item, cost.amount, `"${cls.id}" mk${mark.mark}`, deepest);
       }
     }
   }
 
   for (const milestone of bundle.milestones) {
     for (const requirement of milestone.requires) {
-      check(requirement.item, requirement.amount, `milestone "${milestone.name}" (tier ${milestone.tier})`);
+      // Banked while the player is on the tier BELOW it: they cannot reach tier k
+      // before unlocking tier k. Measuring at the deepest tier would clear
+      // requirements nobody could actually deliver on time.
+      check(
+        requirement.item,
+        requirement.amount,
+        `milestone "${milestone.name}" (tier ${milestone.tier})`,
+        Math.max(0, milestone.tier - 1),
+      );
     }
   }
 
@@ -166,6 +207,89 @@ export function checkGeneratorCapacity(bundle: Bundle): ValidationIssue[] {
           `tier ${tier} draws ${draw} MW for one each of ${contributors.join(", ")} against a ${bundle.baseGridCapacityMw} MW HUB allowance, with no generator unlocked yet`,
         ),
       );
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Check 12 — the storage ladder must be climbable to the top.
+ *
+ * Proposed as an amendment to spec B.6, and it is check 9's own class of defect on
+ * the one purchase check 9 does not look at: **the storage levels themselves**.
+ *
+ * Buying the level that takes an item from L to L+1 costs `baseCostAmount *
+ * costGrowth^L` (the engine's `levelCostRange` at `levels = 1`), and it is paid out
+ * of stock, so it is bounded by what the player can hold. The best case is the cost
+ * item at storage level L with Quantum Storage maxed:
+ *
+ *     cost(L)  =  baseCostAmount * costGrowth^L
+ *     hold(L)  =  baseStorageCap * capGrowth^L  +  baseQuantumCap * qsCapGrowth^qsMax
+ *
+ * If `costGrowth > capGrowth` the first grows faster than the second, so past a
+ * crossover level the next level costs more than the maximum the player can ever
+ * bank, and the ladder **permanently ends**. That is not a tuning miss — it happens
+ * for every item in every bundle authored that way, and only the crossover level
+ * moves. The parallel is spec C.0's mark analysis, where `B = A` is exactly
+ * pace-neutral: a storage level whose cost scales with the capacity it grants is
+ * neutral in the same way, and anything steeper eventually stops being buyable.
+ *
+ * The slice was authored at 2.0 against 1.6 for storage and 2.5 against 1.6 for
+ * Quantum Storage. Every run that needed more than `500 * 1.6^12 + 2000 * 1.6^7 =
+ * 194424.58` iron_plate stalled there permanently, with storage level 13 quoted at
+ * 409,600 and QS level 8 at 762,939. The calibration script could not lengthen any
+ * tier past the second, and this is why.
+ *
+ * **Check 9 depends on this one.** Its "maximum attainable cap" is attainable only if
+ * the ladder can actually be climbed to `maxLevel`; when this check passes, that
+ * premise holds.
+ */
+export function checkStorageLadderClimbable(bundle: Bundle): ValidationIssue[] {
+  const items = new Map(bundle.items.map((item) => [item.id, item]));
+  const issues: ValidationIssue[] = [];
+
+  for (const [label, curve] of [
+    ["storage", bundle.storage],
+    ["Quantum Storage", bundle.quantumStorage],
+  ] as const) {
+    // null means levels are free (spec B.4's schema note), and free is always
+    // affordable. A dangling id is check 2's to report.
+    if (curve.baseCostItem === null) continue;
+    const item = items.get(curve.baseCostItem);
+    if (item === undefined) continue;
+
+    // Caps only grow with progression, so "can this ladder EVER be climbed" is fairest
+    // asked at the deepest tier the bundle reaches.
+    const ladderTier = deepestTier(bundle);
+    const qsCeiling =
+      item.baseQuantumCap *
+      Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel) *
+      Math.pow(bundle.quantumStorage.capPerTier, ladderTier);
+
+    for (let level = 0; level < curve.maxLevel; level += 1) {
+      const cost = curve.baseCostAmount * Math.pow(curve.costGrowth, level);
+      const hold =
+        item.baseStorageCap *
+          Math.pow(bundle.storage.capGrowth, level) *
+          Math.pow(bundle.storage.capPerTier, ladderTier) +
+        qsCeiling;
+      if (cost > hold) {
+        issues.push(
+          issue(
+            12,
+            `the ${label} ladder stops at level ${level}: that level costs ` +
+              `${cost.toFixed(0)} "${curve.baseCostItem}" but the most a player can hold ` +
+              `there is ${hold.toFixed(0)}, so it can never be bought and no level above ` +
+              `it is reachable. costGrowth ${curve.costGrowth} against capGrowth ` +
+              `${bundle.storage.capGrowth} crosses over here, so either end the ladder ` +
+              `below level ${level} or slow the cost curve. Cost growth ABOVE capacity ` +
+              `growth is intended (§3.3 wants capacity to bind); outliving the crossover ` +
+              `is not.`,
+          ),
+        );
+        break;
+      }
     }
   }
 

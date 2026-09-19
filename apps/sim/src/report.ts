@@ -8,6 +8,7 @@
 // state, which is exactly why the engine's economy module does not compute it.
 import type { IndexedContent, LaneId, MachineClassId } from "@manufactory/engine";
 import type { PolicyName } from "./policies.js";
+import type { RunCheckpoint } from "./run.js";
 
 export interface TierMark {
   tier: number;
@@ -36,6 +37,11 @@ export interface RunReport {
   purchases: number;
   bindingConstraints: { recipeId: string; boundMs: number }[];
   rEff: REffRow[];
+  /**
+   * Empty unless the run was asked for them. World states are large, so an ordinary
+   * `sim run` keeps none; only calibration, which replays prefixes, pays for them.
+   */
+  checkpoints: RunCheckpoint[];
 }
 
 /** r_eff = r / m, where m is the ladder's multiplier growth per machine (spec D3). */

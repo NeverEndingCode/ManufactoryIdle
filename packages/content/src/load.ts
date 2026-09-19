@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { BundleSchema, type Bundle } from "./schema.js";
+import { BundleSchema, type Bundle, type Derived, type StorageCurve } from "./schema.js";
 
 export interface ValidationIssue {
   check: number;
@@ -36,7 +36,21 @@ function mergeInto(target: Record<string, unknown>, source: Record<string, unkno
   }
 }
 
-export function loadBundleDir(dir: string): Bundle {
+export interface LoadOptions {
+  /**
+   * Overlay `derived.yaml` onto the authored numbers. Default true: the game, the
+   * validator and the simulator must all run on the solved values.
+   *
+   * The calibrator passes false. It is the thing that *writes* derived.yaml, so if it
+   * read its own last output it would search from there instead of from the authored
+   * seeds — two runs over unchanged content would disagree, and each run's scale
+   * factors would compound on the previous one's. Tests that assert on authored
+   * intent pass false for the same reason.
+   */
+  applyDerived?: boolean;
+}
+
+export function loadBundleDir(dir: string, options: LoadOptions = {}): Bundle {
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
     .sort();
@@ -56,7 +70,104 @@ export function loadBundleDir(dir: string): Bundle {
 
   // Check 1: schema conformance. Throwing here is deliberate — nothing
   // downstream can run against a bundle that is not even shaped right.
-  return BundleSchema.parse(merged);
+  //
+  // The derived overlay is applied here rather than left to callers so that there is
+  // one notion of "the bundle" by default: the validator, the engine and the simulator
+  // all see the calibrated numbers, and none of them can be looking at the authored
+  // seeds by accident. The calibrator is the one caller that must opt out — see
+  // LoadOptions.applyDerived.
+  const bundle = BundleSchema.parse(merged);
+  return options.applyDerived === false ? bundle : applyDerived(bundle);
+}
+
+
+/**
+ * Lay the calibration script's solution over the authored numbers (spec B.1, B.7).
+ *
+ * Every entry is a patch rather than a replacement, so a run that solved only
+ * milestone amounts cannot silently reset a storage curve it never looked at.
+ *
+ * A patch naming something the bundle does not have throws rather than being
+ * ignored. That case means the content was re-authored since the calibration run, so
+ * the numbers no longer describe this graph; carrying on would leave the bundle
+ * half-calibrated with nothing anywhere to say so, which is exactly the failure mode
+ * spec B.1 wants made structural.
+ */
+export function applyDerived(bundle: Bundle): Bundle {
+  const derived: Derived | undefined = bundle.derived;
+  if (derived === undefined) return bundle;
+
+  let next = bundle;
+
+  if (derived.machineClasses !== undefined) {
+    const byId = new Map(derived.machineClasses.map((c) => [c.id, c]));
+    for (const id of byId.keys()) {
+      if (!bundle.machineClasses.some((c) => c.id === id)) {
+        throw new Error(
+          `derived block sets costRatio for machine class "${id}", which this bundle ` +
+            `does not define. The content was re-authored after calibration; re-run it.`,
+        );
+      }
+    }
+    next = {
+      ...next,
+      machineClasses: next.machineClasses.map((cls) => {
+        const patch = byId.get(cls.id);
+        if (patch === undefined) return cls;
+        return {
+          ...cls,
+          costRatio: patch.costRatio,
+          ...(patch.rEff === undefined ? {} : { rEff: patch.rEff }),
+        };
+      }),
+    };
+  }
+
+  if (derived.milestones !== undefined) {
+    const byTier = new Map(derived.milestones.map((m) => [m.tier, m]));
+    for (const [tier, patch] of byTier) {
+      const milestone = bundle.milestones.find((m) => m.tier === tier);
+      if (!milestone) {
+        throw new Error(
+          `derived block sets requirements for tier ${tier}, which this bundle does ` +
+            `not define. The content was re-authored after calibration; re-run it.`,
+        );
+      }
+      for (const requirement of patch.requires) {
+        if (!milestone.requires.some((r) => r.item === requirement.item)) {
+          throw new Error(
+            `derived block sets a tier ${tier} requirement for "${requirement.item}", ` +
+              `which that milestone does not ask for. The content was re-authored ` +
+              `after calibration; re-run it.`,
+          );
+        }
+      }
+    }
+    next = {
+      ...next,
+      milestones: next.milestones.map((milestone) => {
+        const patch = byTier.get(milestone.tier);
+        if (patch === undefined) return milestone;
+        const amounts = new Map(patch.requires.map((r) => [r.item, r.amount]));
+        return {
+          ...milestone,
+          requires: milestone.requires.map((r) => ({
+            ...r,
+            amount: amounts.get(r.item) ?? r.amount,
+          })),
+        };
+      }),
+    };
+  }
+
+  const patchCurve = (curve: StorageCurve, patch: Partial<StorageCurve> | undefined): StorageCurve =>
+    patch === undefined ? curve : { ...curve, ...patch };
+
+  return {
+    ...next,
+    storage: patchCurve(next.storage, derived.storage),
+    quantumStorage: patchCurve(next.quantumStorage, derived.quantumStorage),
+  };
 }
 
 function duplicates(ids: string[]): string[] {

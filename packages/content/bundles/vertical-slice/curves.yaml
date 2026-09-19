@@ -1,18 +1,61 @@
 # Spec B.4. Placeholders, as in milestones.yaml: the calibration script solves
 # storage `s`/`sc` and quantum `q` and its cost curve against the pacing targets.
+# Check 12: cost growth must not exceed capacity growth, or the ladder
+# self-terminates -- past a crossover level the next level costs more than the
+# player can ever hold, and no level above it is reachable. Authored at 2.0 and 2.5
+# against a capGrowth of 1.6, both curves ended: the slice's storage stopped at level
+# 16 and its Quantum Storage at level 10, and every calibration run that needed more
+# than 194,425 iron_plate stalled there permanently.
+#
+# The SHAPE is the authoring decision, the same way the ladder is (spec B.3), and it
+# is the same argument spec C.0 makes about marks: a level whose cost scales with the
+# capacity it grants is pace-neutral, and anything steeper eventually stops being
+# buyable. The VALUES below are still placeholders for the calibration script.
+# §3.3 wants caps to grow *slightly slower than build costs*, so capacity periodically
+# blocks production. costGrowth 1.5 under capGrowth 1.6 had that backwards, and the deep
+# end ran away: tier 9 landed at 15.73 and tier 10 at 16.89 against targets of 16 and 25,
+# barely a collection apart.
+#
+# costGrowth is the one lever measured to slow the late game WITHOUT touching the early
+# one -- early levels stay cheap, late levels compound, so the effect grows with tier.
+# Measured, greedy, seed 42, at the amounts calibrated for 1.5:
+#
+#   costGrowth   t1     t2     t3      t8      t9     t10
+#   1.5 (was)  0.42   0.87   1.17   11.00   15.73   16.89
+#   1.6        0.42   0.87   1.17   11.61   17.33   18.16
+#   1.7        0.42   0.87   1.17   12.15   18.92   19.79
+#   1.8        0.42   0.74   1.04   12.44   28.12   28.38
+#   2.0        rejected by check 12 -- the ladder stops at level 17
+#
+# Two other levers were measured first and do nothing here. The ladder softcap is inert:
+# slopes 0.25 down to 0.02 give identical tier times, because a piecewise-LINEAR cap only
+# rescales an exponential, and because production is not the constraint (storage:iron_plate
+# binds for 306.7M of 464M ms). Raising r_eff makes the game FASTER, not slower: pricier
+# machines mean greedy reinvests less and banks more toward a fixed requirement.
+#
+# 1.8 sits above capGrowth, which is what §3.3 asks for and what check 12 permits: the
+# check tests `cost <= holdable` per level, so outgrowing capacity is fine until the
+# crossover and the ladder simply has to end first. At maxLevel 22 it does.
 storage:
   capGrowth: 1.6
-  costGrowth: 2.0
+  costGrowth: 1.8
   baseCostItem: iron_plate
   baseCostAmount: 50
-  maxLevel: 20
+  # 20 and 15 terminated under the slice's own milestones: tier 9's polymer_resin sat
+  # at 99.6% of its ceiling and tier 10's smart_plating at 76.6%, so the amounts search
+  # was bisecting against a wall rather than against the economy. 22 and 16 put every
+  # milestone under 50% (worst: polymer_resin 43.4%), which is the smallest pair that
+  # does. Deeper was rejected on purpose -- §3.3 wants capacity to block production
+  # PERIODICALLY, so the ladder has to stay finite enough to bind during play. What it
+  # must not do is run out.
+  maxLevel: 22
 
 quantumStorage:
   capGrowth: 1.6
-  costGrowth: 2.5
+  costGrowth: 1.55
   baseCostItem: iron_plate
   baseCostAmount: 500
-  maxLevel: 15
+  maxLevel: 16
 
 # Spec D3: applied per multiplier category and again on the product, so neither one
 # system nor the four stacking can drive r_eff below 1. Piecewise-linear (spec E.4).

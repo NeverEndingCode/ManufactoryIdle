@@ -16,14 +16,39 @@ import { loadContent, newWorld } from "./bootstrap.js";
 import { getPolicy, type PolicyName } from "./policies.js";
 import { authoredREff, observedREff, type REffRow, type RunReport, type TierMark } from "./report.js";
 
+/**
+ * A world, frozen at the instant a tier unlocked, plus the clock reading then.
+ *
+ * Calibration bisects tier k's delivery requirements. Nothing before tier k-1
+ * unlocked can depend on them -- the purchase cadence in that span ramps against
+ * milestone k-1 (spec B.7, `tierProgress`), and no other policy input reads a future
+ * milestone -- so replaying the prefix from here is exact, not approximate. That
+ * matters: B.7's whole argument is that there is ONE implementation of "how long
+ * does this take", and a faster estimate of the prefix would be a second one.
+ */
+export interface RunCheckpoint {
+  tier: number;
+  state: WorldState;
+  nowMs: number;
+}
+
 export interface RunOptions {
   policy: PolicyName;
   contentDir?: string;
+  /** Pre-loaded content, for callers that mutate a bundle in memory (calibration). */
+  content?: IndexedContent;
   seed: number;
   /** Stop once this tier is reached. */
   untilTier: number;
-  /** Stop after this much simulated time regardless. */
+  /**
+   * Stop at this reading of the world clock. Absolute, not a duration: a resumed run
+   * starts with the clock already advanced, and the budget is the same deadline.
+   */
   maxSimMs: number;
+  /** Resume here instead of building a fresh world. */
+  startFrom?: RunCheckpoint;
+  /** Keep a world state per tier unlocked, so a later run can resume from one. */
+  captureCheckpoints?: boolean;
 }
 
 interface ClassSlot {
@@ -50,13 +75,14 @@ function classSlots(content: IndexedContent, state: WorldState): ClassSlot[] {
 }
 
 export function runSimulation(options: RunOptions): RunReport {
-  const content = loadContent(options.contentDir);
+  const content = options.content ?? loadContent(options.contentDir);
   const policy = getPolicy(options.policy);
 
-  let state = newWorld(content, options.seed);
+  let state = options.startFrom?.state ?? newWorld(content, options.seed);
   const slots = classSlots(content, state);
+  const checkpoints: RunCheckpoint[] = [];
 
-  let nowMs = 0;
+  let nowMs = options.startFrom?.nowMs ?? 0;
   let purchases = 0;
   let lastEventMs = 0;
   let maxDeadTimeMs = 0;
@@ -76,7 +102,10 @@ export function runSimulation(options: RunOptions): RunReport {
       const result = apply(state, content, action, state.seed);
       if (result.rejected) continue;
       state = result.state;
-      purchases += 1;
+      // A purchase is a SPEND. Policies also emit ASSIGN_MACHINES to move machines
+      // they already own off an idle recipe, and counting those here would inflate the
+      // figure the report calls "purchases" with actions that cost nothing.
+      if (action.type.startsWith("BUY_")) purchases += 1;
       markEvent(nowMs);
     }
 
@@ -111,6 +140,10 @@ export function runSimulation(options: RunOptions): RunReport {
       const atMs = event?.atMs ?? nowMs;
       tierTimes.push({ tier, atMs, collections: atMs / content.offlineCapMs });
       markEvent(atMs);
+      // The state AFTER the resolve that unlocked the tier, and the clock after it
+      // too. Resuming mid-step would replay part of an interval whose length was
+      // already decided, which is the one thing that would make this inexact.
+      if (options.captureCheckpoints === true) checkpoints.push({ tier, state, nowMs });
     }
   }
   markEvent(nowMs);
@@ -153,5 +186,6 @@ export function runSimulation(options: RunOptions): RunReport {
     purchases,
     bindingConstraints,
     rEff,
+    checkpoints,
   };
 }
