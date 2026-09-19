@@ -9,7 +9,7 @@
 import { POWER_ITEM, type ItemId, type RecipeId } from "../content/types.js";
 import { isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
 import type { CapacityTable } from "../economy/capacity.js";
-import type { ItemStateTag } from "../economy/storage.js";
+import { liquid, type ItemStateTag } from "../economy/storage.js";
 import { levelCostRange } from "../economy/curves.js";
 import { D, type Dec } from "../numbers/decimal.js";
 import type { WorldState } from "../state/world.js";
@@ -98,6 +98,62 @@ function cheaperUpgrade(
   return total(qsCost).lt(total(storageCost)) ? "quantum" : "storage";
 }
 
+/**
+ * What is stopping `itemId`, or null if nothing is.
+ *
+ * `visited` is shared across one call's whole sweep rather than reset per
+ * requirement: an item that returned null once returns null again, so sharing is
+ * exact and saves re-walking a chain two requirements have in common. It is also
+ * what bounds the walk -- ruling R6 keeps in-cycle recipes from ever being live, so
+ * the live subgraph is acyclic today, but a set is a cheaper guarantee than a
+ * property of content that a later phase may relax.
+ */
+function resolveBlocker(
+  content: IndexedContent,
+  capacity: CapacityTable,
+  entries: readonly EntryAllocation[],
+  state: WorldState,
+  itemStates: ReadonlyMap<ItemId, ItemStateTag>,
+  itemId: ItemId,
+  /**
+   * The milestone requirement this walk started from. Every blocker reports it as
+   * `limitingTarget`, NOT the item the walk happens to have reached: the advice has
+   * to read "this is what is stopping the thing you need", not name an intermediate
+   * the player never asked for. The blocker's own identity travels in `recipeId` or
+   * `itemId`, so both halves are still recoverable.
+   */
+  targetId: ItemId,
+  visited: Set<ItemId>,
+): Bottleneck {
+  if (visited.has(itemId)) return null;
+  visited.add(itemId);
+
+  const recipeId = activeRecipeOf(state.activeRecipe, itemId);
+  if (recipeId === undefined) return null;
+  // A locked recipe is not advice. The player cannot buy a machine for a recipe that
+  // has not unlocked, and `unitsByRecipe` only carries live recipes, so without this
+  // guard every locked recipe downstream would read as a zero-capacity blocker.
+  if (!isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) return null;
+
+  // Zero machines is not "limited" -- nothing is constraining it, it has no capacity
+  // at all, and its waterfall entry reports `limitedBy: null`. That is exactly why
+  // the priority scan could never name it.
+  if ((capacity.unitsByRecipe.get(recipeId) ?? 0) <= 0) {
+    return {
+      kind: "recipe",
+      recipeId,
+      limitingTarget: `item:${targetId}`,
+      // One, deliberately, and not from `machinesToClearRecipe` -- that returns 0
+      // when `limitedBy` is null, which this case always is. One machine is the
+      // honest minimum and the caller re-solves after buying, the same argument the
+      // storage branch makes for only ever recommending one level.
+      machinesToClear: 1,
+    };
+  }
+
+  return null;
+}
+
 export function computeBottleneck(
   content: IndexedContent,
   capacity: CapacityTable,
@@ -132,6 +188,23 @@ export function computeBottleneck(
       generatorRecipeId: live,
       machinesToClear: machines,
     };
+  }
+
+  // Spec §4.5 as amended 2026-09-19: what blocks the next milestone outranks what
+  // limits the top priority item. Falls through when the milestone is satisfied,
+  // when nothing in it is blocked, or at the last tier.
+  const nextMilestone = content.milestoneByTier.get(tier + 1);
+  if (nextMilestone !== undefined) {
+    const visited = new Set<ItemId>();
+    for (const requirement of nextMilestone.requires) {
+      // Ruling R7 pays deliveries from liquid stock, so liquid is the right measure.
+      if (liquid(state, requirement.item).gte(requirement.amount)) continue;
+      const blocker = resolveBlocker(
+        content, capacity, entries, state, itemStates,
+        requirement.item, requirement.item, visited,
+      );
+      if (blocker !== null) return blocker;
+    }
   }
 
   if (firstLimited === null || firstLimited.limitedBy === null) return null;

@@ -131,11 +131,11 @@ this for reinforced iron plate" are both recoverable.
 cycle — `alt_recycled_plastic → alt_recycled_rubber`, the known-acceptable check 6 warning
 — so an unguarded walk terminates only by luck.
 
-`machinesToClear` for the zero-capacity case comes out of the existing
-`machinesToClearRecipe`, whose `Math.max(1, …)` floor yields 1. Task 0 called that floor
-out as a defect because it converted "no machine would help" into "buy 1 machine". Here
-one machine genuinely does help — it is the difference between zero production and some —
-so the floor is correct in this branch and is deliberately left alone.
+`machinesToClear` for the zero-capacity case is the literal 1, not a call to
+`machinesToClearRecipe`. That function returns 0 immediately when `entry.limitedBy` is
+null, which for a zero-capacity entry it always is. One machine is the honest minimum
+and the caller re-solves after buying — the same argument the storage branch already
+makes for only ever recommending one level.
 
 ### What this does not change
 

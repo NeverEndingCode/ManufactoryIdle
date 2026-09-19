@@ -698,6 +698,24 @@ heuristic that produced the bad machine advice. `upgrade: null` is deliberately 
 recommendation rather than an invented one — that state is the permanent wall validator
 check 9 exists to make unreachable.
 
+**Amended 2026-09-19 (Phase 2): the scan is milestone-first.**
+
+§4.5 originally returned the constraint limiting the highest-priority *limited* target.
+Two measured defects follow from that wording. A target with zero machines has
+`limitedBy: null` and is invisible to the scan, since a recipe with no capacity is not
+limited by anything. And ranking by the authored priority list answers a question a
+stalled player is not asking.
+
+Measured on the vertical slice: `bottleneck` stalled at tier 1 for 120 simulated days
+holding 2,307,820 `iron_plate` and 430,367 `screw`, owning zero assemblers, needing 200
+`reinforced_iron_plate` — and was advised to buy three iron ore miners.
+
+The reporter now resolves the next milestone's unmet requirements first, walking each
+item's input chain to the first genuine blocker, and falls back to the priority scan
+when the milestone is satisfied or nothing in it is blocked. The returned kinds are
+unchanged: a zero-capacity recipe is reported as `kind: "recipe"`, because it genuinely
+is the binding constraint.
+
 ### C.4 Power
 
 Grid per §6.1: `powerRatio = min(1, capacity / demand)`, demand scales with clock, clock
