@@ -122,4 +122,39 @@ describe("the milestone branch", () => {
     // that. Without the fallback this would still be talking about plastic.
     expect(sol.bottleneck?.limitingTarget).toBe("item:iron_plate");
   });
+
+  it("names the cap when the milestone item is at its cap", () => {
+    // Tier 2 of the fixture needs 2000 iron_plate; the liquid cap at level 0 is
+    // 300 + 1200 = 1500, so the requirement is unmet AND the item is FULL.
+    //
+    // iron_plate is moved to the end of the priority list here: it is also
+    // priority[0] in the fixture, so leaving it there lets the OLD priority-scan
+    // path name the same object and the test would pass without the milestone
+    // branch doing any work. Moving it to the end means only the milestone branch
+    // can produce this result.
+    const state = {
+      ...atCap(initialWorld(content, 1, 0), "iron_plate"),
+      tier: 1,
+      priority: [
+        ...initialWorld(content, 1, 0).priority.filter((e) => e.itemId !== "iron_plate"),
+        ...initialWorld(content, 1, 0).priority.filter((e) => e.itemId === "iron_plate"),
+      ],
+    };
+    const sol = solve(state, content, NO_FLOOR);
+    expect(sol.itemStates.get("iron_plate")).toBe("FULL");
+    expect(sol.bottleneck).toEqual({
+      kind: "storage",
+      itemId: "iron_plate",
+      limitingTarget: "item:iron_plate",
+      upgrade: "storage",
+    });
+  });
+
+  it("names the limiting recipe when the milestone item is merely constrained", () => {
+    // Tier 1 of the fixture needs 200 iron_plate. Production is live and below cap,
+    // so the walk must reach the limited branch rather than returning null.
+    const sol = solve(initialWorld(content, 1, 0), content, NO_FLOOR);
+    expect(sol.bottleneck?.kind).toBe("recipe");
+    expect(sol.bottleneck?.limitingTarget).toBe("item:iron_plate");
+  });
 });

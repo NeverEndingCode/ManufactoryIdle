@@ -103,10 +103,11 @@ function cheaperUpgrade(
  *
  * `visited` is shared across one call's whole sweep rather than reset per
  * requirement: an item that returned null once returns null again, so sharing is
- * exact and saves re-walking a chain two requirements have in common. It is also
- * what bounds the walk -- ruling R6 keeps in-cycle recipes from ever being live, so
- * the live subgraph is acyclic today, but a set is a cheaper guarantee than a
- * property of content that a later phase may relax.
+ * exact and saves re-walking an item two requirements have in common. It also
+ * guards this function's single recursive entry point (the walk no longer recurses
+ * into recipe inputs -- see the comment at the bottom of this function for why --
+ * but the guard costs nothing to keep and ruling R6 keeping the live subgraph
+ * acyclic today is a property of content, not a guarantee, should recursion return).
  */
 function resolveBlocker(
   content: IndexedContent,
@@ -156,6 +157,39 @@ function resolveBlocker(
     };
   }
 
+  // A cap is a constraint no machine can clear. Ordered ahead of the limited branch
+  // for the same reason the priority scan orders it that way: a FULL item's producer
+  // is limited by backpressure, and naming the recipe would advise a purchase that
+  // cannot help.
+  if (itemStates.get(itemId) === "FULL") {
+    return {
+      kind: "storage",
+      itemId,
+      limitingTarget: `item:${targetId}`,
+      upgrade: cheaperUpgrade(content, state, itemId),
+    };
+  }
+
+  const entry = entries.find((candidate) => candidate.itemId === itemId);
+  if (entry !== undefined && entry.limitedBy !== null) {
+    return {
+      kind: "recipe",
+      recipeId: entry.limitedBy,
+      limitingTarget: `item:${targetId}`,
+      machinesToClear: machinesToClearRecipe(capacity, entry),
+    };
+  }
+
+  // Producing, uncapped, and getting everything it asked for: this requirement is
+  // not blocked, it is merely not banked yet. This branch used to recurse into the
+  // recipe's inputs in case one of THEM was stopped, but measurement found that
+  // branch dead: running `bottleneck` on the vertical-slice content at tier 2 --
+  // the tier the policy could never pass before this task, so the tier where this
+  // walk does the most work -- for 5 simulated days hit a counter placed at the top
+  // of that loop zero times. The waterfall's `limitedBy` already names the deepest
+  // limiting recipe by the time this function runs, so there was nothing left for
+  // the recursion to find. Deleted rather than shipped on faith; `visited` stays
+  // because it still guards this function's entry point.
   return null;
 }
 
