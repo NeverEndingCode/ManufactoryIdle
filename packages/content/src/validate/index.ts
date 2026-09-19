@@ -10,6 +10,7 @@
 //   8  `r_eff > 1 + ε` with every multiplier maxed        `economy.ts` (`checkRunawayGrowth`) — the static half; the maxed-stack half is E.5's simulator gate
 //   9  Storage + QS cap >= largest build cost at tier     `economy.ts` (`checkStorageReachesCosts`) — also covers milestone requirements, beyond B.6's wording
 //  10  Generator capacity >= draw at tier                 `economy.ts` (`checkGeneratorCapacity`)
+//  12  Storage ladder climbable to maxLevel          `economy.ts` (`checkStorageLadderClimbable`) — proposed B.6 amendment; check 9's "maximum attainable cap" is only attainable if this passes
 //  11  Checksum + version stamp                           `checksum.ts` (`bundleChecksum`) — a SEPARATE function, not part of `validateBundle` below; the CLI (`cli.ts`) calls it directly after validation passes
 //
 // Check 1 throws (a bundle that doesn't even parse has nothing else worth
@@ -27,6 +28,7 @@ import {
 import {
   checkGeneratorCapacity,
   checkRunawayGrowth,
+  checkStorageLadderClimbable,
   checkStorageReachesCosts,
 } from "./economy.js";
 import { checkCycles } from "./scc.js";
@@ -40,6 +42,7 @@ export function validateBundle(bundle: Bundle): ValidationIssue[] {
     ...checkCycles(bundle),
     ...checkBuildCostsSatisfiable(bundle),
     ...checkRunawayGrowth(bundle),
+    ...checkStorageLadderClimbable(bundle),
     ...checkStorageReachesCosts(bundle),
     ...checkGeneratorCapacity(bundle),
   ].sort((a, b) => a.check - b.check);
@@ -49,7 +52,9 @@ export { checkByproductOutlets, checkBuildCostsSatisfiable, checkConsumers, chec
 export {
   checkGeneratorCapacity,
   checkRunawayGrowth,
+  checkStorageLadderClimbable,
   checkStorageReachesCosts,
+  maxAttainableCap,
   RUNAWAY_EPSILON,
 } from "./economy.js";
 export { buildRecipeDependencyGraph, checkCycles, findStronglyConnectedComponents } from "./scc.js";

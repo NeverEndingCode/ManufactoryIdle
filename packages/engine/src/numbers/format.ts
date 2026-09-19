@@ -41,11 +41,22 @@ export function letterSuffix(index: number): string {
   return out;
 }
 
+// Below this exponent a fixed-point rendering is nothing but leading zeros,
+// so `format` hands off to scientific notation instead of calling `plain`.
+const PLAIN_FLOOR_EXPONENT = -4;
+
 function plain(value: number): string {
   const abs = Math.abs(value);
-  if (abs < 10) return value.toFixed(2);
-  if (abs < 100) return value.toFixed(1);
-  return value.toFixed(0);
+  if (abs >= 100) return value.toFixed(0);
+  if (abs >= 10) return value.toFixed(1);
+  if (abs >= 1) return value.toFixed(2);
+  // Below 1 the two-decimal cap the branches above use would render every
+  // early-game rate "0.00" — spec A.4 zone 2 puts clocks and satisfaction in
+  // [0, 1], and during calibration "0.00" is indistinguishable from stalled.
+  // Keep the same three significant figures, minus the zeros toPrecision pads
+  // with. `format` guarantees abs >= 1e-4 here, so the result always starts
+  // "0." and trimming can never strip a significant digit.
+  return value.toPrecision(3).replace(/0+$/, "");
 }
 
 // Renders an already-tiered magnitude (`scaled` in [1, 1000), grouped into
@@ -81,6 +92,13 @@ export function format(value: Dec, mode: NotationMode): string {
   const sign = negative ? "-" : "";
   const exponent = value.exponent;
   const mantissa = Math.abs(value.mantissa);
+
+  // Too small for fixed point. This also guards the magnitude below, which
+  // underflows to 0 at very negative exponents; rendering straight from
+  // mantissa/exponent is exact at any scale.
+  if (exponent < PLAIN_FLOOR_EXPONENT) {
+    return `${sign}${mantissa.toFixed(2)}e${exponent}`;
+  }
 
   if (exponent < 3) {
     // eslint-disable-next-line no-restricted-properties -- display-only (spec E.4 exemption); do not copy into economy/

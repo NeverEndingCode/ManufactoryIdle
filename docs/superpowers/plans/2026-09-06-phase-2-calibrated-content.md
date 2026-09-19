@@ -250,7 +250,72 @@ attributable to the lane that caused it.
 
 ---
 
-## Task 3 — The calibration script
+## Task 8 — The slice was unplayable past tier 1 (blocking Task 3) — **DONE** (unplanned)
+
+Task 2 recorded `greedy` failing to reach tier 2 on the slice as "placeholder milestone
+amounts, not a defect… the content validates, solves, and runs". **That was wrong, and it
+was wrong in the direction this phase's own review note warns about: a number that looked
+like bad balance was a stuck save.** Measured rather than reasoned — a 20-day greedy run:
+
+```
+purchases                    1639
+make_iron_rod                   0 machines    iron_rod   liquid 0
+make_screw                      0 machines    screw      liquid 0
+make_reinforced_iron_plate      0 machines    RIP        liquid 0
+make_iron_plate               109 machines    iron_plate liquid 194,424  (at cap, level 12)
+```
+
+Tier 2 needs 300 `iron_rod` and 50 `reinforced_iron_plate`. Both producers had **zero**
+machines and always would, so tier 2 was unreachable at *any* milestone amount. A
+calibration run would have bisected forever against an infeasible target.
+
+**Two defects, both invisible to the fixture**, whose iron lane-classes have exactly one
+live recipe each — so no assignment rule can starve anything in it, and no existing test
+could see this class of defect at all.
+
+**1. `autoAssignTarget` was winner-take-all, twice over.** Task 2 replaced the
+busiest-recipe rule with priority rank, which only moved which recipe starved: rank 0
+(`iron_plate`) took every iron constructor forever. Adding "skip a recipe whose output is
+FULL" reached tier 2 and then stalled at tier 3 for a second reason — `cable` ranks *above*
+`wire` and is never full because it is never made, so 99 copper constructors went to
+`make_cable` and none to `make_wire`, which makes cable's only input.
+
+Rank now decides only among recipes that can *use* another machine: output not FULL, and
+either unstaffed or already at nameplate. The solver already computes the second, per
+recipe, as its clock — so the engine reads that rather than re-deriving a cheaper
+approximation that could disagree with what the player is shown. The rule is
+self-correcting rather than a tuned ratio: wire takes machines until cable can run at
+nameplate, at which point cable outranks it again.
+
+**2. `affordableCandidates` offered machines for lane-classes with no live recipe.** A mark
+can unlock long before any recipe using it: miner mk1 is tier 0, `mine_copper_ore` is
+tier 2. **790 of greedy's first 1,639 purchases** went into copper, coal and oil — machines
+that produce nothing, bought with money that is then gone. No player does that, and a pace
+measured with it in is not the game's pace.
+
+**Outcome.** Same content, same seed, same policy:
+
+| | before | after |
+|---|---|---|
+| tier reached within 60d | 1 | **5 — in 12h 24m** |
+| purchases to get there | 1,401, mostly wasted | 332 |
+| max dead time | 58d 0h | **28m 29s** |
+
+602 tests green, up six. Every one was watched failing against the pre-fix code — which
+mattered: the locked-lane integration guard passed on first write and only discriminated
+once its run was extended to tier 2, because ten simulated minutes is not long enough for
+greedy to reach a locked lane at all. A test that cannot fail is worse than no test.
+
+The two slice-level guards in `run.test.ts` assert **reachability, deliberately not a
+time** — the time is Task 3's to calibrate and will move every time it runs.
+
+**What this says about Task 3.** Every before-number in Tasks 0 and 2 was measured on the
+fixture or on a slice that could not be played, so none of them is a baseline for
+calibration. The row above is.
+
+---
+
+## Task 3 — The calibration script — **IN PROGRESS**
 
 **It is the simulator with a search wrapper** (B.7). It runs `sim run --policy greedy` and
 binary-searches the free parameters until the observed curve matches
@@ -263,6 +328,663 @@ a second, faster estimator for the search loop — that would reintroduce the di
 the design exists to prevent, and it is the kind of shortcut that looks like an
 optimisation.
 
+### What landed
+
+`sim calibrate [--content <dir>] [--max-tier n] [--tolerance f] [--write]`.
+
+- **The authored/derived split is now structural** (spec B.1). `derived:` is a schema'd
+  block that `loadBundleDir` lays over the authored values, emitted by the calibrator as a
+  generated `derived.yaml` next to the hand-written files. A patch naming a machine class
+  or requirement the bundle does not have **throws** rather than being ignored: that means
+  the content was re-authored since the run, so the numbers no longer describe it.
+- **The authoring inversion** (spec D3): `machineClasses[].rEff` is authorable and
+  `r = rEff · step^(1/interval)` is derived. Retuning the ladder now moves pacing by zero.
+  `costRatio` stays legal for bundles with hand-verified numbers, which is what the fixture
+  has.
+- **Per-tier bisection** of delivery requirements, in tier order, each tier resuming from
+  the previous tier's checkpoint. That resume is *exact*, not an approximation — tier k's
+  requirements cannot affect anything before tier k-1 unlocked, because the purchase cadence
+  in that span ramps against milestone k-1 — and a test asserts the resumed run reaches the
+  next tier **on the same millisecond** as an unbroken one. It is memoisation of this
+  simulator, which is the distinction B.7's "exactly one implementation" rule turns on.
+- Amounts are **rounded before they are measured**, so the simulator runs the number that
+  ships. Rounding at emit time would mean committing a bundle nobody ever ran — and a test
+  pins that reloading the authored files with the derived block on top reproduces the
+  reported measurement to nine decimal places.
+- The reported observation comes from a **confirming run over the emitted numbers**, never
+  from the search's memory of its best evaluation.
+
+### The ramp read "capped" as "nearly finished" — a third defect, and the reason tier 1 had no solution
+
+The first real search found the tier-time curve was not a curve. Raising tier 1 from 2,500
+`iron_plate` — exactly the base liquid cap of 500 + 2000 — to **2,600** moved the tier from
+**0.26 collections to 4.05**: four per cent more plate for fifteen times the time, with the
+curve non-monotone on both sides of it.
+
+| tier 1 requires | before | after |
+|---|---|---|
+| 2,500 | 0.260 | 0.260 |
+| 2,600 | **4.052** | **0.323** |
+| 3,000 | 7.739 | 0.626 |
+| 10,000 | 11.282 | 1.722 |
+| 20,000 | never | 2.168 |
+
+Cause: `tierProgress` is `liquid / amount`, so a player pinned at a cap of 2,500 against a
+requirement of 2,600 reads as **96% done** — and B.7's purchase-interval ramp duly slowed
+them from one decision every 2 minutes to one every **29 minutes**, exactly when the thing
+they had to do was go and buy storage.
+
+A requirement the player cannot physically hold is not progress at any fill level.
+Deliveries are paid from liquid stock (R7), so waiting never completes that tier; only a
+purchase does. `tierProgress` now returns 0 in that case. **This was not a calibration
+difficulty, it was an unsolvable problem**: a whole band of tier times, roughly 0.3 to 3.7
+collections, was unreachable at every possible requirement.
+
+### Tier 1 is on target. Tiers 2+ are blocked on a self-terminating storage ladder
+
+```
+tier   target   observed     miss   runs
+   1     2.00       2.09     4.5%     10
+   2     5.00       4.20   -15.9%     19   OFF TARGET
+   3    11.00       5.08   -53.8%     19   OFF TARGET
+```
+
+Tier 2's response saturates and then falls off a cliff into "never":
+
+| iron_rod required | collections | purchases | top binding constraint |
+|---|---|---|---|
+| 30,000 | 2.83 | 168 | `make_iron_plate` |
+| 194,400 | 4.20 | 496 | `make_iron_plate` |
+| 450,000 | **never** | 548 | `storage:iron_plate` 469h |
+| 9,000,000 | **never** | 548 | `storage:iron_plate` 469h |
+
+Every stalled run parks at `iron_plate = 194424.579555328`, and that is not an
+approximation of anything — it is **exactly** `500 · 1.6^12 + 2000 · 1.6^7`, the liquid cap
+at storage level 12 and QS level 7. Storage level 13 costs `50 · 2^13 = 409,600`; QS level 8
+costs `500 · 2.5^8 = 762,939`. Neither can ever be banked, because the cap is 194,425.
+
+**`curves.yaml` sets `costGrowth` above `capGrowth` on both curves — 2.0 against 1.6 for
+storage, 2.5 against 1.6 for Quantum Storage.** Cost outruns capacity, so past a crossover
+level the next level costs more than the maximum the player can hold and the storage ladder
+**permanently ends**. It is structural, not a tuning miss: it happens for every item in
+every bundle authored this way, only the crossover level moves.
+
+This is precisely the permanent-hard-wall class B.6 check 9 exists for — "you could never
+bank enough to buy the thing" — on the one purchase check 9 does not look at: **the storage
+levels themselves.** Check 9 measures build costs and milestone requirements against the
+*maximum attainable* cap, and the maximum attainable cap is not attainable.
+
+Confirmed at scale, independently of the calibrator: a 365-day `greedy` run on the slice
+**stops at tier 5 and spends 362 of those 365 days bound on `storage:iron_plate`.** The
+slice was not a slow game, it was a game with an ending at tier 5.
+
+### Check 12 — the storage ladder must be climbable
+
+Proposed as a B.6 amendment, and it is check 9's own class of defect on the one purchase
+check 9 does not look at. Buying the level from L to L+1 costs `baseCostAmount ·
+costGrowth^L` and is paid out of stock, so it is bounded by what the player can hold:
+
+```
+cost(L)  =  baseCostAmount   · costGrowth^L
+hold(L)  =  baseStorageCap   · capGrowth^L  +  baseQuantumCap · qsCapGrowth^qsMax
+```
+
+`costGrowth > capGrowth` makes the first outrun the second, and the ladder ends. The check
+walks levels 0..maxLevel and names the one it stops at, since that is what the author has
+to move. It is an **error**: a permanent hard wall is a stuck save, which B.6 says is worth
+failing the build over.
+
+This is the same argument spec C.0 makes about marks. There, `B = A` — build cost scaling
+with rate — is exactly pace-neutral. Here, a storage level whose cost scales with the
+capacity it grants is neutral in the same way, and anything steeper eventually stops being
+buyable.
+
+**Check 9 now depends on check 12.** Its "maximum attainable cap" is attainable only if the
+ladder can be climbed to `maxLevel`.
+
+Both bundles were re-authored to `costGrowth ≤ capGrowth` — storage 1.5 and Quantum Storage
+1.55 against a capGrowth of 1.6. The *shape* is an authoring decision, like the ladder
+(B.3); the *values* remain placeholders for the calibrator. Four hand-verified arithmetic
+tests in the engine moved with the fixture's curve.
+
+### With the ladder climbable, tier 2 lands — and tier 3 reveals the real lever
+
+```
+tier   target   observed     miss   runs
+   1     2.00       1.95    -2.4%      8    iron_plate 22,400
+   2     5.00       5.10    +2.0%     10    reinforced_iron_plate 512,000, iron_rod 3,072,000
+   3    11.00       7.86   -28.5%     22    OFF TARGET
+```
+
+Tier 2 was −15.9% before check 12 and is +2.0% after, on the same search. Tier 3 is not
+a near miss, and the per-step trace says exactly why:
+
+| tier 3 requires (cable) | collections |
+|---|---|
+| 200 | 5.30 |
+| 12,800 | 5.54 |
+| 819,200 | 6.41 |
+| 3,276,800 | 7.22 |
+| 6,680,000 | **7.86** |
+| 6,690,000 | never — `reinforced_iron_plate 5,020,800 is above the maximum 5,010,283 a player can hold` |
+
+**Milestone amounts are a logarithmically weak lever, and they run out of room before
+they run out of effect.** Multiplying the requirement by 33,000 buys 2.56 collections;
+the bisection then converges onto the cap boundary to the last thousand — 5,010,000
+against a maximum attainable 5,010,283 — and the target of 11 is simply not in the
+reachable set. This is not the cliff of the ramp defect, which was a hole in an otherwise
+continuous curve. This is a **ceiling**.
+
+It follows from `r_eff > 1`: machine count grows logarithmically, so time to bank N is
+roughly `a + b·log N`. Stretching a tier by a factor needs an exponentially larger
+requirement, and the liquid cap arrives long before the exponent does.
+
+**The lever with authority over the tier-time curve is `r_eff`, and the spec disagrees
+with itself about who sets it.** B.7 lists calibration as solving "per-class `r_eff`
+(hence `r`)"; §D3 says "you author the ladder and `r_eff` … the calibration script derives
+`r = r_eff × m`". The measurement says B.7 is right. Note the targets
+`[2, 5, 11, 24, 52, 110, 230, 480, 1000, 2100]` have near-constant ratios of about 2.1 —
+which is exactly the shape a *fixed* `r_eff` produces. That makes the solve well posed at
+two levels:
+
+- **`r_eff` sets the ratio between successive tiers.** One global scale against the
+  curve's shape.
+- **Milestone amounts set each tier's absolute placement.** What is already built.
+
+### `r_eff` is solved by scanning — DONE, and the tier-3 ceiling is U-shaped
+
+§D3 amended to defer to B.7: calibration solves `r_eff`, the author writes only the
+ladder. `sim calibrate` scans one scale on `r_eff − 1` across every class and scores each
+candidate on the whole tier curve with the amounts re-solved underneath it.
+
+**It is a scan and not a bisection because the response is not monotone**, and the
+tier-3 ceiling — the latest a tier can be made to land, with its requirement at the most
+a player can ever hold — shows exactly why:
+
+| scale on `r_eff − 1` | `r_eff` (miner) | tier 3 ceiling | vs. target 11 |
+|---|---|---|---|
+| 0.25 | 1.011672 | 10.79 | short |
+| 0.50 | 1.023344 | 9.39 | short |
+| 1.00 | 1.046688 | **7.72** | short — the authored value, and the worst of the four |
+| 2.00 | 1.093376 | **12.45** | **reachable** |
+
+The ceiling is **U-shaped with its minimum at the authored `r_eff`**. Both directions
+lengthen tier 3 and they do it by opposite mechanisms: raising `r_eff` slows production;
+lowering it makes machines cheap enough that `greedy` pours its currency into machines
+instead of banking it. A bisection would have walked downhill into the minimum and
+reported that the target was unreachable.
+
+**Scale 2 clears the target**, so tier 3 is solvable — the phase is not blocked on
+content after all. The scan finds it, given the time to look.
+
+### Three defects the scan found in itself
+
+1. **The ranking pass's own noise swamped its signal.** Fitting amounts to a 15%
+   tolerance accumulates up to 0.45 of noise across three tiers — larger than the
+   differences being ranked. `curveMiss` now measures from the edge of the fitting
+   tolerance, so only misses the fitting could not close survive.
+2. **Offered a scale of 0.001, the scan chose it** — `r_eff` 1.00005, deep inside D3's
+   runaway, which scores well precisely because a runaway game hits its milestones
+   promptly. Every candidate now goes through `checkRunawayGrowth`, the same function
+   `content:check` runs; a refused scale is never simulated, and if every scale is
+   refused the run throws rather than emitting a solution.
+3. **The refinement grid walked.** Each of its four points was computed from a
+   `bestScale` the loop was itself mutating, so as soon as one refinement won, the next
+   was measured relative to that instead of to the coarse winner.
+
+### The blocker is now runtime, not content
+
+A single coarse point at scale 2 ran **13 minutes at 100% CPU on tier 3 alone**; tiers 1
+and 2 took seconds each. A full eleven-point scan over ten tiers is an overnight job, not
+an hour's.
+
+The cheap fix is visible in the table above: the ceiling is one run per scale, and it
+answers *"can this scale reach the target at all"* on its own. Used as a pre-filter it
+would have discarded 0.25, 0.5 and 1.0 without a single amounts calibration and gone
+straight to 2. That is not a second estimator of duration — it is the same simulator,
+asked a cheaper question.
+
+### Still open: `SET_RESERVE` is implemented and no policy emits it
+
+Same shape as `purchaseIntervalLateSeconds` in Task 2: the action exists in the engine
+(`applySetReserve`), is wired into `sim play`, and is reachable from no automated policy.
+Milestones are paid from liquid stock, so reserving a required item stops downstream
+recipes eating it — which is exactly the "bank toward the milestone" lever, and the one
+whose absence produces the low-`r_eff` half of the U above. **Every calibrated number is
+currently tuned for a player who never uses a core mechanic.** Whether `greedy` should
+reserve is a spec decision about E.2's policy definitions, not a calibration one. The
+size of the effect is unmeasured.
+
+### The pre-filter — DONE, and it made the scan affordable
+
+One run per scale instead of a whole amounts calibration. The ceiling run sets every
+requirement up to the deepest tier at the most a player could ever hold — the latest
+each tier can be made to land — and rejects a scale the moment a tier lands *before* its
+target. It abandons the run at that first failure, since everything after it is wasted:
+the ten-tier measurement went from **899 s to under 4 s**, about 65× faster, and the
+pre-filter stopped being the dominant cost of the scan.
+
+Two defects found building it, both recorded in the commits: `withREffScale` moved
+`rEff` and left `costRatio` alone, so a "scaled" bundle **simulated as if unscaled**
+while reporting the new `r_eff`; and the ceiling run's budget was authored data, so a
+typo in `targetCollectionsToTier` asked for two and a half million years of simulated
+time instead of complaining.
+
+### Task 9 — nothing ever reassigned a machine (blocking) — **DONE** (unplanned)
+
+The full run then stalled at tier 4, and not on content or `r_eff`. Measured:
+
+```
+make_reinforced_iron_plate   81 machines   RIP  5,010,283  ← exactly its maximum cap
+make_rotor                    0 machines   rotor        0
+make_concrete                95 machines   concrete 8,350,472
+tier 4 needs: concrete 1, rotor 1          → never reached
+```
+
+Tier 4 was unreachable with its requirement bisected all the way down to **one rotor**,
+which cost 34 simulated runs to discover.
+
+The engine was not at fault: bought on that state, a new assembler goes to `make_rotor`,
+and moving 40 of the idle 81 produces **143 rotor/s immediately**. The gap is that
+nothing ever revisits an assignment, and `greedy` had stopped buying assemblers because
+they were never the cheapest thing on offer. The machines existed, the verb to move them
+existed (`ASSIGN_MACHINES`, two calls — shrink one, grow the other), and no policy used
+it.
+
+> An earlier probe appeared to show the auto-assign rule itself was broken. It was not:
+> the probe funded *every* item to make the purchase affordable, which pushed rotor over
+> its own cap, so every recipe read FULL and the rule correctly fell back to ranking. The
+> probe created the behaviour it then blamed on the rule.
+
+`idleReassignments` moves half of a fully-idle recipe's machines to a live sibling in the
+same lane-class that has **exactly zero**. Narrow on purpose: the receiving condition can
+be true at most once before it has machines, so it cannot oscillate the way a general
+"rebalance toward the busiest" rule would.
+
+**This is deliberately not the strategy question `SET_RESERVE` and `REORDER_PRIORITY`
+raise.** Those are choices about what a player wants. Leaving machines you already own
+idle while a sibling starves is not a strategy, it models no player, and spec E.2 does
+not describe any of its policies as doing it. Proposed as an amendment to E.2.
+
+Also fixed: `purchases` counted every action a policy returned, so reassignments would
+have been reported as purchases. A purchase is a spend.
+
+### The wall moved from tier 3 to tier 4 — and the real limit is the storage caps
+
+| | scale 1 (authored) | scale 2 |
+|---|---|---|
+| tier 1 (target 2) | 5.21 clears | 7.15 clears |
+| tier 2 (target 5) | 6.70 clears | 15.24 clears |
+| tier 3 (target 11) | **8.93 short** | 17.66 clears |
+| tier 4 (target 24) | — | **19.50 short** |
+
+Real progress — scale 2 now clears three tiers where tier 4 was previously unreachable
+at any requirement. But the shape is the problem:
+
+```
+targets  grow ~2.15x per tier
+ceilings grow ~1.13x per tier   (7.15 → 15.24 → 17.66 → 19.50)
+```
+
+**The ceilings flatten within a scale because the maximum bankable amount does not grow
+with the tier.** `maxAttainableCap` is `baseStorageCap · s^20 + baseQuantumCap · q^15`,
+and the slice's base caps are flat — *declining*, in fact:
+
+| tier | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| mean base liquid cap | 3000 | 3000 | 3500 | 2500 | 4000 | 1500 | 2400 | 2000 | 1500 |
+
+A player can bank **half** as much of a tier-8 item as of a tier-0 item, while production
+accelerates the whole way.
+
+> **Correction.** On that evidence this plan first said *"no `r_eff` scale fixes this,
+> because it is not a rate problem."* **That was wrong, and scale 4 disproved it:**
+>
+> | tier | 1 | 2 | 3 | 4 | 5 | 6 |
+> |---|---|---|---|---|---|---|
+> | target | 2 | 5 | 11 | 24 | 52 | 110 |
+> | ceiling | 19.41 | 66.14 | 87.16 | 105.15 | 106.90 | **109.03** |
+>
+> Five tiers clear and the sixth misses by **0.9%**. The asymptote is not fixed: it moved
+> from about 19.5 at scale 2 to about 109 at scale 4 — 5.6× for a 2× scale. `r_eff` has
+> far more reach than the scale-2 numbers alone suggested.
+>
+> What survives is narrower and still worth acting on: **within a fixed scale the
+> ceilings asymptote** (87.16 → 105.15 → 106.90 → 109.03, ratios 1.21, 1.02, 1.02), and
+> the flat base caps are why. So each scale has a deepest tier it can support, and
+> raising `r_eff` to reach tier 10 means a very steep game in the early tiers — scale 4
+> already puts tier 1's ceiling at 19.41 against a target of 2.
+>
+> Whether some scale reaches tier 10's 2100 is **unmeasured**: scale 8 was still running
+> when its 1500 s budget expired. Cost grows steeply with scale — scale 2 took 94 s,
+> scale 4 took 1245 s — which is now the scan's binding constraint.
+
+### Storage: `capPerTier` — amends spec B.4's cap formula
+
+```
+cap = base · capGrowth^level · capPerTier^tier
+```
+
+The diagnosis pointed at one number, so that is what was added rather than 31 hand-tuned
+item caps. Authored per-item caps stay the **relative** intent — screws hold more than
+rotors — and the progression scaling is the single value calibration solves. It defaults
+to 1, exactly the old behaviour, so every existing bundle and every hand-verified fixture
+number is untouched.
+
+A tier is an integer, so the new power is exponentiation by squaring like every other
+power in `curves.ts`: spec E.4's ban on fractional powers in state-affecting paths holds,
+and two machines cannot disagree about a cap.
+
+`maxAttainableCap` and check 12 both read caps and both account for it. **Two
+expectations written for check 12 were wrong, and the measurements corrected them:**
+
+- A constant multiplier does *not* rescue a self-terminating ladder. `costGrowth >
+  capGrowth` is cost outgrowing capacity **per level** — a difference in growth rate, and
+  a constant cannot beat a rate. It only moves the crossover level.
+- But the ladder is **finite**, so a large enough factor moves the crossover past
+  `maxLevel` entirely. That is a legitimate pass, not a hole: a ladder climbable to its
+  own top has no wall in it, which is all check 12 claims.
+
+Both are now asserted rather than assumed.
+
+Unlike `r_eff` it genuinely bisects: raising a cap can only make a tier take longer to
+fill, never less. `smallestClearing` takes the **smallest** sufficient value — bigger caps
+mean a player hoarding more of everything, which is a real cost to the game's feel rather
+than a free win.
+
+#### It was keyed on the wrong tier, and the measurement said so
+
+Keyed on the **item's** tier, `capPerTier 2` was short in 4 s and `capPerTier 4` was still
+short after 259 — nonsense for a factor reaching 4⁹ by tier 9. **A milestone's ceiling is
+set by its lowest-tier requirement**, and those sit far below the milestone's own tier:
+the slice's tier-2 milestone asks for `iron_rod`, a **tier-0** item, so its cap was
+multiplied by `capPerTier⁰ = 1` and no factor could raise that ceiling at all.
+
+Keyed on the **player's** tier, every cap grows as the player advances, so a tier-k
+milestone can demand `capPerTier^k` more of anything. It is also the better mechanic —
+warehouses get bigger as the factory does. It forces every cap reader to say *when*, and
+they do not agree: a milestone is banked on the tier **below** it, a machine can be bought
+on any tier at or after it unlocks, and check 12 asks at the deepest tier.
+
+#### It is a logarithmic lever, and that makes headroom exponentially expensive
+
+Tier 3's ceiling against the cap factor, measured:
+
+| capPerTier | cap at tier 2 | tier-3 ceiling |
+|---|---|---|
+| 1.0 | 1× | 8.93 |
+| 1.5 | 2.25× | 9.39 |
+| 2.0 | 4× | 10.10 |
+| 3.0 | 9× | 10.68 |
+
+`ceiling = 8.87 + 0.82 · ln(cap factor)` — the same logarithmic weakness milestone amounts
+have, and for the same reason: time to bank grows slowly with amount because production
+accelerates.
+
+**The consequence is a defect in the solve as first written.** Its `capHeadroom` default of
+1.25 costs, in a log regime, a cap factor 28× larger than simply reaching the target:
+
+| goal for tier 3 | cap factor needed | capPerTier |
+|---|---|---|
+| reach the target (11) | 13.3× | **3.64** |
+| target × 1.25 headroom (13.75) | 372× | **19.29** |
+
+`capPerTier` 19 puts tier-9 caps at 3×10¹¹ times base. Headroom must be small — 1.02 to
+1.05 — or expressed as an absolute margin rather than a ratio.
+
+#### Solved jointly with `r_eff`
+
+Each candidate scale now gets its **own** `capPerTier`: the smallest that clears every
+target at that scale. `capPerTier` bisects because it is monotone — a bigger cap can only
+make a tier take longer to fill, never less — while the scale is scanned because it
+measurably is not. The pre-filter and the storage solve became the same step: a scale is
+usable exactly when *some* cap clears, and the smallest such cap is the one to use with
+it.
+
+The scan runs ascending and each bisection is **warm-started from the previous scale's
+answer**, since a faster game needs a bigger cap and the last answer is a good guess for
+the next.
+
+`capHeadroom` drops from 1.25 to **1.05**, which the log fit makes non-negotiable rather
+than a taste call.
+
+#### The levers multiply, so solving them in sequence overcharged
+
+`capPerTier` is solved at the bundle's **authored** `r_eff`, which is the worst case for it.
+But `r_eff` scale 4 alone already cleared tiers 1–5 and missed tier 6 by 0.9%. The two
+multiply — `capPerTier` raises what can be asked, `r_eff` slows how fast it is made — so
+solved together each needs far less than either does alone.
+
+The original argument for solving storage first ("it decides what is reachable, the others
+decide where inside the reachable range things land") is right in principle and wrong in
+practice: **both** levers move reachability.
+
+### The real blocker is `resolve`, and it is measured
+
+Every search in this task has been bottlenecked on individual simulated runs taking
+minutes or never finishing, at scattered parameter values. Profiled on the configuration
+that stalled the joint solve for 800+ seconds (`r_eff` scale 1.6, tier 2):
+
+```
+steps 1129   sim days 1.6   wall 122s
+  solve     1.2s   ( 1%)   0.54 ms/call
+  resolve  122.0s  (99%)  108.09 ms/call
+  decide    0.0s   ( 0%)
+  apply     0.1s   ( 0%)
+  events: 85,788 total — 76.0 per resolve, max 5,002
+  step length: 121 s of simulated time per resolve
+```
+
+**`resolve` is 99% of the wall clock at ~200 solve-equivalents per call.** It emits
+**76 events for a 121-second step** — an event every 1.6 simulated seconds — and one call
+reached **5,002 events**, half of `MAX_EVENTS`.
+
+That is the same family as the Task 2 defect (`FULL_TOLERANCE`, a zero-progress fill loop
+burning 10,000 events per call), not fully closed: something is still churning events at a
+rate the interval cannot justify. `resolve`'s own doc comment claims "an 8-hour resolve
+with 20 events is 20 of those [solves]" — the measurement says 76 events for **two
+minutes**, so the doc describes a simulator this no longer is.
+
+**This is the next task, and it precedes finishing the calibration.** Every remaining
+measurement — the ten-tier scan, the `derived.yaml` run, Task 4's CI gates — is priced by
+`resolve`, and at 108 ms a call none of them is affordable. It is also the highest-value
+fix available: a 10× here makes every search in this phase 10× cheaper, where more search
+cleverness buys single-digit factors at best.
+
+### Investigated: `resolve`'s churn is one defect said four ways — and the fix is blocked
+
+**Root cause, with evidence.** `nextDiscontinuity` guarded with `net === 0`, an exact
+comparison against a number reached by subtraction. When an item's production and
+consumption cancel, `net` is not zero but cancellation noise: measured
+**3.552713678800501e-15, exactly 16 × `Number.EPSILON`**. With `have` at zero that reads
+as a positive rate, so resolve schedules an `unpin` a nanosecond out; integrating a
+nanosecond of 3.5e-15/s lifts the stock to ~1e-24, which then reads as positive stock
+with a negative net and schedules a `drain` straight back to zero.
+
+The pair repeats for ever — **49.3% drains and 49.2% unpins, alternating 1:1 on the same
+two items** (`iron_rod` 25,059/25,003, `screw` 15,007/15,000), 117.7 loop iterations per
+resolve, each paying for a full solve.
+
+**A tolerance on that guard is a 79× speedup: `resolve` drops from 108.09 ms a call to
+1.37 ms**, and the workload that previously could not reach tier 2 in 120 seconds reaches
+it comfortably.
+
+**But it breaks spec E.6's split-invariance, and that is the real finding.** The same
+exact-comparison defect exists in *four* places, and the live-lock was hiding the other
+three by making every step infinitesimal — nothing was ever integrated across a stale
+classification:
+
+| # | Site | Test |
+|---|---|---|
+| 1 | `nextDiscontinuity` | `net === 0` |
+| 2 | `itemStateTag` EMPTY | `have <= 0` — while FULL has had a tolerance since Task 2 |
+| 3 | `fixpoint` pin seed | `liquid(...) <= 0` |
+| 4 | `fixpoint` pin loop | `liquid(...) <= 0` |
+
+Sites 3 and 4 decide `pinnedEmpty`, which decides whether a recipe is *contested* and so
+whether waterfall charges it the **2% reserve-floor tax**. An item resting at
+8.105460747032112e-14 — thirteen orders below its own cap — is therefore "stock", and
+whether it is flips as float residue accumulates. Downstream that is a 2% jump in
+production (`iron_plate` 0.6615 → 0.675/s), a genuine discontinuity in `solve`'s output
+that `resolve` cannot schedule an event for, because nothing actually happened.
+
+Measured consequence: the whole-window resolve takes one 1,489,947 ms step at 0.6615
+while the split arrangement re-solves at the boundary and gets 0.675, so the two disagree
+by 1.5%. Capping the step at 1000 ms restores agreement — which confirms the diagnosis and
+is not a fix, since a 1000 ms cap reinstates the very step count the change removed.
+
+**Unifying sites 2–4 on one notion of "empty" was tried and made things worse** — seven
+failures including basic integration — so the pin set's threshold is load-bearing in ways
+`itemStateTag`'s is not. All changes were reverted; the tree is green.
+
+**This is an architectural decision, not a patch.** `resolve`'s correctness currently
+rests on a live-lock, and the two cannot both be kept. The options, none cheap:
+
+1. **One notion of "empty", done properly** — reconcile the pin threshold with
+   `itemStateTag` and re-derive whatever depends on the exact boundary. Biggest change,
+   correct answer.
+2. **Bounded integration step** — accept a maximum `dtMs`, trading exactness for a bound.
+   Contradicts spec C.7's event-driven design and costs most of the speedup.
+3. **Make the noise not arise** — compute `net` so cancellation is exact (e.g. sum
+   production and consumption in a fixed order, or carry rationals), removing the
+   residue at source rather than tolerating it downstream.
+
+### Fixed, at the source — **108 ms a call to 1.37**
+
+Option 3, but not where it was first aimed. The clamp was a plausible culprit and the
+measurement ruled it out: of 20 crumbs in 1,912 random flows, **nine had consumption at
+or below production**, so no clamp could have produced them. They are ordinary
+cancellation between two independently-rounded sums, not one bad call site — which also
+means "make the arithmetic exact" would have meant rationals throughout the solver.
+
+What works instead is snapping the crumb in `computeFlows`, **the one place `net` is
+created**, and nowhere else. That choice is the whole point: `net` is read by `resolve`'s
+scheduler, the bottleneck reporter and the pin loop, and a tolerance at each reader is
+three chances to disagree about what "balanced" means. One authority at the source lets
+every reader keep testing `=== 0`.
+
+Two earlier attempts, both instructive:
+
+- **Tolerancing `resolve`'s own `net === 0`** bought the same 79× and broke
+  split-invariance by 1.5%. An item resting at 8.1e-14 is not pinned by `fixpoint`'s
+  exact `liquid <= 0`, so its consumer dodges waterfall's 2% reserve-floor tax; the
+  whole-window resolve integrated 1,489,947 ms at the pre-flip rate while the split
+  arrangement re-solved and got the post-flip one.
+- **Unifying the pin threshold with `itemStateTag`** then broke seven more tests. The pin
+  boundary is load-bearing in ways `itemStateTag`'s is not.
+
+Snapping at source fixes both without touching either.
+
+| | before | after |
+|---|---|---|
+| `resolve` | 108.09 ms/call | **1.37 ms/call** |
+| loop iterations per resolve | 117.7 | — |
+| `calibrate.test.ts` | 455 s | 328 s |
+| the two skipped joint tests | unaffordable | **passing** |
+
+The knife-edge test's window moves from 730,075 to 745,000. **Its assertions are
+untouched**: the milestone arrives at 1,489,947.091 ms rather than 1,460,148.148, because
+the old arrival was itself the artefact — re-solving every nanosecond kept flipping the
+item off its pin, so `iron_plate` ran at 0.675/s instead of its true 0.6615/s.
+
+A new fuzz property pins the class: a net rate is either meaningfully non-zero or exactly
+zero, never a crumb in between. It fails against the old code with a concrete
+counterexample.
+
+### The ten-tier run: the content and the targets disagree
+
+It ran. **No `derived.yaml` was committed, and that is the correct outcome** — the
+numbers it produced are not a game.
+
+Scale 0.5 alone took **36,153 seconds — ten hours** — and scored `1000000.69`, the
+unreachable penalty. Its solved `capPerTier` was 14.75, and the tier curve underneath it
+says why:
+
+| tier | target | observed | verdict |
+|---|---|---|---|
+| 1 | 2 | 2.02 | ok |
+| 2 | 5 | 4.56 | −9% |
+| 3 | 11 | 11.35 | ok |
+| 4 | 24 | **44.17** | **too slow at its MINIMUM requirement** (1 concrete, 1 rotor) |
+| 5 | 52 | 44.21 | −15% |
+| 6 | 110 | 112.56 | ok |
+| 7 | 230 | 201.97 | −12% |
+| 8 | 480 | 437.27 | −9% |
+| 9 | 1000 | **never** | unreachable at 1 smart_plating, 1 polymer_resin |
+| 10 | 2100 | never | not reached |
+
+Two findings, and neither is a calibrator defect:
+
+**Tiers 4 and 9 are too slow at the smallest requirement the game allows.** Tier 4 asks
+for one concrete and one rotor and still lands at 44 collections against a target of 24 —
+after tier 3 completes at 11.35, it takes **33 collections to produce a single rotor**.
+That is the cost of bootstrapping a new lane from nothing, and no milestone amount can
+shorten it. Tier 9 is the same failure, harder.
+
+**The requirements the fit produced elsewhere are absurd.** Tier 6 wants 858,993,459,200
+modular frames; tier 8 wants 10,307,921,510,400 packaged fuel. Those follow from
+`capPerTier` 14.75 — a tier-9 item holding 4×10¹⁰ times its authored cap — which the
+search needed to stretch the tiers it *could* stretch.
+
+So `targetCollectionsToTier` — ten targets spanning 2 to 2,100, a thousandfold — is
+inconsistent with what the slice's content can express. The calibrator's job was to find
+that out, and it did; it just cost ten hours per scale to say so.
+
+### Still to do
+
+1. **Reconcile the pacing intent with the content.** Three routes, and this is a design
+   decision rather than a calibration one:
+   - **Retune `targetCollectionsToTier`** to the span the content actually supports.
+     Cheapest, and the measured curve above is the evidence for what that span is.
+   - **Shorten the inter-tier bootstrap.** 33 collections for one rotor is the binding
+     constraint on tiers 4 and 9, and it is a *policy* cost — `greedy` builds a new lane
+     slowly. `SET_RESERVE` and `REORDER_PRIORITY` (still emitted by nothing) are exactly
+     the levers a real player would use here.
+   - **Add content per tier**, so a tier has more to ask for than one item's cap allows.
+2. **Make a ten-tier run affordable before attempting another.** At ten hours a scale an
+   eleven-scale scan is a week. A clearing probe has to simulate the whole 700-game-day
+   run, so the cost is structural: either the scan gets far smaller, or the deep tiers
+   are calibrated against something cheaper than a full replay.
+3. **Stop the amounts search bisecting toward a floor it will never reach.** Tier 4 spent
+   34 runs halving its requirement to the minimum, and tier 9 another 34, when one run at
+   the minimum answers "even this overshoots". The unreachable case already short-circuits;
+   the overshoot case does not.
+2. **Decide what remains of B.7's storage list.** `capPerTier` is solved jointly with
+   `r_eff`. The cost curves — `capGrowth`, `costGrowth`, `baseCostAmount`, `maxLevel` on
+   both storage and Quantum Storage — are still authored, and
+   `pacing.storageBindingCadence` (12 machines between storage binding) is read by
+   nothing. Either solve them against that target or drop the intent; leaving an
+   authored pacing knob that nothing consumes is the `purchaseIntervalLateSeconds`
+   pattern for a third time.
+3. **Decide `SET_RESERVE` and `REORDER_PRIORITY`.** Both are implemented in the engine
+   and reachable from `sim play`, and no automated policy emits either. Every calibrated
+   number is therefore tuned for a player who never uses two core mechanics. A spec
+   decision about E.2's policy definitions, not a calibration one.
+
+### Calibration must not read its own output
+
+Committing `derived.yaml` changed what `loadBundleDir` returns, and it returns it to
+*everyone* — including the calibrator. The next run would have searched outward from the
+last run's answer instead of from the authored seeds, so two runs over unchanged content
+would disagree and each run's scale factors would compound on the previous one's. That is
+spec B.1 read backwards: intent authored, numbers solved, in that direction only.
+
+`loadBundleDir(dir, { applyDerived: false })` is the opt-out, and the calibrator is the
+one production caller that takes it. The default stays "apply", because the game, the
+validator and the simulator must all see one bundle and none of them should be able to
+read the seeds by accident.
+
+The tests found this, but only by accident, and they were coupled the same way: five
+asserted calibrator *mechanics* ("this ceiling falls short", "this scale is rejected")
+against `pacing.yaml`'s targets, so retuning the slice to what it can actually pace
+turned them green for no reason — the content moved underneath an assertion about the
+machinery. Each now pins the targets its measurements were taken against, via
+`withTargets`. A mechanics test that borrows a tuning decision is not testing the
+mechanism.
+
+**Do not hand-tune `curves.yaml` values to move a tier time.** The shape constraint is an
+authoring decision; the numbers inside it are the calibrator's output.
+
 ---
 
 ## Task 4 — CI pacing gates (spec E.5)
@@ -273,6 +995,200 @@ optimisation.
 - `r_eff > 1 + ε` with every multiplier maxed
 - Replay determinism: same log twice, identical discrete state
 
+### The storage ladder terminated under the slice's own milestones
+
+Check 9 rejects a requirement *above* the cap. Nothing warned about one that fits by a
+hair, and that is the failure that actually happened: tier 9's `polymer_resin` sat at
+**99.6%** of the most a player can ever hold and tier 10's `smart_plating` at 76.6%. Both
+legal, and the amounts search was bisecting against a wall rather than against the
+economy — then reporting the result as a pacing miss rather than as a ladder that had run
+out.
+
+`storage.maxLevel` 20 → 22 and `quantumStorage.maxLevel` 15 → 16: the smallest pair that
+puts every milestone under 50%. Deeper was rejected deliberately — §3.3 wants capacity to
+block production *periodically*, so the ladder must stay finite enough to bind during
+play. What it must not do is run out. Check 12 still passes: `costGrowth` 1.5 stays under
+`capGrowth` 1.6, so the cost term falls further behind at every level added.
+
+Re-calibrated against the new ladder, tier 9 is unpinned and the fit holds:
+
+| | before | after |
+|---|---|---|
+| tier 9 `polymer_resin` | 99.6% of cap | 53.4% |
+| tier 9 `smart_plating` | 49.8% | 26.7% |
+| tier 9 observed | 16.05 (+0.3%) | 15.73 (−1.7%) |
+| tier 10 `smart_plating` | 76.6% | 93.5% |
+
+**Tier 10 went the other way, and that is the tell.** Its target is unreachable, so the
+amounts search climbs until something stops it — at maxLevel 22 that is 93.5% of the cap,
+and at maxLevel 30 it would be the same share of a bigger number. A ladder cannot fix a
+target the economy cannot reach; it only sets how absurd the requirement gets first.
+
+So the slice test holds only tiers the run actually **fitted** to a headroom bound.
+Verified against the pre-fix content at commit `5399d15`: the guard flags
+`tier 9 polymer_resin 99.6%` and stays silent on tier 10 — it catches the real defect
+without reporting an unreachable target as a storage problem.
+
+### Slowing the deep end: three levers measured, one works
+
+The deep end runs away — tier 9 at 15.73 and tier 10 at 16.89 against targets of 16 and
+25, barely a collection apart. Three candidate brakes, measured rather than reasoned
+about, because two of the three move the game the *opposite* way from the obvious guess.
+
+**1. The ladder softcap — inert.** Details below; slopes 0.25 to 0.02 give identical tier
+times.
+
+**2. `r_eff` — backwards.** Raising it makes the game FASTER. Scaling the calibrated
+`r_eff` up moves every tier *earlier*:
+
+| scale | r_eff | t1 | t5 | t9 | t10 |
+|---|---|---|---|---|---|
+| 1 | 1.02334 | 0.42 | 3.06 | 15.73 | 16.89 |
+| 2 | 1.04669 | 0.33 | 2.58 | 12.55 | 13.92 |
+| 3 | 1.07003 | 0.28 | 2.27 | 10.84 | 14.60 |
+
+Pricier machines mean `greedy` reinvests less and banks more toward a requirement that is
+*fixed*, so a weaker economy delivers it sooner. `r_eff` only slows things where amounts
+sit at the storage cap — which is the regime the earlier ceiling numbers were measured in,
+and why they pointed the other way. Both readings are right about their own regime.
+
+**3. Storage `costGrowth` — works, and is tier-targeted for free.** Early levels stay
+cheap and late levels compound, so the effect grows with depth:
+
+| costGrowth | t1 | t2 | t3 | t8 | t9 | t10 |
+|---|---|---|---|---|---|---|
+| 1.5 (was) | 0.42 | 0.87 | 1.17 | 11.00 | 15.73 | 16.89 |
+| 1.6 | 0.42 | 0.87 | 1.17 | 11.61 | 17.33 | 18.16 |
+| 1.7 | 0.42 | 0.87 | 1.17 | 12.15 | 18.92 | 19.79 |
+| 1.8 | 0.42 | 0.74 | 1.04 | 12.44 | 28.12 | 28.38 |
+| 2.0 | rejected by check 12 — the ladder stops at level 17 |
+
+Tiers 1–3 are byte-identical through 1.7. `baseCostAmount` was measured too and is the
+wrong knob: 50 → 400 moves tier 1 from 0.42 to 1.10, because it is a uniform scale on
+every level rather than a growth rate.
+
+**The slice ships `costGrowth: 1.8`**, above `capGrowth` 1.6 — which is what §3.3 asks for
+("caps grow *slightly slower than build costs*") and what check 12 permits. The check tests
+`cost <= holdable` per level, so outgrowing capacity is fine until the crossover; all it
+requires is that the ladder end first. Check 12's message claimed the stricter rule
+"cost growth must not exceed capacity growth", which the check never implemented and which
+forbids the configuration §3.3 wants — corrected, with tests either side of the crossover.
+
+**What this does not fix:** tiers 9 and 10 stay glued together at every value (28.12 and
+28.38 at 1.8). Slowing shifts the whole deep end later; it does not *separate* two tiers
+whose requirements are both storage-capped in a logarithmic regime. A 16-to-25 gap needs
+tier 10 to gate on something other than a bigger pile.
+
+### The ladder softcap is not a live lever on this content
+
+Where the runaway is, measured per tier as the largest ladder multiplier over all
+(lane, class) pairs — every class is authored `step 1.5, interval 10`, so the raw
+multiplier is `1.5^(machines/10)`:
+
+| tier | lane/class | machines | raw ladder | after softcap |
+|---|---|---|---|---|
+| 5 | power/collector | 170 | 9.85e2 | 9.85e2 |
+| 6 | iron/constructor | 254 | 2.53e4 | 7.06e3 |
+| 7 | iron/miner | 381 | 4.91e6 | 1.23e6 |
+| 8 | iron/smelter | 501 | 6.38e8 | 1.59e8 |
+| 9 | iron/smelter | 681 | 9.42e11 | 2.36e11 |
+| 10 | iron/smelter | 729 | 4.77e12 | 1.19e12 |
+
+The threshold (1000) is crossed at exactly tier 5 → 6, so the softcap engages precisely
+where the runaway starts — it looks like the tier-targeted brake the deep end wants.
+
+**It does nothing.** Slopes 0.25, 0.1, 0.05 and 0.02 give byte-identical tier times
+across all ten tiers. Two reasons, and the second is the one that matters:
+
+1. A piecewise-**linear** softcap cannot bend an exponential. For `v >> threshold`,
+   `threshold + (v - threshold) * slope ≈ slope * v` — it rescales by a constant and
+   leaves the growth *rate* untouched. Spec D3 wants it linear (monotonic, E.4-safe), so
+   this is a property of the design, not a bug in the values.
+2. **Production is not the constraint.** `bindingConstraints` puts `storage:iron_plate`
+   at 306.7M ms of a 464M ms run — two thirds of the game is spent bound on storage, not
+   waiting for output. Dividing an already-surplus multiplier by twelve changes nothing,
+   because nothing was waiting on it.
+
+So the deep end is cost- and storage-bound, and the lever that moves it is the cost side:
+`r_eff`. Do not reach for the softcaps again without first checking
+`bindingConstraints` — if storage tops that list, no multiplier change will register.
+
+### The deep end is logarithmic, and that is the real pacing wall
+
+Tier 10 missed its target by 35% and the storage cap was the visible cause: the
+amounts search hit `smart_plating 3341500 is above the maximum 3340189 a player can
+hold`. That reading was wrong, and measurement overturned it — the third time in this
+project, so treat the pattern as expected rather than unlucky.
+
+With the ladder raised past any plausible need (`maxLevel` 30/24, caps in the hundreds
+of millions) tier 10 still tops out near 20 collections. Its response to the
+requirement is **logarithmic**:
+
+| factor | smart_plating | collections |
+|---|---|---|
+| 1x | 2,560,000 | 15.80 |
+| 4x | 10,240,000 | 17.17 |
+| 8x | 20,480,000 | 18.35 |
+| 32x | 81,920,000 | 20.26 |
+
+**32x the material buys 4.5 collections.** Each doubling is worth about 0.65, so
+reaching a target of 25 by amounts alone needs roughly 4,000x — ten billion units, which
+is not content anybody would ship.
+
+The cause is `r_eff` compounding. By tier 9 production has grown so fast that the time
+to accumulate anything is `log(amount) / growth`, and the milestone amount — the only
+lever the amounts search has — has almost stopped being a lever. This is the same fact
+the ceiling measurements reported additively (`+~2` a tier) seen from the other side.
+
+**So the deep end cannot be paced by asking for more stuff.** The levers that still work
+there are `r_eff` (the scale), the softcaps, and content breadth — a tier that gates on
+something other than a bigger pile. `targetCollectionsToTier` for tiers 9 and 10 has to
+be set against that, not against a geometric curve.
+
+It also means the slice has no room for a tenth tier as authored: tier 9 lands near 16
+and tier 10's reachable band starts right behind it. Either the economy has to be slowed
+where it runs away, or tier 10 needs a different kind of gate.
+
+### What a gate run costs — measured
+
+`sim run --policy <p> --seed 42 --until tier:10 --max-days 120`, serial, on the
+calibrated slice:
+
+| policy | wall clock |
+|---|---|
+| `greedy` | 173.7s |
+| `bottleneck` | 232.5s |
+| `casual` | 240.7s |
+| `optimal` | **did not finish in 33 minutes** (killed; worker pegged at 100% CPU, so slow rather than stuck) |
+
+**The three gated policies cost ~10.8 minutes together.** That is on top of an 11-minute
+`pnpm test`, so the full gate is ~22 minutes a commit: too slow for per-commit CI, fine
+nightly. Split it — keep a cheap per-commit smoke (`sim:ci` is already greedy to tier 2 in
+30 days) plus `content:check` and the determinism replay, and run the ten-tier three-policy
+gate nightly or pre-merge.
+
+**One run answers every E.5 check.** A single `--report json` already carries
+`reachedTier`, `tierTimes`, `maxDeadTimeMs`, `rEff` and `bindingConstraints`, so the gate
+does not need a run per assertion — three runs total, not fifteen.
+
+Two of the five checks already pass on the calibrated slice: max dead time is 0.50
+game-hours, and the minimum observed `r_eff` is 1.023285, comfortably above the 1 + 1e-3
+runaway floor (19 of 23 lane/class pairs ever run; the other four never get built).
+
+**`optimal` must stay out of the gate, and its cost is a finding.** It is >10x the other
+three on identical content. E.5 names `greedy`, `casual` and `bottleneck`, so nothing is
+blocked, but a policy that cannot replay the slice in half an hour needs its own look.
+
+**The calibration reproduces exactly.** A plain `sim run` against the committed bundle
+returns the same ten tier times `derived.yaml` reports, to seven significant figures --
+so the derived block is verified end to end, not merely self-consistent. Tier 10 is the
+one that differs at all (16.1156 vs 16.1020, 0.08%), which is where the run stops rather
+than where the milestone completes.
+
+**Storage is the top binding constraint**, at `storage:iron_plate` for 306.7M ms -- twice
+the next entry (`make_iron_plate`, 153.4M). That is independent confirmation of what caps
+tier 10, and it points at the content fix rather than at a target retune.
+
 **Assert absolute tier times, never a policy ordering.** Carried forward from Phase 0 and
 now doubly earned: `greedy` can legitimately reach a tier *after* `casual`, because it
 spends plate on miners that do not raise plate output. A `greedy < casual` assertion fails
@@ -281,7 +1197,7 @@ test to tune away.
 
 ---
 
-## Task 5 — The dropped formatter carry-forward
+## Task 5 — The dropped formatter carry-forward — **DONE**
 
 `plain()` in `packages/engine/src/numbers/format.ts:44-48` caps at two decimals, so
 `plain(0.004)` renders `"0.00"`. Phase 0 flagged this as "an early Phase 1 fix, not a
@@ -294,18 +1210,126 @@ reads `0.00`, which during calibration is indistinguishable from "stalled."
 Small, and it should go in early — a calibration run misread because the display lies is
 an expensive way to rediscover it.
 
+**Outcome.** `plain()` now keeps three significant figures below 1 — the same three the
+`[1, 1000)` branches above it already gave — and trims the zeros `toPrecision` pads with,
+so `0.004` renders `0.004` rather than `0.00`. Below 1e-4 `format` renders straight from
+mantissa/exponent instead: a fixed-point rendering there is all leading zeros, and the
+float magnitude the plain path computes underflows to 0 at very negative exponents, which
+would have printed a confident `0.00` for a nonzero rate at any scale.
+
+Five tests, written red first. No caller changed behaviour above 1, so nothing else moved.
+
+---
+
+## Task 6 — Gate the vertical slice — **DONE** (unplanned; found while starting Task 5)
+
+`pnpm content:check` was hardcoded to `bundles/fixture` — 7 items, 7 recipes. The 44-recipe
+slice Task 2 authored was referenced **nowhere** in the repo: no test loaded it, no script
+validated it, nothing imported it. Task 4's first CI gate is `content:check` running all
+eleven checks, so shipping it as-was would have given a green gate over content nobody
+checked, and the only reason we knew the slice validated at all was one hand-run of the CLI.
+
+**Outcome.**
+
+- `src/cli.ts` takes any number of bundle directories and, given none, discovers every
+  directory under `bundles/`. Discovery rather than an explicit list is the point: a new
+  bundle cannot now be added without being checked. Every bundle is validated before the
+  process exits, so one broken bundle does not mask the others.
+- `src/validate/slice.test.ts` — nine tests pinning B.5's *load-bearing properties* rather
+  than its size: the five lanes, cross-lane contention through Steel Ingot and Encased
+  Industrial Beam, both byproduct emitters and both consume corners, fluids and packaging,
+  generation at three power tiers, alternates and machine marks. Authoring more content
+  stays free; losing a shape the solver is meant to exercise does not.
+- The warning assertion is deliberately exact — one warning, check 6, naming both recycled
+  recipes. If that assertion ever changes, the v1 SCC decision changed with it.
+- `turbo.json` declared `"outputs": ["dist/**"]` on `build` while every package builds with
+  `tsc --noEmit`. Now `[]`. Only two of four packages warned, because the other two were
+  cached — the noise would have grown as caches turned over.
+
+Worth recording: `build` and `typecheck` now run identical commands. `build` earned its
+keep immediately (it caught a strict-mode error in the new test that `vitest` did not), but
+the duplication should be resolved rather than left to drift.
+
+---
+
+## Task 7 — Producibility must be evaluated over the *selectable* graph — **DONE**
+
+Found while gathering the SCC evidence below, and it is the reason that decision needed to
+come first.
+
+`checkProducers` in `src/validate/graph.ts` builds `earliestProduction` from
+`bundle.recipes` — **every** recipe, including recipes inside a non-trivial SCC that Phase 1
+made unselectable. `checkConsumers` reads the graph the same way. So an item whose only
+producer is a forbidden cycle passes check 3 and is then permanently unobtainable in game.
+
+That is precisely the class of defect check 5 exists for: a *permanently stuck save* rather
+than merely bad balance, which B.6 says is worth failing the build over.
+
+It does not bite on the slice today — pruning both recycled recipes yields zero validation
+issues (evidence below) — so this is latent, not live. It will bite when the full catalog
+lands, since Satisfactory's recycling loops are numerous, or the first time someone authors
+content where a cycle is the sole route to an item.
+
+**The fix is one idea, not one line:** checks 3 and 4 must run over the same selectable
+recipe set the solver uses, so "unselectable" means the same thing to the validator as it
+does to the player. Do it before Task 3 — a calibration run over content the validator has
+mis-cleared would be calibrating a game the player cannot actually play.
+
+**Outcome.** `scc.ts` now owns the notion — `cyclicRecipeIds` and `selectableRecipes` —
+and four checks read it, one more than this task was written for:
+
+- **Check 3** distinguishes its two cases. "Nothing produces it" and "produced only by
+  recipes inside a cycle, which ruling R6 makes unselectable" call for different fixes, the
+  same reason check 7 already told its three messages apart.
+- **Check 4** counts only selectable consumers.
+- **Check 5** reads the selectable graph on *both* sides: an unselectable recipe is neither
+  an outlet for a byproduct nor a source of one. Not in the original write-up, and the same
+  stuck-save defect — a byproduct whose only consumer sits in a cycle is a hard stall under
+  section 3.4.
+- **Check 7** was assumed immune, and is not. The reasoning that its fixed point cannot
+  bootstrap a circularity holds only when the *whole* cycle is unreachable. If a cyclic
+  recipe's inputs happen to be reachable acyclically, the fixed point fires it and adds
+  outputs the player can never make — marking a build cost satisfiable when it is not. Both
+  `producibleAtTier` and its message-selection map now take the selectable set.
+
+Nine tests. The check 7 test was run against the pre-fix code to confirm it discriminates
+rather than merely passing — assuming immunity is what put the hole there in the first place.
+
+The slice is unaffected: still one warning, same checksum.
+
 ---
 
 ## Open decisions
 
-**The SCC question is the one that needs a call, and it needs evidence first.** B.5
-includes Recycled Plastic and Recycled Rubber as a genuine cycle specifically so we can
-"decide from evidence whether to ship §4.3's SCC solver or forbid cycles in v1." Phase 1
-forbade cycles (any recipe in a non-trivial SCC is unselectable) and the outer waterfall
-was built so that adding an SCC solver later does not change it.
+**The SCC question — DECIDED: forbid cycles in v1.** Phase 1's behaviour stands.
 
-Decide **after** Task 2 authors the cycle and we can see what forbidding it actually costs
-the player. Deciding before then is guessing.
+The plan said to decide after Task 2 authored the cycle. It also has to be decided *before*
+Task 3: if the cycle became selectable, `greedy` and `casual` would gain a recipe, tier
+times would move, and every number the calibration solved for would be void. Calibrate
+first and you calibrate twice.
+
+**The evidence.** Pruning `alt_recycled_plastic` and `alt_recycled_rubber` from the slice
+entirely — which is what "unselectable" means to a player — produces **zero** validation
+issues. Nothing depends on them:
+
+| item | acyclic producers |
+|---|---|
+| plastic | `refine_plastic` @ t6, `refine_residual_plastic` @ t8 |
+| rubber | `refine_rubber` @ t6, `refine_residual_rubber` @ t8 |
+| fuel | `refine_residual_fuel` @ t6 |
+
+So forbidding costs the player exactly one tier-10 efficiency alt pair — the last tier of
+the slice, the least-exercised content, and the part most likely to be re-authored when the
+full catalog arrives. Against that, shipping §4.3's SCC solver would put new solver
+semantics underneath the calibration run, which is the one thing Task 3 needs to hold still.
+
+The two recipes stay in the bundle. They are the cycle detector's only real fixture, they
+document the intent, and the warning plus the Task 6 assertion make their status explicit
+rather than silent.
+
+**What this decision obliges us to do:** Task 7. Forbidding cycles is only honest if the
+validator agrees that a forbidden recipe is not a producer. Revisit the decision itself when
+the full catalog lands and we can see whether any item there is cycle-only.
 
 ---
 
@@ -319,7 +1343,11 @@ the player. Deciding before then is guessing.
 | `fireDueTimers` comparator not antisymmetric for duplicate ids | Phase 1 |
 | `ValidationIssue` defined in `load.ts` — pure validation importing from the I/O module | Phase 0 |
 | Three test-bundle factories to reconcile | Phase 0 |
-| `README.md` hardcodes a test count — **delete the number rather than updating it**; it has drifted twice already | Phase 0 |
+| Ruling R6 is implemented twice — engine `findCyclicRecipes`, content `findStronglyConnectedComponents`. Same semantics today; if they drift the validator clears content the engine refuses to run | Task 7 |
+| Check 10's generator-unlock scan still reads every recipe. Over-strict rather than stuck-save, so it can wait | Task 7 |
+| Spec B.5 prose says "Four lanes" while its own table lists five and the bundle has five (Power is a lane) — a spec fix, not a content one | Task 6 |
+| `build` and `typecheck` now run identical `tsc --noEmit` commands in every package | Task 6 |
+| ~~`README.md` hardcodes a test count~~ — **DONE** (Task 3): number deleted rather than updated, with a line saying why, and the stale "Phase 1 is next" status corrected | Phase 0 |
 
 ---
 
