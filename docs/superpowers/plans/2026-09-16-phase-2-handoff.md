@@ -250,10 +250,36 @@ What is left is the content-design decision, and it now rests on a search that w
 - The standing reading — that tier 10 must gate on something the amounts search can move
   — is confirmed rather than merely suspected. The options are recipe depth, a power or
   throughput wall, or more storage depth across the tier 9 -> 10 step.
-- **Untried, and cheap:** the authored RATIO between tier 10's two requirement items, the
-  same lever that fixed tier 5. Only an item pushed past its own cap adds time, and
-  `encased_industrial_beam` at 5,747,250 may not be the binding one. Worth one measurement
-  before reaching for new content.
+- **The item RATIO is ruled out — measured 2026-09-19, and this one was measured through a
+  search that works.** It was the obvious untried lever, being the one that fixed tier 5.
+  It does nothing here. Both requirement items carry the SAME base caps (200 + 800) and
+  therefore the same ceiling, 7,665,440. Sweeping each independently from a tier-9
+  checkpoint:
+
+  | binding item | 3.0M | 5.0M | 7.0M | 7.6M | at ceiling |
+  |---|---|---|---|---|---|
+  | `smart_plating` | 19.356 | 20.141 | 20.869 | 20.8719 | never |
+  | `encased_industrial_beam` | — | 20.141 | 20.656 | — | never |
+
+  `encased_industrial_beam` binding lands at **20.656**, which is FURTHER from 25 than
+  `smart_plating`'s 20.869, so the shipped weighting is already the better of the two. And
+  the two do not compose the way tier 5's did: both binding together measures
+  **identically** to `smart_plating` alone — (7.0M, 7.0M) and (7.0M, free) are both
+  20.8688 — because they are in the same saturated regime rather than on opposite sides of
+  one cap.
+
+- **The curve SATURATES, which is stronger than "logarithmic".** Per million units,
+  5M -> 7M is worth 0.364 collections; 7M -> 7.5M is worth 0.0052. A seventy-fold collapse
+  in marginal value, and then the ceiling. The shipped 7,663,000 measures 20.8722, which is
+  within 0.0003 of the best any amount achieves. **The calibrator has already found the
+  optimum; there is no amount left to find.** Tier 10's miss floor is -16.5%.
+
+- So the reachable band for tier 10 is **[15.54, 20.872]** and 25 is not in it — not by
+  either item, not in any ratio, not by both together. Raising storage depth is the
+  remaining amount-shaped idea and it is the weakest: the deep end was already measured at
+  ~0.65 collections per doubling, needing ~4,000x to reach 25. **What is left is structural
+  — recipe depth, or a power or throughput wall.** Still your call, but the amount-shaped
+  half of the decision space is now closed by measurement rather than by argument.
 
 **4. Test-fixture coupling — a correctness problem, not a speed one.**
 Three times this session a content change silently invalidated mechanics-test premises

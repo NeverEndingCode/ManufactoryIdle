@@ -53,8 +53,10 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "rather than a fitting failure. The requirement cannot exceed what a player " +
           "can ever hold -- maxAttainableCap(smart_plating, tier 9) is 7,665,440 -- and " +
           "the solved 7,663,000 is 99.97% of it. Even at the ceiling the tier lands at " +
-          "20.87, so no amount reaches 25. Needs a gate the amounts search can move: " +
-          "recipe depth, a power or throughput wall, or more storage depth at tier 9->10.",
+          "20.87, so no amount reaches 25. The item RATIO is ruled out too (measured): " +
+          "both requirements share a ceiling, the beam binding lands further out at " +
+          "20.656, and both together measure the same as smart_plating alone. Needs " +
+          "something structural -- recipe depth, or a power or throughput wall.",
       },
     ],
   },
