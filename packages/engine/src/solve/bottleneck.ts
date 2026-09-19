@@ -1,7 +1,9 @@
-// Spec 4.5: the solver returns the bottleneck as first-class output, never something
-// the UI derives. Exactly one row per lane carries the treatment, so what is
-// returned is the recipe limiting the HIGHEST-PRIORITY limited target -- marking
-// every row under 100% teaches players to ignore the marking.
+// Spec 4.5, amended 2026-09-19: the solver returns the bottleneck as first-class
+// output, never something the UI derives. Exactly one row per lane carries the
+// treatment -- marking every row under 100% teaches players to ignore the marking.
+// The reporter resolves the next milestone's unmet requirements first; only when the
+// milestone is satisfied or nothing in it is blocked does it fall back to the recipe
+// limiting the HIGHEST-PRIORITY limited target.
 //
 // machinesToClear is the count that would make some other recipe the binding
 // constraint, which is what "6 more constructors clears it" means. The waterfall
@@ -103,11 +105,11 @@ function cheaperUpgrade(
  *
  * `visited` is shared across one call's whole sweep rather than reset per
  * requirement: an item that returned null once returns null again, so sharing is
- * exact and saves re-walking an item two requirements have in common. It also
- * guards this function's single recursive entry point (the walk no longer recurses
- * into recipe inputs -- see the comment at the bottom of this function for why --
- * but the guard costs nothing to keep and ruling R6 keeping the live subgraph
- * acyclic today is a property of content, not a guarantee, should recursion return).
+ * exact and saves re-walking an item two requirements have in common. The walk no
+ * longer recurses into recipe inputs -- see the comment at the bottom of this
+ * function for why -- so the guard is currently dormant, not load-bearing. It is
+ * kept anyway, at no cost, because ruling R6 keeping the live subgraph acyclic today
+ * is a property of content, not a guarantee, should recursion return.
  */
 function resolveBlocker(
   content: IndexedContent,

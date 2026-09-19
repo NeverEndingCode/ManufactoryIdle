@@ -222,8 +222,8 @@ To be added inline at §4.5, matching the form of the 2026-09-06 amendment:
 > holding 2,307,820 `iron_plate` and 430,367 `screw`, owning zero assemblers, needing 200
 > `reinforced_iron_plate` — and was advised to buy three iron ore miners.
 >
-> The reporter now resolves the next milestone's unmet requirements first, walking each
-> item's input chain to the first genuine blocker, and falls back to the priority scan
-> when the milestone is satisfied or nothing in it is blocked. The returned kinds are
-> unchanged: a zero-capacity recipe is reported as `kind: "recipe"`, because it genuinely
-> is the binding constraint.
+> The reporter now resolves the next milestone's unmet requirements first, resolving each
+> unmet requirement to its own blocker (the waterfall has already chased its input chain),
+> and falls back to the priority scan when the milestone is satisfied or nothing in it is
+> blocked. The returned kinds are unchanged: a zero-capacity recipe is reported as
+> `kind: "recipe"`, because it genuinely is the binding constraint.

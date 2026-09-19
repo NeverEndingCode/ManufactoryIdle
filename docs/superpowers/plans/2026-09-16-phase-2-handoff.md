@@ -333,6 +333,22 @@ since the `bottleneck` finding gives them a concrete reason to exist.)
 ten-tier scan costs "ten hours a scale" (~1 hour since the `resolve` fix), and still cites
 "33 collections for one rotor", which the floor measurement disproved.
 
+**8. Two gaps in the milestone-aware bottleneck reporter, noted so they are not
+rediscovered as new.**
+- **A PAUSED milestone requirement is invisible to the walk.** `waterfall.ts` filters
+  paused entries out of `entries`, so `resolveBlocker`'s `entries.find` returns
+  `undefined` for a paused item and the walk declines exactly as it does for a
+  requirement that is merely accumulating. A player who pauses an item the next
+  milestone needs (spec 4.1 makes `paused` the remove verb) gets silence from the
+  reporter instead of a blocker. No automated policy emits pause today, so this is
+  human-CLI-only, not something the pacing gate can hit.
+- **The milestone branch checks FULL on the requirement item only, not on the output
+  of the recipe it names — pre-existing, not introduced by this change.** A milestone
+  needing `cable`, limited by `make_wire`, with `wire` itself at cap, yields "buy N
+  more wire machines" when the real answer is a storage level for `wire`. The old
+  priority scan has the identical gap at its own level, so this is not a regression;
+  it is recorded here so it is not mistaken for one.
+
 ---
 
 ## Follow-ups from the milestone-aware bottleneck change (2026-09-19)

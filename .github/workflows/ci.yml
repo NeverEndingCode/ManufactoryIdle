@@ -44,7 +44,7 @@ jobs:
     # **bottleneck 2273.9s**, ~49 minutes locally and ~119 projected in CI.
     #
     # A policy that makes progress simulates far more than one sitting dead, so fixing
-    # the game made the gate slower. Almost all of that 37.9 minutes is bottleneck
+    # the game made the gate slower. Almost all of bottleneck's 37.9 minutes is
     # simulating a stall the gate has ALREADY pinned: it reaches tier 6 at 1.17
     # collections, about half a day, then runs the remaining ~119 simulated days to
     # confirm what `reachesTier: 6` already asserts. The right fix is a per-policy day

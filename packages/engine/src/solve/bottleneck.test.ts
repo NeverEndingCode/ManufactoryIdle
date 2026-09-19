@@ -8,14 +8,14 @@ import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
 import { indexContent } from "../graph/index-content.js";
-import { initialWorld, type WorldState } from "../state/world.js";
+import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
 import { quantumCap, storageCap } from "../economy/storage.js";
 import { D } from "../numbers/decimal.js";
 import { solve } from "./solve.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
 const content = indexContent(loadBundleDir(fixtureDir));
-const fixtureBundle = loadBundleDir(fixtureDir);
+const fixtureBundle = content.bundle;
 const NO_FLOOR = { reserveFloor: 0 };
 
 /** Fills `itemId` to exactly its liquid cap, which is what spec C.2 calls FULL. */
@@ -171,6 +171,45 @@ describe("the milestone branch", () => {
     expect(sol.bottleneck?.kind).toBe("recipe");
     expect(sol.bottleneck?.limitingTarget).toBe("item:iron_plate");
   });
+
+  it("declines an unmet requirement that is merely accumulating, not blocked (step 5)", () => {
+    // Design doc acceptance criterion 1, the branch called out as "easy to get
+    // wrong": the item is live, has machines, is under cap, and its entry is
+    // getting everything it asked for (limitedBy: null) -- so the walk must
+    // return null and let the priority scan run, rather than inventing a blocker.
+    //
+    // A finite, modest targetRate is the key: with the default unbounded demand
+    // (targetRate: null) an entry's allocated rate can never reach `requested`
+    // (Infinity), so limitedBy is never null. Giving `plastic` both a small
+    // achievable targetRate and enough machines to clear it puts the entry in the
+    // one state step 4 does not catch.
+    const base = initialWorld(plasticMilestone, 1, 0);
+    let state: WorldState = {
+      ...base,
+      tier: 2,
+      // Recipe rates are authored per MINUTE (spec A.4's exactRatePerSecond divides
+      // by 60), so one refine_plastic machine's ceiling is 20/60 = 0.333 plastic/s.
+      // 0.1/s sits comfortably under that with the reserve floor and crude_oil's own
+      // draw both accounted for.
+      priority: base.priority.map((entry) =>
+        entry.itemId === "plastic" ? { ...entry, targetRate: 0.1 } : entry,
+      ),
+    };
+    state = withInstalled(state, "oil", "extractor", 1, 1);
+    state = withInstalled(state, "oil", "refinery", 1, 1);
+    state = { ...state, assignment: { ...state.assignment, extract_oil: 1, refine_plastic: 1 } };
+
+    const sol = solve(state, plasticMilestone, NO_FLOOR);
+    // Preconditions: the requirement really is unmet, the item really is live with
+    // machines and under cap, and it really is getting everything it asked for.
+    expect(sol.capacity.unitsByRecipe.get("refine_plastic") ?? 0).toBeGreaterThan(0);
+    expect(sol.itemStates.get("plastic")).not.toBe("FULL");
+    const plasticEntry = sol.entries.find((e) => e.itemId === "plastic");
+    expect(plasticEntry?.limitedBy).toBeNull();
+    // The milestone branch must decline entirely: nothing about plastic should
+    // surface, and the fallback (iron_plate, first on the priority list) should.
+    expect(sol.bottleneck?.limitingTarget).toBe("item:iron_plate");
+  });
 });
 
 describe("the milestone walk on real content", () => {
@@ -185,6 +224,12 @@ describe("the milestone walk on real content", () => {
   // them. This test confirms that guard holds across all tiers. The walk currently
   // has no recursive call site, so this is a safeguard against future content changes
   // rather than a live hazard today.
+  //
+  // `not.toThrow()` cannot itself detect a looping walk: a walk that failed to
+  // terminate would hang rather than throw. Termination here is actually enforced
+  // by vitest's per-test timeout, which fails the test if the loop below does not
+  // return. The assertion below is a real (if weaker) check on top of that: it
+  // confirms `solve` completes without an exception at every tier.
   const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
   const slice = indexContent(loadBundleDir(sliceDir));
 
