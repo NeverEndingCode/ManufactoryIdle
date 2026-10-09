@@ -86,6 +86,33 @@ The four call sites:
 The power branch's generator advice (`kind: "power"`) is not routed through the helper: a
 generator's output is power, which is never an item state, so it cannot be FULL.
 
+### Refinements found while planning (2026-10-09)
+
+Checking each acceptance test's setup against the real solver, before writing the plan,
+found three places where the rules above were not precise enough. Each is adopted here.
+
+1. **FULL is not enough; the item must be held at the cap.** A FULL item can be
+   draining: measured on the fixture, residue at cap with one `refine_plastic` feeding
+   and one `residual_fuel` drawing has net −0.833/s, and both recipes run at clock 1.
+   Nothing is throttled, and the walk must not fire. The trigger is therefore **FULL and
+   `net >= -FLOW_TOLERANCE`** -- exactly the condition the FULL sweep produces when it
+   holds producers at the drain rate. On the vertical slice every gridlocked item's net
+   is 0, so the measured case is unchanged. This needs `itemRates`, which
+   `computeBottleneck` does not receive today: it gains one parameter, fed from
+   `items.pass.flows` at its single call site in `solve.ts`. The "signature unchanged"
+   line under *What this does not change* is superseded.
+2. **The named recipe is not always the throttled one.** On the fixture gridlock (residue
+   and fuel FULL, `refine_plastic` at clock 0), the waterfall's `limitedBy` for
+   `plastic` is `extract_oil` -- a recipe running at clock 1 -- by the zero-ratio
+   tie-break `resolveBlocker`'s comment already documents. `extract_oil`'s output is not
+   FULL, so checking only the named recipe never fires. The trigger therefore checks, in
+   order, **the target item's own active recipe**, then the recipe the branch would
+   name. On the vertical slice both are `refine_rubber`.
+3. **The target item itself is never walked from.** A requirement item that is FULL is
+   already answered by storage for it, which stays ahead of the trigger in
+   `resolveBlocker`. In the zero-capacity branch the trigger skips the target item when
+   reading outputs, so an output that IS the thing asked for is never treated as a jam.
+
 ### The forward walk
 
 At a FULL item X:
@@ -143,8 +170,8 @@ walk must not depend on that: `visited` alone bounds it at |items| entries.
 
 - The selection order: power, then milestone, then priority scan.
 - Any advice for a recipe none of whose outputs is FULL -- byte-identical.
-- The solver. The walk reads `itemStates`, `capacity`, and the content index, all of
-  which the reporter already receives; `computeBottleneck`'s signature is unchanged.
+- The solver. The walk reads `itemStates`, `itemRates`, `capacity`, and the content
+  index. All but `itemRates` the reporter already receives; see refinement 1.
 
 ### Determinism and cost
 
