@@ -129,6 +129,16 @@ walk must not depend on that: `visited` alone bounds it at |items| entries.
 - **After (A):** the same walk reaches `fuel`, whose live consumer `burn_fuel` has no
   machines -> **buy 1 `burn_fuel`** (a fuel generator).
 
+  **Measured 2026-10-09, after this spec was approved: (A) as first scoped does not
+  produce that.** A throwaway run of these rules on the tier-6 checkpoint, with
+  `burn_fuel` and `fuel_generator` unlocked at tier 6 in memory, still answers `storage
+  fuel`. The engine keys `activeRecipe` by primary output and every generator's primary
+  output is `__power__`, so only ONE generator recipe is live at a time; while the grid
+  runs `burn_biomass`, `burn_fuel` gets no capacity. That is an engine constraint, not a
+  walk defect: this design needs no change, and once (A) lets generator types run side by
+  side, `burn_fuel` becomes a live consumer and the walk names it unaided. (A)'s spec owns
+  that engine change.
+
 ### What this does not change
 
 - The selection order: power, then milestone, then priority scan.
