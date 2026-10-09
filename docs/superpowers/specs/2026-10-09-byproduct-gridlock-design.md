@@ -89,7 +89,7 @@ generator's output is power, which is never an item state, so it cannot be FULL.
 ### Refinements found while planning (2026-10-09)
 
 Checking each acceptance test's setup against the real solver, before writing the plan,
-found three places where the rules above were not precise enough. Each is adopted here.
+found four places where the rules above were not precise enough. Each is adopted here.
 
 1. **FULL is not enough; the item must be held at the cap.** A FULL item can be
    draining: measured on the fixture, residue at cap with one `refine_plastic` feeding
@@ -113,6 +113,13 @@ found three places where the rules above were not precise enough. Each is adopte
    `resolveBlocker`. In the zero-capacity branch the trigger skips the target item when
    reading outputs, so an output that IS the thing asked for is never treated as a jam.
 
+4. **Held outputs are checked before capacity.** The first draft named an unbuilt
+   consumer straight away. But an unbuilt `residual_fuel` with fuel at cap would be held
+   at clock 0 the moment it was built -- the same buy-into-a-jam defect, one step along.
+   So a consumer's held outputs are read first; one that is unvisited is walked into,
+   and a consumer whose held outputs are all visited is skipped so the loop can fall
+   through to storage, as step 3 always said it would.
+
 ### The forward walk
 
 At a FULL item X:
@@ -121,13 +128,14 @@ At a FULL item X:
    `isLiveRecipe(content, C, state.tier, state.activeRecipe)`, in `content.recipeIds`
    order so the result is deterministic.
 2. For each consumer C, in that order:
-   - **C has no capacity** (`capacity.unitsByRecipe.get(C) <= 0`) -> return
-     `recipe C, machinesToClear: 1`. A drain beats storage: it is permanent.
-   - **C has capacity and one of C's outputs Y is FULL**, Y not yet visited -> recurse on
-     Y. If that returns a blocker, return it; otherwise continue with the next consumer.
-   - **C has capacity and none of its outputs is FULL** -> C is running but cannot drain
-     X fast enough. Return `recipe C, machinesToClear: 1`.
-3. **No live consumer**, or every path visited -> return `storage X`, with
+   - **One of C's outputs Y is held at cap**, Y not yet visited -> recurse on Y, whether
+     or not C has machines.
+   - **Otherwise, one of C's outputs is held but every such output is already visited**
+     -> skip C: it is a loop, not an answer. Continue with the next consumer.
+   - **Otherwise** (none of C's outputs is held) -> return `recipe C, machinesToClear: 1`.
+     C is either missing or running too slowly to drain X; buying one is right for each.
+     A drain beats storage: it is permanent.
+3. **No live consumer**, or every consumer skipped -> return `storage X`, with
    `upgrade: cheaperUpgrade(content, state, X)`.
 
 Every blocker the walk returns carries the **original** `limitingTarget` -- the advice has

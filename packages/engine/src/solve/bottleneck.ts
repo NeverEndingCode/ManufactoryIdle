@@ -101,6 +101,8 @@ function cheaperUpgrade(
   return total(qsCost).lt(total(storageCost)) ? "quantum" : "storage";
 }
 
+const NO_ITEMS: ReadonlySet<ItemId> = new Set();
+
 /** What the gridlock walk reads. Bundled because every helper below needs all five. */
 interface WalkContext {
   content: IndexedContent;
@@ -147,11 +149,14 @@ function heldOutputOf(
 /**
  * What would drain `itemId`, which is held at its cap. Consumers are taken in
  * `content.consumersOf` order, which is bundle order, so the answer is deterministic.
- * A consumer with no machines is named first among equals because a drain is
- * permanent and storage only postpones the next fill. `machinesToClear` is 1 on every
- * answer here: `machinesToClearRecipe` closes a gap to a waterfall runner-up, and a
- * drain has no runner-up; the caller re-solves after buying, the argument the
- * zero-capacity and storage branches already make.
+ * A consumer's own held outputs are checked BEFORE its capacity: an unbuilt consumer
+ * whose output is already full would be held at clock 0 the moment it was built, so
+ * naming it is the same buy-into-a-jam defect the walk exists to remove (a missing
+ * residual_fuel plant with fuel at cap -- storage for fuel is the purchase that moves
+ * anything). `machinesToClear` is 1 on every answer here: `machinesToClearRecipe`
+ * closes a gap to a waterfall runner-up, and a drain has no runner-up; the caller
+ * re-solves after buying, the argument the zero-capacity and storage branches already
+ * make.
  */
 function drainBlocker(
   walk: WalkContext,
@@ -160,18 +165,17 @@ function drainBlocker(
   visited: Set<ItemId>,
 ): NonNullable<Bottleneck> {
   visited.add(itemId);
-  const { content, capacity, state } = walk;
+  const { content, state } = walk;
   for (const consumerId of content.consumersOf.get(itemId) ?? []) {
     if (!isLiveRecipe(content, consumerId, state.tier, state.activeRecipe)) continue;
-    if ((capacity.unitsByRecipe.get(consumerId) ?? 0) <= 0) {
-      return { kind: "recipe", recipeId: consumerId, limitingTarget, machinesToClear: 1 };
-    }
-    const next = heldOutputOf(walk, consumerId, visited);
-    // Running and nothing downstream is full: it is simply too slow for what it drains.
-    if (next === null) {
-      return { kind: "recipe", recipeId: consumerId, limitingTarget, machinesToClear: 1 };
-    }
-    return drainBlocker(walk, next, limitingTarget, visited);
+    const fresh = heldOutputOf(walk, consumerId, visited);
+    if (fresh !== null) return drainBlocker(walk, fresh, limitingTarget, visited);
+    // Every full output of this consumer is already in the walk: it is a loop, not an
+    // answer, and naming it would buy a machine the sweep holds at clock 0.
+    if (heldOutputOf(walk, consumerId, NO_ITEMS) !== null) continue;
+    // Nothing downstream is full. Either it has no machines or it runs but is too slow
+    // for what it drains; one more is the right purchase for each.
+    return { kind: "recipe", recipeId: consumerId, limitingTarget, machinesToClear: 1 };
   }
   // Nothing live consumes it -- the vertical slice's `fuel` at tier 6 -- or every
   // consumer leads back into the walk. Storage is the only purchase that moves it.

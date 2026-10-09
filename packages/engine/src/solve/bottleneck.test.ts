@@ -348,6 +348,7 @@ describe("the gridlock walk", () => {
     expect(sol.itemRates.get("heavy_oil_residue")!.net).toBe(0);
     expect(sol.itemStates.get("fuel")).not.toBe("FULL");
     expect(sol.clocks.get("residual_fuel")).toBe(1);
+    expect(sol.clocks.get("refine_plastic")!).toBeLessThan(1);
     expect(sol.bottleneck).toEqual({
       kind: "recipe",
       recipeId: "residual_fuel",
@@ -372,6 +373,25 @@ describe("the gridlock walk", () => {
       recipeId: "refine_plastic",
       limitingTarget: "item:plastic",
       machinesToClear: 3,
+    });
+  });
+
+  it("names storage past an unbuilt drain whose own output is full", () => {
+    // residual_fuel has no machines, but its output (fuel) is at cap: built, it would
+    // be held at clock 0 at once, so the purchase that moves anything is fuel storage.
+    const c = oilContent(3);
+    let w = oilWorld(c, 2, { extract_oil: 1, refine_plastic: 1 });
+    w = atCap(atCap(w, "heavy_oil_residue"), "fuel");
+    const sol = solve(w, c, NO_FLOOR);
+    expect(sol.itemStates.get("heavy_oil_residue")).toBe("FULL");
+    expect(sol.itemRates.get("heavy_oil_residue")!.net).toBe(0);
+    expect(sol.itemStates.get("fuel")).toBe("FULL");
+    expect(sol.capacity.unitsByRecipe.get("residual_fuel") ?? 0).toBe(0);
+    expect(sol.clocks.get("refine_plastic")).toBe(0);
+    expect(sol.bottleneck).toMatchObject({
+      kind: "storage",
+      itemId: "fuel",
+      limitingTarget: "item:plastic",
     });
   });
 
