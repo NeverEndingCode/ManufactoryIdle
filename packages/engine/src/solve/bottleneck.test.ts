@@ -7,10 +7,11 @@
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
-import { indexContent } from "../graph/index-content.js";
+import { indexContent, isLiveRecipe } from "../graph/index-content.js";
 import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
 import { quantumCap, storageCap } from "../economy/storage.js";
 import { D } from "../numbers/decimal.js";
+import { computeBottleneck } from "./bottleneck.js";
 import { solve } from "./solve.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
@@ -238,5 +239,156 @@ describe("the milestone walk on real content", () => {
       const state = { ...initialWorld(slice, 1, 0), tier };
       expect(() => solve(state, slice, NO_FLOOR), `tier ${tier}`).not.toThrow();
     }
+  });
+});
+
+describe("the gridlock walk", () => {
+  // Measured 2026-10-09 on the vertical slice: at tier 6 the oil lane gridlocked --
+  // fuel had no consumer, residue filled, and the FULL sweep held both refineries at
+  // clock 0 -- while the reporter kept naming refine_rubber. `bottleneck` bought 50
+  // refineries into it. The fixture's oil lane is the same chain in miniature:
+  //   extract_oil -> crude_oil -> refine_plastic -> plastic + heavy_oil_residue
+  //   (byproduct) -> residual_fuel -> fuel -> burn_fuel (unlocks at tier 3)
+  // The grid is raised so no setup browns out and lands in the power branch instead.
+  const oilContent = (milestoneTier: number | null) =>
+    indexContent({
+      ...fixtureBundle,
+      baseGridCapacityMw: 100_000,
+      milestones:
+        milestoneTier === null
+          ? []
+          : [
+              {
+                tier: milestoneTier,
+                name: "Plastics",
+                requires: [{ item: "plastic", amount: 100 }],
+                laneMultipliers: {},
+              },
+            ],
+    });
+
+  interface OilMachines {
+    extract_oil?: number;
+    refine_plastic?: number;
+    residual_fuel?: number;
+    burn_fuel?: number;
+  }
+
+  function oilWorld(c: ReturnType<typeof oilContent>, tier: number, m: OilMachines): WorldState {
+    const extract = m.extract_oil ?? 0;
+    const refineries = (m.refine_plastic ?? 0) + (m.residual_fuel ?? 0);
+    const generators = m.burn_fuel ?? 0;
+    let w: WorldState = { ...initialWorld(c, 1, 0), tier };
+    if (extract > 0) w = withInstalled(w, "oil", "extractor", 1, extract);
+    if (refineries > 0) w = withInstalled(w, "oil", "refinery", 1, refineries);
+    if (generators > 0) w = withInstalled(w, "oil", "generator", 1, generators);
+    return {
+      ...w,
+      assignment: {
+        ...w.assignment,
+        extract_oil: extract,
+        refine_plastic: m.refine_plastic ?? 0,
+        residual_fuel: m.residual_fuel ?? 0,
+        burn_fuel: generators,
+      },
+    };
+  }
+
+  /** Residue and fuel at cap, refineries stopped: the slice's gridlock. */
+  function gridlocked(milestoneTier: number, tier: number) {
+    const c = oilContent(milestoneTier);
+    let w = oilWorld(c, tier, { extract_oil: 1, refine_plastic: 1, residual_fuel: 1 });
+    w = atCap(atCap(w, "heavy_oil_residue"), "fuel");
+    return { c, w, sol: solve(w, c, NO_FLOOR) };
+  }
+
+  it("names storage for the item nothing drains, past the byproduct it fills", () => {
+    const { sol } = gridlocked(3, 2);
+    // Preconditions: the gridlock is real -- residue and fuel held at cap, both
+    // refinery recipes stopped -- and the waterfall blames extract_oil, a recipe
+    // running at full clock (the zero-ratio tie-break), so only checking the
+    // target's OWN recipe can see the jam.
+    expect(sol.itemStates.get("heavy_oil_residue")).toBe("FULL");
+    expect(sol.itemStates.get("fuel")).toBe("FULL");
+    expect(sol.itemRates.get("heavy_oil_residue")!.net).toBe(0);
+    expect(sol.clocks.get("refine_plastic")).toBe(0);
+    expect(sol.clocks.get("residual_fuel")).toBe(0);
+    expect(sol.entries.find((e) => e.itemId === "plastic")!.limitedBy).toBe("extract_oil");
+
+    const b = sol.bottleneck;
+    if (b === null || b.kind !== "storage") throw new Error(`expected storage, got ${JSON.stringify(b)}`);
+    expect(b.itemId).toBe("fuel");
+    // Still "what is stopping your plastic", not "what is wrong with fuel".
+    expect(b.limitingTarget).toBe("item:plastic");
+    expect(b.upgrade).not.toBeNull();
+  });
+
+  it("names the drain when it is unlocked but unbuilt", () => {
+    // Tier 3 unlocks burn_fuel, and the fixture's only generator recipe is the
+    // active power recipe, so it is live -- with zero machines.
+    const { c, w, sol } = gridlocked(4, 3);
+    expect(isLiveRecipe(c, "burn_fuel", w.tier, w.activeRecipe)).toBe(true);
+    expect(sol.capacity.unitsByRecipe.get("burn_fuel") ?? 0).toBe(0);
+    expect(sol.bottleneck).toEqual({
+      kind: "recipe",
+      recipeId: "burn_fuel",
+      limitingTarget: "item:plastic",
+      machinesToClear: 1,
+    });
+  });
+
+  it("names the drain that cannot keep up", () => {
+    // Eight plastic refineries emit residue faster than one residual_fuel plant
+    // takes it, so residue is held at cap while fuel flows freely.
+    const c = oilContent(3);
+    let w = oilWorld(c, 2, { extract_oil: 3, refine_plastic: 8, residual_fuel: 1 });
+    w = atCap(w, "heavy_oil_residue");
+    const sol = solve(w, c, NO_FLOOR);
+    expect(sol.itemStates.get("heavy_oil_residue")).toBe("FULL");
+    expect(sol.itemRates.get("heavy_oil_residue")!.net).toBe(0);
+    expect(sol.itemStates.get("fuel")).not.toBe("FULL");
+    expect(sol.clocks.get("residual_fuel")).toBe(1);
+    expect(sol.bottleneck).toEqual({
+      kind: "recipe",
+      recipeId: "residual_fuel",
+      limitingTarget: "item:plastic",
+      machinesToClear: 1,
+    });
+  });
+
+  it("leaves a FULL item that is draining alone", () => {
+    // One refinery each way: residue starts at cap but residual_fuel takes it far
+    // faster than refine_plastic makes it, so nothing is throttled.
+    const c = oilContent(3);
+    let w = oilWorld(c, 2, { extract_oil: 1, refine_plastic: 1, residual_fuel: 1 });
+    w = atCap(w, "heavy_oil_residue");
+    const sol = solve(w, c, NO_FLOOR);
+    expect(sol.itemStates.get("heavy_oil_residue")).toBe("FULL");
+    expect(sol.itemRates.get("heavy_oil_residue")!.net).toBeLessThan(0);
+    expect(sol.clocks.get("refine_plastic")).toBe(1);
+    // Exactly the advice this branch gave before the walk existed.
+    expect(sol.bottleneck).toEqual({
+      kind: "recipe",
+      recipeId: "refine_plastic",
+      limitingTarget: "item:plastic",
+      machinesToClear: 3,
+    });
+  });
+
+  it("treats float noise on a held item's rate as held (tolerance)", () => {
+    const { c, w, sol } = gridlocked(3, 2);
+    const withResidueNet = (net: number) =>
+      computeBottleneck(
+        c,
+        sol.capacity,
+        sol.entries,
+        sol.power,
+        w,
+        sol.itemStates,
+        new Map([...sol.itemRates, ["heavy_oil_residue", { production: 0, consumption: 0, net }]]),
+      );
+    expect(withResidueNet(-1e-12)).toMatchObject({ kind: "storage", itemId: "fuel" });
+    // Clearly draining: no walk, so the advice falls back to the waterfall's name.
+    expect(withResidueNet(-0.5)).toMatchObject({ kind: "recipe", recipeId: "extract_oil" });
   });
 });

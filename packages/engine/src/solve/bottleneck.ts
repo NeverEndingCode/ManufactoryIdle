@@ -17,6 +17,7 @@ import { D, type Dec } from "../numbers/decimal.js";
 import type { WorldState } from "../state/world.js";
 import type { EntryAllocation } from "./waterfall.js";
 import type { PowerReport } from "./power.js";
+import { FLOW_TOLERANCE, type ItemFlow } from "./fixpoint.js";
 
 export type Bottleneck =
   | { kind: "recipe"; recipeId: RecipeId; limitingTarget: string; machinesToClear: number }
@@ -100,6 +101,112 @@ function cheaperUpgrade(
   return total(qsCost).lt(total(storageCost)) ? "quantum" : "storage";
 }
 
+/** What the gridlock walk reads. Bundled because every helper below needs all five. */
+interface WalkContext {
+  content: IndexedContent;
+  capacity: CapacityTable;
+  state: WorldState;
+  itemStates: ReadonlyMap<ItemId, ItemStateTag>;
+  itemRates: ReadonlyMap<ItemId, ItemFlow>;
+}
+
+/**
+ * FULL and held there: the FULL sweep is scaling this item's producers to its drain
+ * rate. FULL alone is not enough -- measured on the fixture, residue at cap with one
+ * refinery feeding it and one residual-fuel plant drawing it nets -0.833/s and runs
+ * both at clock 1. A draining tank throttles nothing. The tolerance is the solver's
+ * own, so float noise on a held item reads as held rather than flickering.
+ */
+function heldAtCap(walk: WalkContext, itemId: ItemId): boolean {
+  if (walk.itemStates.get(itemId) !== "FULL") return false;
+  return (walk.itemRates.get(itemId)?.net ?? 0) >= -FLOW_TOLERANCE;
+}
+
+/**
+ * The first output of `recipeId` -- byproducts included, in authored order -- that is
+ * held at its cap, skipping anything already in `exclude`. `exclude` is how the
+ * requirement item itself is never treated as a jam: it is always its own recipe's
+ * output, it is always in the walk's `visited` set, and a FULL requirement is already
+ * answered by storage for it. Skipping rather than stopping matters: residue is
+ * `refine_plastic`'s SECOND output, after the plastic the player asked for.
+ */
+function heldOutputOf(
+  walk: WalkContext,
+  recipeId: RecipeId,
+  exclude: ReadonlySet<ItemId>,
+): ItemId | null {
+  const recipe = walk.content.recipes.get(recipeId);
+  if (!recipe) return null;
+  for (const itemId of recipe.outputPerSecond.keys()) {
+    if (itemId === POWER_ITEM || exclude.has(itemId)) continue;
+    if (heldAtCap(walk, itemId)) return itemId;
+  }
+  return null;
+}
+
+/**
+ * What would drain `itemId`, which is held at its cap. Consumers are taken in
+ * `content.consumersOf` order, which is bundle order, so the answer is deterministic.
+ * A consumer with no machines is named first among equals because a drain is
+ * permanent and storage only postpones the next fill. `machinesToClear` is 1 on every
+ * answer here: `machinesToClearRecipe` closes a gap to a waterfall runner-up, and a
+ * drain has no runner-up; the caller re-solves after buying, the argument the
+ * zero-capacity and storage branches already make.
+ */
+function drainBlocker(
+  walk: WalkContext,
+  itemId: ItemId,
+  limitingTarget: string,
+  visited: Set<ItemId>,
+): NonNullable<Bottleneck> {
+  visited.add(itemId);
+  const { content, capacity, state } = walk;
+  for (const consumerId of content.consumersOf.get(itemId) ?? []) {
+    if (!isLiveRecipe(content, consumerId, state.tier, state.activeRecipe)) continue;
+    if ((capacity.unitsByRecipe.get(consumerId) ?? 0) <= 0) {
+      return { kind: "recipe", recipeId: consumerId, limitingTarget, machinesToClear: 1 };
+    }
+    const next = heldOutputOf(walk, consumerId, visited);
+    // Running and nothing downstream is full: it is simply too slow for what it drains.
+    if (next === null) {
+      return { kind: "recipe", recipeId: consumerId, limitingTarget, machinesToClear: 1 };
+    }
+    return drainBlocker(walk, next, limitingTarget, visited);
+  }
+  // Nothing live consumes it -- the vertical slice's `fuel` at tier 6 -- or every
+  // consumer leads back into the walk. Storage is the only purchase that moves it.
+  return {
+    kind: "storage",
+    itemId,
+    limitingTarget,
+    upgrade: cheaperUpgrade(content, state, itemId),
+  };
+}
+
+/**
+ * The trigger, called before any recipe-shaped advice. For each listed recipe in
+ * order, if one of its outputs is held at cap, buying that recipe cannot help -- the
+ * FULL sweep holds it at the drain rate -- so walk forward from that output instead.
+ * Callers list the target item's OWN active recipe before the one they would name:
+ * measured on the fixture gridlock, the waterfall's `limitedBy` for `plastic` is
+ * `extract_oil`, running at clock 1, by the zero-ratio tie-break `resolveBlocker`
+ * documents, and only `refine_plastic` -- the recipe actually making plastic -- shows
+ * the jam.
+ */
+function jamBlocker(
+  walk: WalkContext,
+  recipeIds: readonly (RecipeId | null | undefined)[],
+  limitingTarget: string,
+  visited: Set<ItemId>,
+): Bottleneck {
+  for (const recipeId of recipeIds) {
+    if (recipeId === null || recipeId === undefined) continue;
+    const held = heldOutputOf(walk, recipeId, visited);
+    if (held !== null) return drainBlocker(walk, held, limitingTarget, visited);
+  }
+  return null;
+}
+
 /**
  * What is stopping `itemId`, or null if nothing is.
  *
@@ -107,16 +214,13 @@ function cheaperUpgrade(
  * requirement: an item that returned null once returns null again, so sharing is
  * exact and saves re-walking an item two requirements have in common. The walk no
  * longer recurses into recipe inputs -- see the comment at the bottom of this
- * function for why -- so the guard is currently dormant, not load-bearing. It is
- * kept anyway, at no cost, because ruling R6 keeping the live subgraph acyclic today
- * is a property of content, not a guarantee, should recursion return.
+ * function for why. The gridlock walk (`drainBlocker`) shares the same set, and there
+ * it IS load-bearing: it is what bounds the forward walk at one visit per item, and
+ * what keeps the requirement item itself from ever being walked from.
  */
 function resolveBlocker(
-  content: IndexedContent,
-  capacity: CapacityTable,
+  walk: WalkContext,
   entries: readonly EntryAllocation[],
-  state: WorldState,
-  itemStates: ReadonlyMap<ItemId, ItemStateTag>,
   itemId: ItemId,
   /**
    * The milestone requirement this walk started from. Every blocker reports it as
@@ -130,6 +234,8 @@ function resolveBlocker(
 ): Bottleneck {
   if (visited.has(itemId)) return null;
   visited.add(itemId);
+  const { content, capacity, state, itemStates } = walk;
+  const limitingTarget = `item:${targetId}`;
 
   const recipeId = activeRecipeOf(state.activeRecipe, itemId);
   if (recipeId === undefined) return null;
@@ -142,10 +248,10 @@ function resolveBlocker(
   // at all, and its waterfall entry reports `limitedBy: null`. That is exactly why
   // the priority scan could never name it.
   if ((capacity.unitsByRecipe.get(recipeId) ?? 0) <= 0) {
-    return {
+    return jamBlocker(walk, [recipeId], limitingTarget, visited) ?? {
       kind: "recipe",
       recipeId,
-      limitingTarget: `item:${targetId}`,
+      limitingTarget,
       // One, deliberately, and not from `machinesToClearRecipe`. That function
       // answers "how many machines of `entry.limitedBy`", and for a zero-capacity
       // target `limitedBy` need not name this recipe at all: measured on the fixture
@@ -167,17 +273,21 @@ function resolveBlocker(
     return {
       kind: "storage",
       itemId,
-      limitingTarget: `item:${targetId}`,
+      limitingTarget,
       upgrade: cheaperUpgrade(content, state, itemId),
     };
   }
 
   const entry = entries.find((candidate) => candidate.itemId === itemId);
+  // Before trusting the waterfall's name for this blocker, check that neither the
+  // recipe making the target nor the one about to be named is held by a full output.
+  const jam = jamBlocker(walk, [recipeId, entry?.limitedBy], limitingTarget, visited);
+  if (jam !== null) return jam;
   if (entry !== undefined && entry.limitedBy !== null) {
     return {
       kind: "recipe",
       recipeId: entry.limitedBy,
-      limitingTarget: `item:${targetId}`,
+      limitingTarget,
       machinesToClear: machinesToClearRecipe(capacity, entry),
     };
   }
@@ -202,10 +312,12 @@ export function computeBottleneck(
   power: PowerReport,
   state: WorldState,
   itemStates: ReadonlyMap<ItemId, ItemStateTag>,
+  itemRates: ReadonlyMap<ItemId, ItemFlow>,
 ): Bottleneck {
   const tier = state.tier;
   const activeRecipe = state.activeRecipe;
   const firstLimited = entries.find((entry) => entry.limitedBy !== null) ?? null;
+  const walk: WalkContext = { content, capacity, state, itemStates, itemRates };
 
   // Spec 4.5: when the grid is what binds, the bottleneck surfaces on the power bar
   // with a generator purchase instead of a recipe.
@@ -269,10 +381,7 @@ export function computeBottleneck(
     for (const requirement of nextMilestone.requires) {
       // Ruling R7 pays deliveries from liquid stock, so liquid is the right measure.
       if (liquid(state, requirement.item).gte(requirement.amount)) continue;
-      const blocker = resolveBlocker(
-        content, capacity, entries, state, itemStates,
-        requirement.item, requirement.item, visited,
-      );
+      const blocker = resolveBlocker(walk, entries, requirement.item, requirement.item, visited);
       if (blocker !== null) return blocker;
     }
   }
