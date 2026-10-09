@@ -216,6 +216,35 @@ export function computeBottleneck(
         ? generatorId
         : null;
 
+    // A generator that is installed but starved is not short of generators. Measured
+    // on the vertical slice: `bottleneck` stalled at tier 6 owning 77 biomass burners
+    // and zero collectors, every burner at clock 0, because this branch always named
+    // the generator -- while the power entry's waterfall row already said
+    // `limitedBy: collect_biomass`. Only when the generator has capacity: with none,
+    // the generator IS what is missing, and naming its fuel chain would be naming the
+    // wrong half of the purchase.
+    const powerEntry = entries.find((entry) => entry.itemId === POWER_ITEM);
+    if (
+      live !== null &&
+      (capacity.unitsByRecipe.get(live) ?? 0) > 0 &&
+      powerEntry?.limitedBy != null &&
+      powerEntry.limitedBy !== live
+    ) {
+      const starvedBy = powerEntry.limitedBy;
+      return {
+        kind: "recipe",
+        recipeId: starvedBy,
+        limitingTarget: powerEntry.entryId,
+        // Zero capacity reads as one machine, for resolveBlocker's reason: the
+        // shortfall arithmetic answers for `limitedBy`'s own capacity, and with none
+        // the honest minimum is one and a re-solve after buying.
+        machinesToClear:
+          (capacity.unitsByRecipe.get(starvedBy) ?? 0) > 0
+            ? machinesToClearRecipe(capacity, powerEntry)
+            : 1,
+      };
+    }
+
     let machines = 0;
     if (live !== null) {
       const perUnitMw = content.recipes.get(live)!.outputPerSecond.get(POWER_ITEM) ?? 0;

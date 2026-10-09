@@ -226,6 +226,21 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 ## What is left
 
 **1. `bottleneck`'s tier-6 stall — still the biggest open item, now a different shape.**
+
+> **Investigated 2026-10-09; three causes, in the order they bite.** (1) The power branch
+> always named the generator: `bottleneck` owned 77 biomass burners and zero collectors.
+> FIXED -- a starved generator now names what starves it. (2) The oil lane gridlocks:
+> `fuel` has no consumer at tier 6, so residue fills and the FULL sweep holds both
+> refineries at zero while the reporter keeps naming `refine_rubber` (50 refineries
+> bought). Designed in `specs/2026-10-09-byproduct-gridlock-design.md` -- the forward
+> walk, part (B). (3) Content part (A): give `fuel` a sink at tier 6 by moving
+> `burn_fuel` / `fuel_generator` down from tier 7, and teach the validator to check
+> byproduct sinks transitively (check 5 stops one hop short). **(A) needs an engine
+> change first:** `activeRecipe` is keyed by primary output and every generator's is
+> `__power__`, so only ONE generator recipe is ever live -- unlocking fuel generators at
+> tier 6 gives fuel no sink while the grid runs `burn_biomass`. Generator types must run
+> side by side; that is the first item in (A)'s spec, not yet written. The text below
+> predates this investigation.
 The milestone-aware reporter (tasks 1-3) fixed the tier-1 advice failure described in
 earlier versions of this doc: the reporter no longer optimises the top-priority item's
 throughput irrespective of what blocks the milestone. `bottleneck` now reaches tier 6 of
@@ -373,6 +388,23 @@ policy is essentially "budget minus time-to-stall". Whatever budget the per-poli
 picks, `bottleneck`'s dead time has to be re-pinned against it, and the pin's `why` should
 say that the number is budget-relative. Pinning it as though it were a measured property of
 the content would be pinning an artifact.
+
+**Run independent simulations in parallel — do this together with the per-policy budget.**
+Queued 2026-10-09. Nothing in `apps/sim` uses workers or child processes today, so every
+gate and calibration run is serial on one core (the dev machine has 16). A single run
+cannot be parallelised -- each step depends on the state the last one produced -- but the
+runs themselves are independent:
+
+- **Gate:** the policy runs (greedy twice, casual, bottleneck) are self-contained calls to
+  `runSimulation`, and the rules in `gate.ts` are already a pure function over the
+  collected `RunReport`s. Running them concurrently makes the gate cost its slowest run
+  rather than the sum. Determinism must survive: the greedy-twice divergence check has to
+  compare two genuinely separate runs, not one shared result.
+- **Calibration:** candidates within one tier's search are independent and can fan out;
+  tiers cannot, because tier k resumes from tier k-1's checkpoint.
+- CI runners have few cores, so the win is mostly local; size the pool from
+  `os.availableParallelism()` rather than hard-coding it.
+- GPU and RAM do not help: the work is branchy decimal arithmetic, CPU-bound per run.
 
 ## Working rules learned the hard way
 

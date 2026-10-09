@@ -101,6 +101,34 @@ describe("solve — power equilibrium (spec C.4)", () => {
     expect(bottleneck.machinesToClear).toBe(1);
   });
 
+  // Measured 2026-10-09 on the vertical slice: `bottleneck` stalled at tier 6 owning
+  // 77 biomass burners and zero collectors, every burner at clock 0, because this
+  // branch always named the generator. The waterfall's power entry already said
+  // `limitedBy: collect_biomass`; the reporter never read it.
+  it("names what starves an installed generator, not another generator", () => {
+    let w = brownout(3);
+    w = withInstalled(w, "oil", "generator", 1, 1);
+    w = { ...w, assignment: { ...w.assignment, burn_fuel: 1 } };
+    const sol = solve(w, content, NO_FLOOR);
+    // Preconditions: a real brownout, a generator that has capacity, and a waterfall
+    // that blames something other than the generator for the shortfall.
+    expect(sol.power.ratio).toBeLessThan(1);
+    expect(sol.capacity.unitsByRecipe.get("burn_fuel") ?? 0).toBeGreaterThan(0);
+    const powerEntry = sol.entries.find((entry) => entry.entryId === "power")!;
+    expect(powerEntry.limitedBy).not.toBeNull();
+    expect(powerEntry.limitedBy).not.toBe("burn_fuel");
+
+    expect(sol.bottleneck).toEqual({
+      kind: "recipe",
+      recipeId: powerEntry.limitedBy,
+      // Still the power bar: the advice reads "this is what is browning the grid".
+      limitingTarget: "power",
+      // The fuel chain has no machines at all, so one is the honest minimum -- the
+      // same argument resolveBlocker makes for a zero-capacity milestone recipe.
+      machinesToClear: 1,
+    });
+  });
+
   it("reports no generator to buy when none is unlocked", () => {
     const sol = solve(brownout(0), content, NO_FLOOR);
     const bottleneck = sol.bottleneck;
