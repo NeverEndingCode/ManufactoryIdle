@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { SLICE_BUNDLE_DIR, loadContent } from "./bootstrap.js";
 import { POLICY_NAMES } from "./policies.js";
-import { authoredREff, formatReport, observedREff } from "./report.js";
-import { runSimulation } from "./run.js";
+import { authoredREff, formatReport, observedREff, progressPrinter } from "./report.js";
+import { runSimulation, type RunProgress } from "./run.js";
 
 const content = loadContent();
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -128,6 +128,40 @@ describe("runSimulation", () => {
     expect(b.tierTimes).toEqual(a.tierTimes);
     expect(b.purchases).toBe(a.purchases);
     expect(b.simulatedMs).toBe(a.simulatedMs);
+  });
+
+  it("reports progress as it goes, without changing the run", () => {
+    const options = {
+      policy: "greedy" as const,
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    };
+    const events: RunProgress[] = [];
+    const watched = runSimulation({ ...options, onProgress: (event) => events.push(event) });
+    const plain = runSimulation(options);
+
+    // Watching is read-only: a callback that perturbed the run would make every slow
+    // run a different run from the one it is reporting on.
+    expect(watched.tierTimes).toEqual(plain.tierTimes);
+    expect(watched.purchases).toBe(plain.purchases);
+
+    // One tier event per tier unlocked, in order, at the times the report records.
+    const tiers = events.filter((event) => event.kind === "tier");
+    expect(tiers.map((event) => event.tier)).toEqual(plain.tierTimes.map((mark) => mark.tier));
+    expect(tiers.map((event) => event.collections)).toEqual(
+      plain.tierTimes.map((mark) => mark.collections),
+    );
+
+    // A step event per simulated interval, so a stalled run still shows signs of life,
+    // with a clock that only moves forward and ends where the report does.
+    const steps = events.filter((event) => event.kind === "step");
+    expect(steps.length).toBeGreaterThan(tiers.length);
+    for (let i = 1; i < steps.length; i += 1) {
+      expect(steps[i]!.collections).toBeGreaterThan(steps[i - 1]!.collections);
+    }
+    expect(steps.at(-1)!.collections).toBeCloseTo(plain.collections, 9);
+    expect(steps.at(-1)!.purchases).toBe(plain.purchases);
   });
 
   it("casual buys nothing before its first check-in", () => {
@@ -283,4 +317,40 @@ describe("what counts as a purchase", () => {
     expect(report.purchases).toBeGreaterThan(0);
     expect(machinesBought).toBeGreaterThan(0);
   }, 60_000);
+});
+
+describe("progressPrinter", () => {
+  it("prints every tier, and throttles steps to one per interval of wall clock", () => {
+    const lines: string[] = [];
+    let now = 0;
+    const print = progressPrinter("greedy", (line) => lines.push(line), {
+      now: () => now,
+      everyMs: 10_000,
+    });
+    const step = (collections: number) =>
+      print({ kind: "step", tier: 1, collections, purchases: 3, bound: "make_screw" });
+
+    step(0.1); // the first step prints, so a run shows life at once
+    now = 5_000;
+    step(0.2); // inside the interval: suppressed
+    print({ kind: "tier", tier: 2, collections: 0.25, purchases: 4 }); // tiers always print
+    now = 10_000;
+    step(0.3);
+
+    expect(lines).toEqual([
+      "[greedy 0s] tier 1 · 0.1000 colls · 3 buys · bound make_screw",
+      "[greedy 5s] reached tier 2 at 0.2500 colls · 4 buys",
+      "[greedy 10s] tier 1 · 0.3000 colls · 3 buys · bound make_screw",
+    ]);
+  });
+
+  it("formats elapsed time past a minute as minutes and seconds", () => {
+    const lines: string[] = [];
+    const print = progressPrinter("bottleneck", (line) => lines.push(line), {
+      now: () => 134_000,
+      startedAt: 0,
+    });
+    print({ kind: "tier", tier: 6, collections: 1.2143, purchases: 146 });
+    expect(lines).toEqual(["[bottleneck 2m14s] reached tier 6 at 1.2143 colls · 146 buys"]);
+  });
 });

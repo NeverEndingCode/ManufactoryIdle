@@ -17,7 +17,7 @@ import { loadBundleDir } from "@manufactory/content";
 import { indexContent, type ContentBundle } from "@manufactory/engine";
 import { SLICE_BUNDLE_DIR } from "./bootstrap.js";
 import { DEFAULT_THRESHOLDS, compareRuns, evaluateGate, type PolicyGate } from "./gate.js";
-import type { RunReport } from "./report.js";
+import { progressPrinter, type RunReport } from "./report.js";
 import { runSimulation } from "./run.js";
 
 /**
@@ -190,6 +190,9 @@ export function runGate(options: GateCliOptions): number {
         content,
         untilTier: gate.untilTier,
         maxSimMs,
+        // To stderr, so a forty-minute gate shows signs of life without touching the
+        // table or the --emit-pins block on stdout.
+        onProgress: progressPrinter(gate.policy, (line) => stderr.write(`${line}\n`)),
       }),
     );
     timings.push(`${gate.policy} ${((Date.now() - started) / 1000).toFixed(1)}s`);
@@ -206,6 +209,9 @@ export function runGate(options: GateCliOptions): number {
     content,
     untilTier: deepest,
     maxSimMs,
+    onProgress: progressPrinter("greedy (determinism rerun)", (line) =>
+      stderr.write(`${line}\n`),
+    ),
   });
   const divergence = compareRuns(first, second);
 

@@ -7,7 +7,7 @@
 import { parseArgs } from "node:util";
 import { argv, exit, stderr, stdout } from "node:process";
 import { POLICY_NAMES, type PolicyName } from "./policies.js";
-import { formatReport } from "./report.js";
+import { formatReport, progressPrinter } from "./report.js";
 import { runSimulation } from "./run.js";
 
 const USAGE = `usage:
@@ -117,6 +117,9 @@ async function main(): Promise<number> {
     seed: Number(values.seed),
     untilTier: parseUntilTier(values.until),
     maxSimMs: Number(values["max-days"]) * 24 * 60 * 60 * 1000,
+    // Progress goes to stderr so that stdout stays the report, and `--report json`
+    // still pipes cleanly.
+    onProgress: progressPrinter(policy, (line) => stderr.write(`${line}\n`)),
   });
 
   stdout.write(

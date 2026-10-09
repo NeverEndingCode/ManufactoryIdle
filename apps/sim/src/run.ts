@@ -49,7 +49,23 @@ export interface RunOptions {
   startFrom?: RunCheckpoint;
   /** Keep a world state per tier unlocked, so a later run can resume from one. */
   captureCheckpoints?: boolean;
+  /**
+   * Called as the run goes. A long run prints nothing until it finishes otherwise, and
+   * a stalled policy is indistinguishable from a slow one. Read-only: the callback sees
+   * the run, it never steers it.
+   */
+  onProgress?: (event: RunProgress) => void;
 }
+
+/**
+ * `step` fires once per simulated interval, so it is far too frequent to print raw;
+ * the CLI throttles it by wall clock. `tier` fires once per tier, at the time the
+ * report will record for it. `bound` is the binding constraint over the interval just
+ * simulated, keyed the way `bindingConstraints` keys it, or null when nothing binds.
+ */
+export type RunProgress =
+  | { kind: "step"; tier: number; collections: number; purchases: number; bound: string | null }
+  | { kind: "tier"; tier: number; collections: number; purchases: number };
 
 interface ClassSlot {
   lane: LaneId;
@@ -118,17 +134,18 @@ export function runSimulation(options: RunOptions): RunReport {
     );
     if (stepMs <= 0) break;
 
+    let bound: string | null = null;
     if (settled.bottleneck !== null) {
       const bottleneck = settled.bottleneck;
       // Storage-bound time is reported under the item rather than a recipe: time
       // spent at cap is not time a machine purchase would have shortened.
-      const id =
+      bound =
         bottleneck.kind === "recipe"
           ? bottleneck.recipeId
           : bottleneck.kind === "storage"
             ? `storage:${bottleneck.itemId}`
             : `power:${bottleneck.generatorRecipeId ?? "none"}`;
-      boundMsByRecipe.set(id, (boundMsByRecipe.get(id) ?? 0) + stepMs);
+      boundMsByRecipe.set(bound, (boundMsByRecipe.get(bound) ?? 0) + stepMs);
     }
 
     const advanced = resolve(state, content, stepMs);
@@ -138,13 +155,22 @@ export function runSimulation(options: RunOptions): RunReport {
     for (const tier of advanced.summary.tiersUnlocked) {
       const event = advanced.events.find((e) => e.kind === "milestone" && e.tier === tier);
       const atMs = event?.atMs ?? nowMs;
-      tierTimes.push({ tier, atMs, collections: atMs / content.offlineCapMs });
+      const collections = atMs / content.offlineCapMs;
+      tierTimes.push({ tier, atMs, collections });
+      options.onProgress?.({ kind: "tier", tier, collections, purchases });
       markEvent(atMs);
       // The state AFTER the resolve that unlocked the tier, and the clock after it
       // too. Resuming mid-step would replay part of an interval whose length was
       // already decided, which is the one thing that would make this inexact.
       if (options.captureCheckpoints === true) checkpoints.push({ tier, state, nowMs });
     }
+    options.onProgress?.({
+      kind: "step",
+      tier: state.tier,
+      collections: nowMs / content.offlineCapMs,
+      purchases,
+      bound,
+    });
   }
   markEvent(nowMs);
 
