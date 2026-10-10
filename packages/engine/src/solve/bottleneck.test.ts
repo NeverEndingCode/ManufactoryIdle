@@ -567,8 +567,8 @@ describe("the gridlock walk", () => {
 describe("payable advice", () => {
   // Measured 2026-10-10 on the vertical slice: `bottleneck` stalled at tier 7 told to
   // buy a Quantum Storage level costing 4,473 iron_plate while iron_plate could hold
-  // 4,000. Purchases are paid from liquid stock (ruling R7), so that advice could never
-  // be followed. One iron_plate storage level, 90, was the way out.
+  // 4,000. Builds spend bound, then quantum, then stored, and bound was empty, so only
+  // the liquid cap bounded what could be held and that advice could never be followed. One iron_plate storage level, 90, was the way out.
   //
   // Fixture numbers these tests stand on: iron_plate's liquid cap is 1,500 at storage
   // and QS level 0; storage levels cost 50 * 1.5^L iron_plate, Quantum Storage levels
@@ -628,6 +628,27 @@ describe("payable advice", () => {
       // Still "what is stopping your plastic".
       limitingTarget: "item:plastic",
       upgrade: "storage",
+    });
+  });
+
+  it("counts bound stock the player already holds", () => {
+    // Builds spend bound first, and bound is uncapped (dismantle and upgrade refunds),
+    // so 1,500 liquid + 1,000 bound covers a level the liquid cap alone could not.
+    const c = variant({});
+    let w = withLevels(oilWorld(c), { plastic: 9 }, { oil: 3 });
+    w = atCap(w, "plastic");
+    w = { ...w, bound: { ...w.bound, iron_plate: D(1000) } };
+    const ironCap = liquidCap(c, w, "iron_plate").toNumber();
+    const qs = cost(levelCostRange(c.bundle.quantumStorage, 3, 1), "iron_plate");
+    expect(ironCap).toBe(1500);
+    expect(qs).toBeGreaterThan(ironCap);
+    expect(qs).toBeLessThanOrEqual(ironCap + 1000);
+
+    expect(solve(w, c, NO_FLOOR).bottleneck).toEqual({
+      kind: "storage",
+      itemId: "plastic",
+      limitingTarget: "item:plastic",
+      upgrade: "quantum",
     });
   });
 

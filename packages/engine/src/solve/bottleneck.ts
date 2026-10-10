@@ -10,7 +10,8 @@
 // already recorded the runner-up ratio, so no second solve is needed.
 //
 // Every answer is then priced, and one that can never be paid for -- a cost above its
-// item's liquid cap -- becomes storage advice for that payer.
+// item's liquid cap plus the bound stock already held -- becomes storage advice for
+// that payer.
 import { POWER_ITEM, type ItemId, type RecipeId } from "../content/types.js";
 import { isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
 import { bestUnlockedMark, type CapacityTable } from "../economy/capacity.js";
@@ -34,7 +35,10 @@ export type Bottleneck =
   // reporter fell through to the recipe it could name -- telling a player at cap,
   // with production at zero, to buy another machine. `upgrade` is null only when
   // both curves are maxed, which is the permanent wall validator check 9 exists to
-  // make unreachable; saying so beats inventing a purchase that cannot be made.
+  // make unreachable, or when no storage purchase for `itemId` can ever be paid for
+  // (the payer chain dead-ends); saying so beats inventing a purchase that cannot be
+  // made. `itemId` may be a payer rather than the limiting item: compare it with
+  // `limitingTarget`.
   | { kind: "storage"; itemId: ItemId; limitingTarget: string; upgrade: StorageUpgrade | null }
   | null;
 
@@ -75,17 +79,20 @@ function levelOf(record: Readonly<Record<string, number>>, key: string): number 
 /**
  * The first item in `costs` -- in the map's order, which is the curve's or the mark's
  * authored order -- whose amount is more than that item can ever be held, or null if
- * every one fits. Its liquid cap, not its stock: ruling R7 pays from liquid stock, so
- * waiting fixes a shortfall of stock and only storage fixes a cap. `>` and not `>=`: a
- * player holding exactly the cost can pay it.
+ * every one fits. Its liquid cap plus its bound stock, not its stock: a build spends
+ * bound, then quantum, then stored, and bound is uncapped but never refills, so waiting
+ * fixes a shortfall of stock and only storage fixes a cap. (Ruling R7's liquid-only rule
+ * covers milestone deliveries, not builds.) `>` and not `>=`: a player holding exactly
+ * the cost can pay it.
  */
-export function overflowingPayer(
+function overflowingPayer(
   content: IndexedContent,
   state: WorldState,
   costs: ReadonlyMap<ItemId, Dec>,
 ): ItemId | null {
   for (const [itemId, amount] of costs) {
-    if (amount.gt(liquidCap(content, state, itemId))) return itemId;
+    const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
+    if (amount.gt(liquidCap(content, state, itemId).plus(bound))) return itemId;
   }
   return null;
 }
@@ -110,7 +117,7 @@ function upgradeCost(
  * caller re-solves after buying, so an iterative honest answer beats quoting a
  * "levels to clear" count derived from the same 10%-lift heuristic that produced the
  * bad machine advice in the first place. Of the open curves, one whose next level fits
- * under its cost item's liquid cap is preferred over one that never can.
+ * under its cost item's liquid cap plus bound stock is preferred over one that never can.
  */
 function cheaperUpgrade(
   content: IndexedContent,

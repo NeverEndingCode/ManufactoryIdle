@@ -25,8 +25,10 @@ collections and is cut off for dead time after 2.004 collections with nothing bo
 | `iron_plate` liquid cap | **4,000** (FULL) |
 | `iron_plate`'s own next storage level (L1) | **90 `iron_plate`** |
 
-Ruling R7 pays every purchase from liquid stock, so a purchase costing more of an item
-than that item's liquid cap can **never** be made, however long the player waits.
+A build spends bound stock, then quantum, then stored (R7's liquid-only rule covers
+milestone deliveries only), and bound is uncapped but never refills. So a purchase
+costing more of an item than that item's liquid cap plus the bound stock already held
+can **never** be made, however long the player waits.
 Neither upgrade the reporter can name for `packaged_fuel` fits under 4,000. The policy
 correctly declines what it cannot afford, goes idle, and is cut off. `modular_frame` is
 in the same shape: FULL at 3,377 against a requirement of 51,200, its upgrades paid in
@@ -167,7 +169,8 @@ To be added to `2026-09-01-engine-core-design.md` after the 2026-10-09 amendment
 > **Amended 2026-10-10 (Phase 2): advice must be payable.** Before returning, the reporter
 > prices the purchase its answer implies -- a storage level, a Quantum Storage level, or
 > one machine at the best unlocked mark. If any cost item's amount exceeds that item's
-> liquid cap, the purchase can never be made (ruling R7 pays from liquid stock), so the
+> liquid cap plus held bound stock, the purchase can never be made (builds spend bound,
+> then quantum, then stored; only bound + liquid cap bounds a cost), so the
 > reporter names storage for that payer instead, priced the same way, ending at
 > `upgrade: null` only when nothing fits. Measured cause: `bottleneck` stalled at tier 7
 > of the vertical slice advised to buy a Quantum Storage level costing 4,473 `iron_plate`

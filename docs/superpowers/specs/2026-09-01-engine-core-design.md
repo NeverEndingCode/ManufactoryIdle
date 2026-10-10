@@ -731,7 +731,8 @@ checked before its capacity. See `specs/2026-10-09-byproduct-gridlock-design.md`
 **Amended 2026-10-10 (Phase 2): advice must be payable.** Before returning, the reporter
 prices the purchase its answer implies -- a storage level, a Quantum Storage level, or
 one machine at the best unlocked mark. If any cost item's amount exceeds that item's
-liquid cap, the purchase can never be made (ruling R7 pays from liquid stock), so the
+liquid cap plus held bound stock, the purchase can never be made (builds spend bound,
+then quantum, then stored; only bound + liquid cap bounds a cost), so the
 reporter names storage for that payer instead, priced the same way, ending at
 `upgrade: null` only when nothing fits. Measured cause: `bottleneck` stalled at tier 7
 of the vertical slice advised to buy a Quantum Storage level costing 4,473 `iron_plate`
