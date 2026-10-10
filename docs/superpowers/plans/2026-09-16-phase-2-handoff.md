@@ -227,7 +227,7 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. `bottleneck`'s tier-6 stall — still the biggest open item, now a different shape.**
+**1. `bottleneck` passes tier 6 and now stalls at tier 7 (was: the tier-6 stall).**
 
 > **Investigated 2026-10-09; three causes, in the order they bite.** (1) The power branch
 > always named the generator: `bottleneck` owned 77 biomass burners and zero collectors.
@@ -251,7 +251,8 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 > tier 6 gives fuel no sink while the grid runs `burn_biomass`. Generator types must run
 > side by side; that is the first item in (A)'s spec, not yet written. The text below
 > predates this investigation.
-> Superseded 2026-10-09: see item 1's blockquote -- `bottleneck` now passes tier 6 and stalls at tier 7.
+
+The paragraphs below predate the 2026-10-09 investigation.
 
 The milestone-aware reporter (tasks 1-3) fixed the tier-1 advice failure described in
 earlier versions of this doc: the reporter no longer optimises the top-priority item's
@@ -370,7 +371,12 @@ rediscovered as new.**
   reporter instead of a blocker. No automated policy emits pause today, so this is
   human-CLI-only, not something the pacing gate can hit.
 - **CLOSED 2026-10-09** by the gridlock walk, which checks every output of the recipe it
-  would name. **The milestone branch checks FULL on the requirement item only, not on the output
+  would name. In the cable / `make_wire` example below it now answers `make_cable`, the
+  drain for `wire`, and storage for `wire` only if nothing live consumes it. Pinned by
+  the test "checks the recipe it is about to name" in
+  `packages/engine/src/solve/bottleneck.test.ts`.
+
+  Original text, kept as history: **the milestone branch checks FULL on the requirement item only, not on the output
   of the recipe it names — pre-existing, not introduced by this change.** A milestone
   needing `cable`, limited by `make_wire`, with `wire` itself at cap, yields "buy N
   more wire machines" when the real answer is a storage level for `wire`. The old

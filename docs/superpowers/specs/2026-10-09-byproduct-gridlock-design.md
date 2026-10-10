@@ -1,7 +1,7 @@
 # Byproduct-gridlock-aware bottleneck reporting
 
 **Amends:** spec §4.5 (bottleneck as first-class solver output).
-**Status:** design, approved 2026-10-09. Not yet implemented.
+**Status:** implemented 2026-10-09 (commits 2452067 onward).
 **Branch:** `worktree-phase-2-content`.
 **Companion work, specced separately:** (A) give `fuel` a sink at tier 6 and teach the
 validator to check sinks transitively. This document is (B), the reporter half, and is
@@ -210,7 +210,9 @@ preconditions first, as the existing bottleneck tests do:
 3. **A sink that cannot keep up.** The consumer installed, nothing downstream FULL ->
    `recipe <consumer>, machinesToClear: 1`.
 4. **A FULL primary output** (handoff 8b). A requirement limited by a recipe whose own
-   primary output is FULL -> storage for that output, not more of that recipe's machines.
+   output is held at cap -> the walk names that output's drain (its live consumer), or
+   storage for the output only when nothing live consumes it; never more of that
+   recipe's machines. Pinned by the test "checks the recipe it is about to name".
 5. **The healthy case.** No FULL outputs -> the existing advice, unchanged.
 6. **Real content.** The existing "terminates at every tier of the vertical slice" test
    still passes.
