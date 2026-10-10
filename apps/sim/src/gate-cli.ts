@@ -12,13 +12,15 @@
 // `--emit-pins` prints a paste-ready config from the current measurements. Re-pinning
 // after a calibration run is otherwise a hand-transcription job, and a gate that is
 // annoying to update is a gate that gets deleted.
+import { availableParallelism } from "node:os";
 import { stderr, stdout } from "node:process";
+import { Worker } from "node:worker_threads";
 import { loadBundleDir } from "@manufactory/content";
 import { indexContent, type ContentBundle } from "@manufactory/engine";
 import { SLICE_BUNDLE_DIR } from "./bootstrap.js";
 import { DEFAULT_THRESHOLDS, compareRuns, evaluateGate, type PolicyGate } from "./gate.js";
-import { progressPrinter, type RunReport } from "./report.js";
-import { runSimulation } from "./run.js";
+import type { GateJob } from "./gate-worker.js";
+import type { RunReport } from "./report.js";
 
 /**
  * What the vertical slice does TODAY, and where that is not what spec E.5 asks for.
@@ -133,14 +135,6 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "reaches all 10.",
       },
     ],
-    deadTimePin: {
-      collections: 356.3315,
-      why:
-        "the policy stalls at tier 6 (binding constraints refine_rubber and " +
-        "power:burn_biomass) rather than tier 1 as before, so dead time is now " +
-        "measuring the NEW stall, not the old one. It goes away only when the tier-6 " +
-        "advice defect is fixed, same as the old pin did for tier 1.",
-    },
   },
 ];
 
@@ -166,12 +160,55 @@ export interface GateCliOptions {
 
 const SMOKE_TIER = 4;
 
-export function runGate(options: GateCliOptions): number {
+/** One run in its own worker thread; resolves with its report. */
+function runInWorker(job: GateJob): Promise<RunReport> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./gate-worker.ts", import.meta.url), { workerData: job });
+    worker.once("message", (report: RunReport) => resolve(report));
+    worker.once("error", reject);
+    worker.once("exit", (code) => {
+      if (code !== 0) reject(new Error(`${job.label}: worker exited with code ${code}`));
+    });
+  });
+}
+
+/**
+ * Runs every job with at most `limit` in flight, and returns the results in JOB order
+ * rather than completion order, so the table and the judging are what a serial gate
+ * would have produced.
+ */
+async function runAll(
+  jobs: readonly GateJob[],
+  limit: number,
+): Promise<{ reports: RunReport[]; seconds: number[] }> {
+  const reports: RunReport[] = new Array(jobs.length);
+  const seconds: number[] = new Array(jobs.length);
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < jobs.length) {
+      const index = next;
+      next += 1;
+      const started = Date.now();
+      reports[index] = await runInWorker(jobs[index]!);
+      seconds[index] = (Date.now() - started) / 1000;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, lane));
+  return { reports, seconds };
+}
+
+export async function runGate(options: GateCliOptions): Promise<number> {
   const dir = options.contentDir ?? SLICE_BUNDLE_DIR;
   const bundle = loadBundleDir(dir);
   const content = indexContent(bundle as ContentBundle);
   const targets = bundle.pacing.targetCollectionsToTier;
   const maxSimMs = options.maxDays * 24 * 60 * 60 * 1000;
+  // A run that has gone longer than the dead-time threshold with nothing bought or
+  // unlocked has already failed that check -- or, for a policy pinned by
+  // `reachesTier`, has shown exactly what its pin asserts. Simulating the rest of the
+  // budget teaches nothing and, measured 2026-10-09, would have cost `bottleneck`
+  // ~250 hours. So the gate stops it there.
+  const stopWhenDeadMs = DEFAULT_THRESHOLDS.maxDeadTimeCollections * content.offlineCapMs;
 
   // The smoke gate runs one policy, shallow, and holds it to its targets with no pins:
   // every tier it touches is green today, so a pin here would be a pin on nothing.
@@ -179,40 +216,22 @@ export function runGate(options: GateCliOptions): number {
     ? [{ policy: "greedy", untilTier: SMOKE_TIER, knownRed: [] }]
     : VERTICAL_SLICE_GATE;
 
-  const reports: RunReport[] = [];
-  const timings: string[] = [];
-  for (const gate of gates) {
-    const started = Date.now();
-    reports.push(
-      runSimulation({
-        policy: gate.policy,
-        seed: options.seed,
-        content,
-        untilTier: gate.untilTier,
-        maxSimMs,
-        // To stderr, so a forty-minute gate shows signs of life without touching the
-        // table or the --emit-pins block on stdout.
-        onProgress: progressPrinter(gate.policy, (line) => stderr.write(`${line}\n`)),
-      }),
-    );
-    timings.push(`${gate.policy} ${((Date.now() - started) / 1000).toFixed(1)}s`);
-  }
-
   // Determinism (spec E.4) at the gate's own depth, not a shallower one: divergence is
   // a libm hazard and libm is reached at LARGE magnitudes, so checking only the shallow
-  // end would be checking the regime that cannot fail.
+  // end would be checking the regime that cannot fail. The rerun is its own job, in
+  // its own thread, so the comparison is between two genuinely separate runs.
   const deepest = gates.reduce((a, g) => Math.max(a, g.untilTier), 0);
+  const base = { contentDir: dir, seed: options.seed, maxSimMs, stopWhenDeadMs };
+  const jobs: GateJob[] = [
+    ...gates.map((gate) => ({ ...base, label: gate.policy, policy: gate.policy, untilTier: gate.untilTier })),
+    { ...base, label: "greedy (determinism rerun)", policy: "greedy", untilTier: deepest },
+  ];
+  const { reports: all, seconds } = await runAll(jobs, availableParallelism());
+  const reports = all.slice(0, gates.length);
+  const second = all[gates.length]!;
+  const timings = jobs.map((job, i) => `${job.label} ${seconds[i]!.toFixed(1)}s`);
+
   const first = reports.find((r) => r.policy === "greedy")!;
-  const second = runSimulation({
-    policy: "greedy",
-    seed: options.seed,
-    content,
-    untilTier: deepest,
-    maxSimMs,
-    onProgress: progressPrinter("greedy (determinism rerun)", (line) =>
-      stderr.write(`${line}\n`),
-    ),
-  });
   const divergence = compareRuns(first, second);
 
   if (options.emitPins) {
@@ -279,7 +298,8 @@ function formatTable(
 function formatPins(reports: readonly RunReport[], offlineCapMs: number): string {
   const lines = ["// measured " + new Date().toISOString(), ""];
   for (const report of reports) {
-    lines.push(`// ${report.policy}: reached tier ${report.reachedTier}, dead ${(report.maxDeadTimeMs / offlineCapMs).toFixed(4)} collections`);
+    const stop = report.stalled ? `stalled at tier ${report.reachedTier} -- pin with reachesTier: ${report.reachedTier}` : `reached tier ${report.reachedTier}`;
+    lines.push(`// ${report.policy}: ${stop}, dead ${(report.maxDeadTimeMs / offlineCapMs).toFixed(4)} collections`);
     for (const mark of report.tierTimes) {
       lines.push(`{ tier: ${mark.tier}, observed: ${mark.collections.toFixed(4)}, why: "..." },`);
     }

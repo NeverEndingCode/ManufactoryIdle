@@ -72,15 +72,11 @@ export interface PolicyGate {
   /**
    * Set when the policy cannot reach `untilTier` at all today. The gate then requires
    * it to reach EXACTLY this tier: getting further is a `stale-pin`, not a pass, so an
-   * accidental improvement is reported rather than absorbed.
+   * accidental improvement is reported rather than absorbed. A run that stalls (is cut
+   * off for dead time) at exactly this tier is the expected outcome, not a dead-time
+   * failure.
    */
   reachesTier?: number;
-  /**
-   * Dead time pinned to what this policy really produces, for a policy already known to
-   * be broken. Same contract as `knownRed`: still asserted, drift still caught, and it
-   * goes stale loudly once the policy comes back under the threshold.
-   */
-  deadTimePin?: { collections: number; why: string };
 }
 
 export interface GateInput {
@@ -173,33 +169,26 @@ export function evaluateGate(input: GateInput): Finding[] {
       }
     }
 
-    // 3. Dead time (spec 16.6).
+    // 3. Dead time (spec 16.6). A stalled run was cut off the moment its dead time
+    //    passed the threshold, so its dead time is the cut-off by construction --
+    //    pinning that number would pin an artifact of the cut-off, not a property of
+    //    the content. What a known-broken policy pins is WHERE it stalls:
+    //    `reachesTier`. Anywhere else, a stall is the dead-time failure itself.
     const deadCollections = report.maxDeadTimeMs / input.offlineCapMs;
-    if (Number.isFinite(deadCollections)) {
-      const pin = gate.deadTimePin;
-      if (pin === undefined) {
-        if (deadCollections > t.maxDeadTimeCollections) {
-          add(
-            "dead-time",
-            `max dead time ${deadCollections.toFixed(3)} collections, over the ` +
-              `${t.maxDeadTimeCollections} threshold`,
-          );
-        }
-      } else if (deadCollections <= t.maxDeadTimeCollections) {
+    if (report.stalled) {
+      if (gate.reachesTier === undefined || report.reachedTier !== gate.reachesTier) {
         add(
-          "stale-pin",
-          `dead time is pinned at ${pin.collections} collections but now measures ` +
-            `${deadCollections.toFixed(3)}, under the ${t.maxDeadTimeCollections} ` +
-            `threshold -- delete the pin`,
-        );
-      } else if (Math.abs(deadCollections - pin.collections) > t.driftTolerance * pin.collections) {
-        add(
-          "known-red-drift",
-          `max dead time ${deadCollections.toFixed(3)} collections has drifted off its ` +
-            `pin ${pin.collections} (${pct(deadCollections, pin.collections)}). ` +
-            `Pinned because: ${pin.why}`,
+          "dead-time",
+          `stalled at tier ${report.reachedTier}: nothing bought or unlocked for over ` +
+            `${t.maxDeadTimeCollections} collections`,
         );
       }
+    } else if (Number.isFinite(deadCollections) && deadCollections > t.maxDeadTimeCollections) {
+      add(
+        "dead-time",
+        `max dead time ${deadCollections.toFixed(3)} collections, over the ` +
+          `${t.maxDeadTimeCollections} threshold`,
+      );
     }
 
     // 4. Observed r_eff above the runaway floor (spec D3). A null observation is a

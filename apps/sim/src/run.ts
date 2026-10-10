@@ -55,6 +55,14 @@ export interface RunOptions {
    * the run, it never steers it.
    */
   onProgress?: (event: RunProgress) => void;
+  /**
+   * Stop once the dead time -- simulated time since the last purchase or tier --
+   * exceeds this. A stalled policy otherwise simulates its whole budget to establish
+   * what its first idle stretch already showed: measured 2026-10-09, `bottleneck`
+   * stalled at tier 6 would have cost ~250 hours of compute to run out a 120-day
+   * budget. Read off the simulated clock only, so the stop is deterministic.
+   */
+  stopWhenDeadMs?: number;
 }
 
 /**
@@ -102,6 +110,7 @@ export function runSimulation(options: RunOptions): RunReport {
   let purchases = 0;
   let lastEventMs = 0;
   let maxDeadTimeMs = 0;
+  let stalled = false;
   const tierTimes: TierMark[] = [];
   const boundMsByRecipe = new Map<string, number>();
 
@@ -171,6 +180,11 @@ export function runSimulation(options: RunOptions): RunReport {
       purchases,
       bound,
     });
+
+    if (options.stopWhenDeadMs !== undefined && nowMs - lastEventMs > options.stopWhenDeadMs) {
+      stalled = true;
+      break;
+    }
   }
   markEvent(nowMs);
 
@@ -205,6 +219,7 @@ export function runSimulation(options: RunOptions): RunReport {
     seed: options.seed,
     reachedTier: state.tier,
     finished: state.tier >= options.untilTier,
+    stalled,
     simulatedMs: nowMs,
     collections: nowMs / content.offlineCapMs,
     tierTimes,

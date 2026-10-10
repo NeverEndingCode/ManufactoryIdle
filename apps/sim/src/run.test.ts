@@ -130,6 +130,40 @@ describe("runSimulation", () => {
     expect(b.simulatedMs).toBe(a.simulatedMs);
   });
 
+  it("stops a run once nothing has happened for longer than the stall cut-off", () => {
+    // Casual acts once per offline window, so a cut-off of half a window is crossed at
+    // its first gap: the run must stop there instead of simulating the whole budget.
+    const cutoff = content.offlineCapMs / 2;
+    const report = runSimulation({
+      policy: "casual",
+      seed: 1,
+      untilTier: 99,
+      maxSimMs: THIRTY_DAYS_MS,
+      stopWhenDeadMs: cutoff,
+    });
+    expect(report.stalled).toBe(true);
+    expect(report.finished).toBe(false);
+    expect(report.maxDeadTimeMs).toBeGreaterThan(cutoff);
+    // Stopped at the first step past the cut-off, not at the budget.
+    expect(report.simulatedMs).toBe(content.offlineCapMs);
+  });
+
+  it("leaves a run that keeps making progress exactly as it was", () => {
+    const options = {
+      policy: "greedy" as const,
+      seed: 42,
+      untilTier: 2,
+      maxSimMs: THIRTY_DAYS_MS,
+    };
+    const plain = runSimulation(options);
+    const guarded = runSimulation({ ...options, stopWhenDeadMs: 2 * content.offlineCapMs });
+    expect(plain.stalled).toBe(false);
+    expect(guarded.stalled).toBe(false);
+    expect(guarded.tierTimes).toEqual(plain.tierTimes);
+    expect(guarded.purchases).toBe(plain.purchases);
+    expect(guarded.simulatedMs).toBe(plain.simulatedMs);
+  });
+
   it("reports progress as it goes, without changing the run", () => {
     const options = {
       policy: "greedy" as const,

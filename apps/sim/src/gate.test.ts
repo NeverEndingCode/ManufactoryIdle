@@ -20,6 +20,7 @@ function report(overrides: Partial<RunReport> = {}): RunReport {
     seed: 42,
     reachedTier: 3,
     finished: true,
+    stalled: false,
     simulatedMs: 1.2 * 8 * 3600_000,
     collections: 1.2,
     tierTimes: [
@@ -96,26 +97,37 @@ describe("evaluateGate", () => {
     expect(run([onTarget], [report({ maxDeadTimeMs: 8 * 3600_000 })])).toEqual([]);
   });
 
-  it("pins dead time for a policy already known to be dead, and catches drift on it", () => {
-    const gate: PolicyGate = {
+  // A stalled run is cut off once its dead time passes the threshold (2026-10-09), so
+  // its dead time is the cut-off by construction and pinning that number would pin an
+  // artifact. What a known-broken policy pins instead is WHERE it stalls.
+  const stalledAt = (tier: number): RunReport =>
+    report({
       policy: "bottleneck",
-      untilTier: 3,
-      knownRed: [],
-      reachesTier: 1,
-      deadTimePin: { collections: 100, why: "stalls with no assembler; see the handoff" },
-    };
-    const stalled = (deadCollections: number): RunReport =>
-      report({
-        policy: "bottleneck",
-        reachedTier: 1,
-        finished: false,
-        tierTimes: [{ tier: 1, atMs: 0, collections: 0.42 }],
-        maxDeadTimeMs: deadCollections * 8 * 3600_000,
-      });
-    expect(run([gate], [stalled(100)])).toEqual([]);
-    expect(run([gate], [stalled(140)]).some((f) => f.check === "known-red-drift")).toBe(true);
-    // Back under the threshold: the policy is fixed and the pin must go.
-    expect(run([gate], [stalled(0.5)]).some((f) => f.check === "stale-pin")).toBe(true);
+      reachedTier: tier,
+      finished: false,
+      stalled: true,
+      tierTimes: report().tierTimes.slice(0, tier),
+      maxDeadTimeMs: 2.01 * 8 * 3600_000,
+    });
+
+  it("accepts a policy that stalls exactly at the tier it is pinned to", () => {
+    const gate: PolicyGate = { policy: "bottleneck", untilTier: 3, knownRed: [], reachesTier: 1 };
+    expect(run([gate], [stalledAt(1)])).toEqual([]);
+  });
+
+  it("fails a stall the gate did not expect, and says where it happened", () => {
+    const gate: PolicyGate = { ...onTarget, policy: "bottleneck" };
+    const findings = run([gate], [stalledAt(2)]);
+    const dead = findings.filter((f) => f.check === "dead-time");
+    expect(dead).toHaveLength(1);
+    expect(dead[0]!.detail).toMatch(/stalled at tier 2/);
+  });
+
+  it("fails a pinned policy that stalls short of its pinned tier", () => {
+    const gate: PolicyGate = { policy: "bottleneck", untilTier: 3, knownRed: [], reachesTier: 2 };
+    const findings = run([gate], [stalledAt(1)]);
+    expect(findings.some((f) => f.check === "reached-tier")).toBe(true);
+    expect(findings.some((f) => f.check === "dead-time")).toBe(true);
   });
 
   it("fails an observed r_eff at or below the runaway floor", () => {
@@ -253,7 +265,6 @@ describe("the shipped vertical-slice gate config", () => {
   it("gives every pin a reason", () => {
     for (const gate of VERTICAL_SLICE_GATE) {
       for (const pin of gate.knownRed) expect(pin.why.length).toBeGreaterThan(20);
-      if (gate.deadTimePin) expect(gate.deadTimePin.why.length).toBeGreaterThan(20);
     }
   });
 

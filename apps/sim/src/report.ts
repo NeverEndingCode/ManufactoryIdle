@@ -29,6 +29,8 @@ export interface RunReport {
   seed: number;
   reachedTier: number;
   finished: boolean;
+  /** Stopped by `stopWhenDeadMs`: nothing happened for longer than the cut-off. */
+  stalled: boolean;
   simulatedMs: number;
   collections: number;
   tierTimes: TierMark[];
