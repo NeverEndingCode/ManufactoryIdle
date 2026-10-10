@@ -247,7 +247,7 @@ out-of-scope case the gridlock spec named) or a policy-side gap is not yet measu
 > (0.242) at step 10, and the policy crossed into tier 7 at step 8. Run on from the
 > tier-6 checkpoint for 200 steps (sampled every 20, 0.98 to 1.84 offline caps): tier 6
 > clears before step 80, and by step 100 the advice is storage for `packaged_fuel`
-> (`upgrade: "quantum"`, tier 7 -> 8 needs 600 `packaged_fuel` and 800 `modular_frame`)
+> (`upgrade: "quantum"`; tier 7 -> 8 needs 38,400 `packaged_fuel` and 51,200 `modular_frame` -- the calibrated `derived.yaml` amounts; an earlier version of this line quoted the authored seeds, 600 and 800)
 > with no purchases emitted, unchanged through step 180. `bottleneck` stalls next at
 > tier 7. (3) Content part (A): give `fuel` a sink at tier 6 by moving
 > `burn_fuel` / `fuel_generator` down from tier 7, and teach the validator to check
