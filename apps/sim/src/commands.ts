@@ -173,10 +173,18 @@ export function renderStatus(session: Session): string[] {
         `${bottleneck.machinesToClear} more ${bottleneck.generatorRecipeId ?? "generator"} clears it`,
     );
   } else if (bottleneck.upgrade === null) {
-    // Both curves maxed. Naming no fix is the honest answer; check 9 is what should
-    // keep a bundle from ever reaching this state.
+    // Curves maxed, or every level costs more than can be held. Naming no fix is the
+    // honest answer; check 9 is what should keep a bundle from ever reaching this state.
     lines.push(
-      `BOTTLENECK  ${bottleneck.itemId} is at its cap and both storage curves are maxed`,
+      `BOTTLENECK  no storage level for ${bottleneck.itemId} can be paid for ` +
+        `(curves maxed, or each costs more than can be held)`,
+    );
+  } else if (bottleneck.limitingTarget !== `item:${bottleneck.itemId}`) {
+    // A payer whose cap is too small for the purchase, not necessarily a full item.
+    const what = bottleneck.upgrade === "storage" ? "storage" : "quantum storage";
+    lines.push(
+      `BOTTLENECK  ${bottleneck.limitingTarget} is waiting on ${bottleneck.itemId}'s storage — ` +
+        `one more ${what} level for ${bottleneck.itemId} lets the purchase fit`,
     );
   } else {
     const what = bottleneck.upgrade === "storage" ? "storage" : "quantum storage";

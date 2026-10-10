@@ -60,7 +60,8 @@ jobs:
     # SUPERSEDED 2026-10-10 (payable advice): `bottleneck` no longer stalls at tier 7,
     # it finishes all 10 tiers, and the gate now takes 135m18s locally (greedy 2m30s,
     # determinism rerun 2m29s, casual 6m24s, bottleneck 135m17s: tier 7 at 14m27s, tier 8
-    # at 22m13s, tier 9 at 73m17s, tier 10 at 139m31s in the first run). At the 2.43x
+    # at 22m13s, tier 9 at 73m17s, tier 10 at 139m31s; those tier timings are from the earlier, first gate
+    # run, and the 135m17s total is from the final one). At the 2.43x
     # runner factor the pacing job WILL exceed `timeout-minutes: 90`. The value is left
     # unchanged pending a decision on it (raise it, or make `bottleneck` cheaper).
     timeout-minutes: 90
