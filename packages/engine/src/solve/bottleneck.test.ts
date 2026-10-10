@@ -473,6 +473,58 @@ describe("the gridlock walk", () => {
     });
   });
 
+  it("drains a held input through the target's own recipe, not the first consumer", () => {
+    // Hand-built from the slice's rubber case: crude_oil's live consumers there are
+    // refine_plastic, refine_rubber and refine_polymer_resin in bundle order, so with
+    // crude held and extract_crude_oil named for `rubber`, taking the first consumer
+    // drained through refine_plastic -- off the target's path. The extra recipe is
+    // listed first in the bundle, so it is first in consumersOf; it makes iron_plate,
+    // which it then owns as the first producer (isLiveRecipe wants the active recipe),
+    // and plays no part in the plastic requirement.
+    const base = oilContent(3).bundle;
+    const extra = {
+      ...base.recipes.find((r) => r.id === "refine_plastic")!,
+      id: "refine_scrap",
+      name: "Scrap Refinery",
+      outputs: [{ item: "iron_plate", rate: "20", byproduct: false }],
+    };
+    const c = indexContent({
+      ...base,
+      recipes: [extra, ...base.recipes],
+    });
+    expect(c.consumersOf.get("crude_oil")![0]).toBe("refine_scrap");
+    const w = oilWorld(c, 2, { extract_oil: 1, refine_plastic: 1 });
+    expect(w.activeRecipe.plastic).toBe("refine_plastic");
+    expect(isLiveRecipe(c, "refine_plastic", w.tier, w.activeRecipe)).toBe(true);
+    expect(isLiveRecipe(c, "refine_scrap", w.tier, w.activeRecipe)).toBe(true);
+    const sol = solve(w, c, NO_FLOOR);
+    const b = computeBottleneck(
+      c,
+      sol.capacity,
+      [
+        {
+          entryId: "item:plastic",
+          itemId: "plastic",
+          requested: Number.POSITIVE_INFINITY,
+          allocated: 0,
+          limitedBy: "extract_oil",
+          limitingPerUnit: 1,
+          runnerUpRate: Number.POSITIVE_INFINITY,
+        },
+      ],
+      sol.power,
+      w,
+      new Map([["crude_oil", "FULL" as const]]),
+      new Map([["crude_oil", { production: 1, consumption: 1, net: 0 }]]),
+    );
+    expect(b).toEqual({
+      kind: "recipe",
+      recipeId: "refine_plastic",
+      limitingTarget: "item:plastic",
+      machinesToClear: 1,
+    });
+  });
+
   it("walks from a starved generator's supplier when that supplier is jammed", () => {
     // Hand-built: neither bundle has a fuel maker with a byproduct, so this shape
     // cannot arise on shipped content yet. The grid browns out with a generator

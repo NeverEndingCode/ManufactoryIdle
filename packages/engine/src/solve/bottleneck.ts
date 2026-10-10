@@ -157,19 +157,36 @@ function heldOutputOf(
  * closes a gap to a waterfall runner-up, and a drain has no runner-up; the caller
  * re-solves after buying, the argument the zero-capacity and storage branches already
  * make.
+ *
+ * `preferred` is the target's own recipe, tried first at the first hop only. The held
+ * item can be an INPUT of the target's recipe (the named recipe is an upstream
+ * producer whose output is held), and bundle order then puts a consumer off the
+ * target's path first: on the vertical slice crude_oil's consumers are refine_plastic,
+ * refine_rubber and refine_polymer_resin, so for a `rubber` requirement with crude
+ * held, the first consumer drains via refine_plastic (and, plastic being FULL, walks
+ * on into plastic's lane) when the answer is refine_rubber. Recursive hops pass null:
+ * past the first hop the walk follows held outputs, not the target's recipe.
  */
 function drainBlocker(
   walk: WalkContext,
   itemId: ItemId,
   limitingTarget: string,
   visited: Set<ItemId>,
+  preferred: RecipeId | null,
 ): NonNullable<Bottleneck> {
   visited.add(itemId);
   const { content, state } = walk;
-  for (const consumerId of content.consumersOf.get(itemId) ?? []) {
+  const consumers = content.consumersOf.get(itemId) ?? [];
+  const ordered =
+    preferred !== null &&
+    consumers.includes(preferred) &&
+    isLiveRecipe(content, preferred, state.tier, state.activeRecipe)
+      ? [preferred, ...consumers.filter((consumerId) => consumerId !== preferred)]
+      : consumers;
+  for (const consumerId of ordered) {
     if (!isLiveRecipe(content, consumerId, state.tier, state.activeRecipe)) continue;
     const fresh = heldOutputOf(walk, consumerId, visited);
-    if (fresh !== null) return drainBlocker(walk, fresh, limitingTarget, visited);
+    if (fresh !== null) return drainBlocker(walk, fresh, limitingTarget, visited, null);
     // Every full output of this consumer is already in the walk: it is a loop, not an
     // answer, and naming it would buy a machine the sweep holds at clock 0.
     if (heldOutputOf(walk, consumerId, NO_ITEMS) !== null) continue;
@@ -202,11 +219,13 @@ function jamBlocker(
   recipeIds: readonly (RecipeId | null | undefined)[],
   limitingTarget: string,
   visited: Set<ItemId>,
+  /** The target's own active recipe, or null when there is none; see drainBlocker. */
+  preferred: RecipeId | null,
 ): Bottleneck {
   for (const recipeId of recipeIds) {
     if (recipeId === null || recipeId === undefined) continue;
     const held = heldOutputOf(walk, recipeId, visited);
-    if (held !== null) return drainBlocker(walk, held, limitingTarget, visited);
+    if (held !== null) return drainBlocker(walk, held, limitingTarget, visited, preferred);
   }
   return null;
 }
@@ -252,7 +271,7 @@ function resolveBlocker(
   // at all, and its waterfall entry reports `limitedBy: null`. That is exactly why
   // the priority scan could never name it.
   if ((capacity.unitsByRecipe.get(recipeId) ?? 0) <= 0) {
-    return jamBlocker(walk, [recipeId], limitingTarget, visited) ?? {
+    return jamBlocker(walk, [recipeId], limitingTarget, visited, recipeId) ?? {
       kind: "recipe",
       recipeId,
       limitingTarget,
@@ -285,7 +304,7 @@ function resolveBlocker(
   const entry = entries.find((candidate) => candidate.itemId === itemId);
   // Before trusting the waterfall's name for this blocker, check that neither the
   // recipe making the target nor the one about to be named is held by a full output.
-  const jam = jamBlocker(walk, [recipeId, entry?.limitedBy], limitingTarget, visited);
+  const jam = jamBlocker(walk, [recipeId, entry?.limitedBy], limitingTarget, visited, recipeId);
   if (jam !== null) return jam;
   if (entry !== undefined && entry.limitedBy !== null) {
     return {
@@ -343,14 +362,17 @@ export function computeBottleneck(
     if (
       live !== null &&
       (capacity.unitsByRecipe.get(live) ?? 0) > 0 &&
-      powerEntry?.limitedBy != null &&
+      powerEntry !== undefined &&
+      powerEntry.limitedBy !== null &&
       powerEntry.limitedBy !== live
     ) {
       const starvedBy = powerEntry.limitedBy;
       // The supplier can itself be held by a full output; naming it would then buy
       // into a jam. No shipped fuel maker has a byproduct yet, so this is defence for
       // content, pinned by a hand-built test rather than a measured stall.
-      const jam = jamBlocker(walk, [starvedBy], powerEntry.entryId, new Set<ItemId>());
+      // The empty visited set is right here: power has no item to revisit. Nor is there
+      // a target recipe to prefer (null), so the drain falls back to consumersOf order.
+      const jam = jamBlocker(walk, [starvedBy], powerEntry.entryId, new Set<ItemId>(), null);
       if (jam !== null) return jam;
       return {
         kind: "recipe",
@@ -386,6 +408,10 @@ export function computeBottleneck(
   // when nothing in it is blocked, or at the last tier.
   const nextMilestone = content.milestoneByTier.get(tier + 1);
   if (nextMilestone !== undefined) {
+    // Shared across requirements on purpose, with one known edge: a requirement whose
+    // walk returned null early stays in `visited`, so a later requirement's gridlock
+    // walk skips it even if it is a held byproduct. Unreachable on shipped content, and
+    // a fresh set per requirement would re-walk every item two requirements share.
     const visited = new Set<ItemId>();
     for (const requirement of nextMilestone.requires) {
       // Ruling R7 pays deliveries from liquid stock, so liquid is the right measure.
@@ -416,6 +442,7 @@ export function computeBottleneck(
     [activeRecipeOf(activeRecipe, firstLimited.itemId), firstLimited.limitedBy],
     firstLimited.entryId,
     new Set<ItemId>([firstLimited.itemId]),
+    activeRecipeOf(activeRecipe, firstLimited.itemId) ?? null,
   );
   if (jam !== null) return jam;
 
