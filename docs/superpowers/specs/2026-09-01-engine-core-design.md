@@ -714,6 +714,7 @@ The reporter now resolves the next milestone's unmet requirements first, resolvi
 unmet requirement to its own blocker (the waterfall has already chased its input chain),
 and falls back to the priority scan when the milestone is satisfied or nothing in it is
 blocked. The returned kinds are unchanged: a zero-capacity recipe is reported as
+`kind: "recipe"`, because it genuinely is the binding constraint.
 
 **Amended 2026-10-09 (Phase 2): a recipe throttled by a full output is not the
 blocker.** Before naming any recipe, the reporter checks that recipe's outputs,
@@ -726,7 +727,6 @@ slice, because `fuel` -- two hops past the rubber it was asked for -- had nowher
 The trigger is FULL **and held** (net >= -`FLOW_TOLERANCE`), and checks the target's own
 active recipe before the recipe the branch would name; a consumer's held outputs are
 checked before its capacity. See `specs/2026-10-09-byproduct-gridlock-design.md`.
-`kind: "recipe"`, because it genuinely is the binding constraint.
 
 ### C.4 Power
 

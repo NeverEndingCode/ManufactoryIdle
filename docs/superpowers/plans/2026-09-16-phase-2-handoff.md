@@ -81,6 +81,8 @@ interval IS the offline cap, so it acts once per window. That is the policy's ca
 not pace decay, and it is why the gate's dead-time threshold is 2 collections and not 1:
 at 1 the gate would be decided by the last bit of a float.
 
+> Superseded 2026-10-09: see item 1's blockquote -- `bottleneck` now passes tier 6 and stalls at tier 7.
+
 **`bottleneck` now reaches tier 6, then stalls again — a real win, not a closed defect.**
 The milestone-aware reporter (tasks 1-3 of this plan) fixed the failure described in the
 previous version of this section: a player sitting on 2,307,820 `iron_plate` and 430,367
@@ -249,6 +251,8 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 > tier 6 gives fuel no sink while the grid runs `burn_biomass`. Generator types must run
 > side by side; that is the first item in (A)'s spec, not yet written. The text below
 > predates this investigation.
+> Superseded 2026-10-09: see item 1's blockquote -- `bottleneck` now passes tier 6 and stalls at tier 7.
+
 The milestone-aware reporter (tasks 1-3) fixed the tier-1 advice failure described in
 earlier versions of this doc: the reporter no longer optimises the top-priority item's
 throughput irrespective of what blocks the milestone. `bottleneck` now reaches tier 6 of
