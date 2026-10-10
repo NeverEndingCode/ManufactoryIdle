@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { indexContent, isLiveRecipe } from "../graph/index-content.js";
 import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
 import { quantumCap, storageCap } from "../economy/storage.js";
+import { POWER_ITEM } from "../content/types.js";
 import { D } from "../numbers/decimal.js";
 import { computeBottleneck } from "./bottleneck.js";
 import { solve } from "./solve.js";
@@ -410,5 +411,102 @@ describe("the gridlock walk", () => {
     expect(withResidueNet(-1e-12)).toMatchObject({ kind: "storage", itemId: "fuel" });
     // Clearly draining: no walk, so the advice falls back to the waterfall's name.
     expect(withResidueNet(-0.5)).toMatchObject({ kind: "recipe", recipeId: "extract_oil" });
+  });
+
+  it("walks from the priority scan too, when no milestone is pending", () => {
+    // No milestones, so the reporter falls through to the priority scan. Plastic is
+    // moved to the top of the list, as a player who wants plastic would.
+    const c = oilContent(null);
+    let w = oilWorld(c, 2, { extract_oil: 1, refine_plastic: 1, residual_fuel: 1 });
+    w = atCap(atCap(w, "heavy_oil_residue"), "fuel");
+    w = {
+      ...w,
+      priority: [
+        ...w.priority.filter((e) => e.itemId === "plastic"),
+        ...w.priority.filter((e) => e.itemId !== "plastic"),
+      ],
+    };
+    const sol = solve(w, c, NO_FLOOR);
+    const first = sol.entries.find((e) => e.limitedBy !== null)!;
+    expect(first.entryId).toBe("item:plastic");
+    expect(first.limitedBy).toBe("extract_oil");
+    expect(sol.bottleneck).toMatchObject({
+      kind: "storage",
+      itemId: "fuel",
+      limitingTarget: "item:plastic",
+    });
+  });
+
+  it("checks the recipe it is about to name, not only the target's own", () => {
+    // Hand-built, because the named recipe holding a FULL output while the target's
+    // own recipe does not is a tie-break artifact no fixture state produces on demand.
+    // Crude is held at cap; the waterfall names extract_oil for plastic; refine_plastic
+    // (plastic's own recipe) has no held output. The walk from crude names the drain.
+    const c = oilContent(3);
+    const w = oilWorld(c, 2, { extract_oil: 1, refine_plastic: 1 });
+    const sol = solve(w, c, NO_FLOOR);
+    const entries = [
+      {
+        entryId: "item:plastic",
+        itemId: "plastic",
+        requested: Number.POSITIVE_INFINITY,
+        allocated: 0,
+        limitedBy: "extract_oil",
+        limitingPerUnit: 1,
+        runnerUpRate: Number.POSITIVE_INFINITY,
+      },
+    ];
+    const b = computeBottleneck(
+      c,
+      sol.capacity,
+      entries,
+      sol.power,
+      w,
+      new Map([["crude_oil", "FULL" as const]]),
+      new Map([["crude_oil", { production: 1, consumption: 1, net: 0 }]]),
+    );
+    expect(b).toEqual({
+      kind: "recipe",
+      recipeId: "refine_plastic",
+      limitingTarget: "item:plastic",
+      machinesToClear: 1,
+    });
+  });
+
+  it("walks from a starved generator's supplier when that supplier is jammed", () => {
+    // Hand-built: neither bundle has a fuel maker with a byproduct, so this shape
+    // cannot arise on shipped content yet. The grid browns out with a generator
+    // installed, the waterfall blames refine_plastic for the power shortfall, and
+    // refine_plastic's residue is held at cap. Naming refine_plastic would buy into
+    // a jam; the walk names residual_fuel, which drains residue and is running.
+    const c = oilContent(null);
+    const w = oilWorld(c, 3, { extract_oil: 1, refine_plastic: 1, residual_fuel: 1, burn_fuel: 1 });
+    const sol = solve(w, c, NO_FLOOR);
+    expect(sol.capacity.unitsByRecipe.get("burn_fuel") ?? 0).toBeGreaterThan(0);
+    const b = computeBottleneck(
+      c,
+      sol.capacity,
+      [
+        {
+          entryId: "power",
+          itemId: POWER_ITEM,
+          requested: 400,
+          allocated: 0,
+          limitedBy: "refine_plastic",
+          limitingPerUnit: 1,
+          runnerUpRate: Number.POSITIVE_INFINITY,
+        },
+      ],
+      { demandMw: 200, fullDemandMw: 400, supplyMw: 200, ratio: 0.5, passes: 1 },
+      w,
+      new Map([["heavy_oil_residue", "FULL" as const]]),
+      new Map([["heavy_oil_residue", { production: 1, consumption: 1, net: 0 }]]),
+    );
+    expect(b).toEqual({
+      kind: "recipe",
+      recipeId: "residual_fuel",
+      limitingTarget: "power",
+      machinesToClear: 1,
+    });
   });
 });

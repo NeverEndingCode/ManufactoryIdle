@@ -347,6 +347,11 @@ export function computeBottleneck(
       powerEntry.limitedBy !== live
     ) {
       const starvedBy = powerEntry.limitedBy;
+      // The supplier can itself be held by a full output; naming it would then buy
+      // into a jam. No shipped fuel maker has a byproduct yet, so this is defence for
+      // content, pinned by a hand-built test rather than a measured stall.
+      const jam = jamBlocker(walk, [starvedBy], powerEntry.entryId, new Set<ItemId>());
+      if (jam !== null) return jam;
       return {
         kind: "recipe",
         recipeId: starvedBy,
@@ -403,6 +408,16 @@ export function computeBottleneck(
       upgrade: cheaperUpgrade(content, state, firstLimited.itemId),
     };
   }
+
+  // The same gridlock check the milestone branch makes, with the scanned item standing
+  // in for the requirement: in `visited` from the start, so it is never walked from.
+  const jam = jamBlocker(
+    walk,
+    [activeRecipeOf(activeRecipe, firstLimited.itemId), firstLimited.limitedBy],
+    firstLimited.entryId,
+    new Set<ItemId>([firstLimited.itemId]),
+  );
+  if (jam !== null) return jam;
 
   return {
     kind: "recipe",
