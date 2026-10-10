@@ -227,13 +227,22 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. `bottleneck` passes tier 6 and now stalls at tier 7 (was: the tier-6 stall).**
+**1. `bottleneck` now finishes all 10 tiers, but at 5.87 collections against a target of 25 (was: the tier-7 stall).**
 
 Gate-confirmed 2026-10-10 from a fresh run (not the resumed checkpoint): tier 6 at
 0.9337, tier 7 at 1.2871, 194 purchases, then cut off for dead time (2.004 collections).
 The open question for the next session: the reporter advises quantum storage for
 `packaged_fuel` and the policy buys nothing -- whether that is unaffordable advice (the
 out-of-scope case the gridlock spec named) or a policy-side gap is not yet measured.
+
+Resolved 2026-10-10 (payable advice, `specs/2026-10-10-payable-advice-design.md`): it was
+unaffordable advice -- a Quantum Storage level costing 4,473 `iron_plate` while
+`iron_plate` could hold 4,000. The reporter now prices its advice and names storage for
+the payer instead. Gate-measured: `bottleneck` passes tier 7 (1.2871) and finishes the
+slice: tier 8 at 1.6482, tier 9 at 3.1939, tier 10 at 5.8707, 514 purchases, dead time
+0.221 collections. Nothing stops it any more; the remaining defect is the opposite one,
+that it lands 77% to 85% EARLIER than target at tiers 7 to 10 (as at tiers 1 to 6), so
+its pins are now overshoot pins, not a stall. `greedy` and `casual` are unchanged.
 
 > **Investigated 2026-10-09; three causes, in the order they bite.** (1) The power branch
 > always named the generator: `bottleneck` owned 77 biomass burners and zero collectors.

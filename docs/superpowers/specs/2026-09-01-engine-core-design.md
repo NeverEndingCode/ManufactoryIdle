@@ -728,6 +728,16 @@ The trigger is FULL **and held** (net >= -`FLOW_TOLERANCE`), and checks the targ
 active recipe before the recipe the branch would name; a consumer's held outputs are
 checked before its capacity. See `specs/2026-10-09-byproduct-gridlock-design.md`.
 
+**Amended 2026-10-10 (Phase 2): advice must be payable.** Before returning, the reporter
+prices the purchase its answer implies -- a storage level, a Quantum Storage level, or
+one machine at the best unlocked mark. If any cost item's amount exceeds that item's
+liquid cap, the purchase can never be made (ruling R7 pays from liquid stock), so the
+reporter names storage for that payer instead, priced the same way, ending at
+`upgrade: null` only when nothing fits. Measured cause: `bottleneck` stalled at tier 7
+of the vertical slice advised to buy a Quantum Storage level costing 4,473 `iron_plate`
+while `iron_plate` could hold 4,000; one `iron_plate` storage level, 90, was the way
+out.
+
 ### C.4 Power
 
 Grid per §6.1: `powerRatio = min(1, capacity / demand)`, demand scales with clock, clock

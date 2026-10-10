@@ -81,10 +81,11 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
   {
     policy: "bottleneck",
     untilTier: 10,
-    // Measured 2026-10-10 with the gridlock walk and the starved-generator fix: the run
-    // is cut off at tier 7 after 2.004 collections with nothing bought, advised to buy
-    // quantum storage for `packaged_fuel` and buying nothing. Was tier 6 before the walk.
-    reachesTier: 7,
+    // Measured 2026-10-10 after payable advice: the reporter now prices its advice, so
+    // the tier-7 stall (a 4,473 iron_plate storage level against a 4,000 cap) no longer
+    // happens and the run goes on. `bottleneck` now FINISHES all 10
+    // tiers (dead time 0.221 collections), so there is no `reachesTier`; every tier
+    // still lands far earlier than target.
     knownRed: [
       {
         tier: 1,
@@ -127,12 +128,30 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
         tier: 7,
         observed: 1.2871,
         why:
-          "target 6.8, measured 1.287 (-81%), and this is where bottleneck stops. The " +
-          "gridlock walk got it through the tier-6 oil-lane jam (fuel had no consumer, " +
-          "so it now buys fuel storage instead of a 51st refinery); at tier 7 the " +
-          "reporter advises quantum storage for packaged_fuel and the policy buys " +
-          "nothing, so the run is cut off for dead time. The next defect to investigate. " +
-          "`bottleneck` reaches 7 of 10 tiers; `greedy` reaches all 10.",
+          "target 6.8, measured 1.287 (-81%). Unchanged by payable advice. This was " +
+          "where bottleneck used to stop: the reporter advised a 4,473 iron_plate " +
+          "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
+          "bought nothing. The run now gets through to tier 8.",
+      },
+      {
+        tier: 8,
+        observed: 1.6482,
+        why:
+          "target 11, measured 1.648 (-85%): the same minimal-buying overshoot, now reached " +
+          "because the run no longer stalls at tier 7.",
+      },
+      {
+        tier: 9,
+        observed: 3.1939,
+        why: "target 16, measured 3.194 (-80%): the same overshoot, with the gap narrowing.",
+      },
+      {
+        tier: 10,
+        observed: 5.8707,
+        why:
+          "target 25, measured 5.871 (-77%): bottleneck now finishes all 10 tiers, but " +
+          "at under a quarter of the target time (514 purchases, dead time 0.221 " +
+          "collections). `greedy` reaches tier 10 at 20.87 and `casual` at 205.01.",
       },
     ],
   },

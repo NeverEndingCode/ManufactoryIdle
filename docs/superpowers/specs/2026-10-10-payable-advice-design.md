@@ -1,7 +1,7 @@
 # Payable bottleneck advice
 
 **Amends:** spec §4.5 (bottleneck as first-class solver output).
-**Status:** design, approved 2026-10-10. Not yet implemented.
+**Status:** implemented 2026-10-10 (commits 65fbe5c onward).
 **Branch:** `worktree-phase-2-content`.
 **Follows:** `2026-10-09-byproduct-gridlock-design.md`, which named this case out of scope
 ("advice the policy cannot afford because the cost exceeds the paying item's storage
