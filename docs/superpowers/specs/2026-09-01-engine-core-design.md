@@ -735,8 +735,9 @@ liquid cap, the purchase can never be made (ruling R7 pays from liquid stock), s
 reporter names storage for that payer instead, priced the same way, ending at
 `upgrade: null` only when nothing fits. Measured cause: `bottleneck` stalled at tier 7
 of the vertical slice advised to buy a Quantum Storage level costing 4,473 `iron_plate`
-while `iron_plate` could hold 4,000; one `iron_plate` storage level, 90, was the way
-out.
+while `iron_plate` could hold 4,000. Measured before the fix: buying one `iron_plate`
+storage level, 90, made that 4,473 level payable (this is that probe, not a record of
+what the fixed run bought).
 
 ### C.4 Power
 

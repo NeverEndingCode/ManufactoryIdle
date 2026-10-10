@@ -82,6 +82,7 @@ not pace decay, and it is why the gate's dead-time threshold is 2 collections an
 at 1 the gate would be decided by the last bit of a float.
 
 > Superseded 2026-10-09: see item 1's blockquote -- `bottleneck` now passes tier 6 and stalls at tier 7.
+> Superseded again 2026-10-10: see item 1 -- it no longer stalls at tier 7 and finishes all 10 tiers.
 
 **`bottleneck` now reaches tier 6, then stalls again — a real win, not a closed defect.**
 The milestone-aware reporter (tasks 1-3 of this plan) fixed the failure described in the
@@ -231,14 +232,17 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 Gate-confirmed 2026-10-10 from a fresh run (not the resumed checkpoint): tier 6 at
 0.9337, tier 7 at 1.2871, 194 purchases, then cut off for dead time (2.004 collections).
-The open question for the next session: the reporter advises quantum storage for
-`packaged_fuel` and the policy buys nothing -- whether that is unaffordable advice (the
-out-of-scope case the gridlock spec named) or a policy-side gap is not yet measured.
+History: at that point the open question was why the reporter advised quantum storage
+for `packaged_fuel` while the policy bought nothing -- unaffordable advice (the
+out-of-scope case the gridlock spec named) or a policy-side gap. The resolution below
+answers it.
 
 Resolved 2026-10-10 (payable advice, `specs/2026-10-10-payable-advice-design.md`): it was
 unaffordable advice -- a Quantum Storage level costing 4,473 `iron_plate` while
-`iron_plate` could hold 4,000. The reporter now prices its advice and names storage for
-the payer instead. Gate-measured: `bottleneck` passes tier 7 (1.2871) and finishes the
+`iron_plate` could hold 4,000 (measured before the fix). After payable advice the run
+passes tier 7. The advice it took there was not captured: the Step 1 probe started from
+a checkpoint saved by pre-payable code and showed recipe advice for `package_fuel`.
+Gate-measured: `bottleneck` passes tier 7 (1.2871) and finishes the
 slice: tier 8 at 1.6482, tier 9 at 3.1939, tier 10 at 5.8707, 514 purchases, dead time
 0.221 collections. Nothing stops it any more; the remaining defect is the opposite one,
 that it lands 77% to 85% EARLIER than target at tiers 7 to 10 (as at tiers 1 to 6), so
@@ -413,6 +417,12 @@ rediscovered as new.**
 > bottleneck 812.0s (cut off at tier 7, dead 2.004 collections), determinism rerun
 > 256.3s -- **812s wall, against ~49 minutes before**. CI cap lowered 180 -> 90. The
 > `bottleneck` pins are re-measured: `reachesTier: 7`, tiers 1-7 pinned.
+>
+> **Superseded 2026-10-10 (payable advice): the cost above is out of date.** `bottleneck`
+> now finishes all 10 tiers and the gate takes 135m18s locally (greedy 2m30s, casual
+> 6m24s, determinism rerun 2m29s, bottleneck 135m17s), not 812s. At the 2.43x runner
+> factor the pacing job will exceed `.github/workflows/ci.yml`'s `timeout-minutes: 90`,
+> which is unchanged and needs a decision.
 
 **The pacing gate needs a per-policy day budget.** Fixing the advice made the gate three
 times slower, for a reason worth understanding: a policy that makes progress simulates far

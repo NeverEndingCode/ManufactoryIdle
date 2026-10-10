@@ -131,7 +131,8 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "target 6.8, measured 1.287 (-81%). Unchanged by payable advice. This was " +
           "where bottleneck used to stop: the reporter advised a 4,473 iron_plate " +
           "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
-          "bought nothing. The run now gets through to tier 8.",
+          "bought nothing. After payable advice the run passes tier 7; the advice it took there " +
+          "was not captured (the probe started from a pre-payable checkpoint).",
       },
       {
         tier: 8,
