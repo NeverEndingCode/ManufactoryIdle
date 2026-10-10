@@ -9,7 +9,7 @@
 // `IndexedContent` is a graph of Maps that would be structured-cloned on every post, and
 // re-indexing from disk is milliseconds against runs of minutes.
 import { parentPort, workerData } from "node:worker_threads";
-import { stderr } from "node:process";
+import { writeSync } from "node:fs";
 import { loadBundleDir } from "@manufactory/content";
 import { indexContent, type ContentBundle } from "@manufactory/engine";
 import type { PolicyName } from "./policies.js";
@@ -36,8 +36,11 @@ const report = runSimulation({
   untilTier: job.untilTier,
   maxSimMs: job.maxSimMs,
   stopWhenDeadMs: job.stopWhenDeadMs,
-  // To stderr, so a long gate shows signs of life without touching the table or the
-  // --emit-pins block on stdout.
-  onProgress: progressPrinter(job.label, (line) => stderr.write(`${line}\n`)),
+  // Straight to fd 2, not `process.stderr`. In a worker, `process.stderr` forwards to
+  // the main thread asynchronously, and this run is one synchronous loop that never
+  // yields -- measured on the first parallel gate, every progress line arrived in one
+  // burst when the run ended, so a stalled run and a slow one looked identical again.
+  // `writeSync` goes to the shared descriptor immediately.
+  onProgress: progressPrinter(job.label, (line) => writeSync(2, `${line}\n`)),
 });
 parentPort!.postMessage(report);
