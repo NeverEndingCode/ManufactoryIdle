@@ -47,10 +47,16 @@ jobs:
     # the game made the gate slower. Almost all of bottleneck's 37.9 minutes is
     # simulating a stall the gate has ALREADY pinned: it reaches tier 6 at 1.17
     # collections, about half a day, then runs the remaining ~119 simulated days to
-    # confirm what `reachesTier: 6` already asserts. The right fix is a per-policy day
-    # budget, not a bigger number here -- see the Phase 2 handoff. Until that lands,
-    # 180 leaves roughly 50% headroom over the projection.
-    timeout-minutes: 180
+    # confirm what `reachesTier: 6` already asserts.
+    #
+    # Fixed 2026-10-10 two ways, and the cap came back down. A stalled run is now cut
+    # off once its dead time passes the gate's own 2-collection threshold, and the
+    # runs go in parallel worker threads. Measured locally: greedy 259.0s, casual
+    # 528.5s, bottleneck 812.0s (cut off at tier 7), determinism rerun 256.3s, 812s
+    # wall for the whole gate. A two-core runner does two at a time, so the slowest
+    # lane is about max(812, 259 + 528 + 256) = 1043s locally, ~42 minutes at the
+    # 2.43x factor. 90 is ~2x that.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

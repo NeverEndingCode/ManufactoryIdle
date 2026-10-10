@@ -229,6 +229,12 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 **1. `bottleneck` passes tier 6 and now stalls at tier 7 (was: the tier-6 stall).**
 
+Gate-confirmed 2026-10-10 from a fresh run (not the resumed checkpoint): tier 6 at
+0.9337, tier 7 at 1.2871, 194 purchases, then cut off for dead time (2.004 collections).
+The open question for the next session: the reporter advises quantum storage for
+`packaged_fuel` and the policy buys nothing -- whether that is unaffordable advice (the
+out-of-scope case the gridlock spec named) or a policy-side gap is not yet measured.
+
 > **Investigated 2026-10-09; three causes, in the order they bite.** (1) The power branch
 > always named the generator: `bottleneck` owned 77 biomass burners and zero collectors.
 > FIXED -- a starved generator now names what starves it. (2) The oil lane gridlocks:
@@ -386,6 +392,18 @@ rediscovered as new.**
 ---
 
 ## Follow-ups from the milestone-aware bottleneck change (2026-09-19)
+
+> **Both follow-ups below are DONE (2026-10-10), in a different shape than proposed.**
+> Not a per-policy day budget but a **stall cut-off**: `runSimulation` takes
+> `stopWhenDeadMs`, and the gate passes its own 2-collection dead-time threshold, since a
+> run past it has already failed that check. That adapts as policies improve, where a day
+> budget would need re-tuning. It also dissolves the dead-time-pin trap described below:
+> a stalled run's dead time is the cut-off by construction, so `deadTimePin` is gone and a
+> known-broken policy pins WHERE it stalls (`reachesTier`). And the gate's runs now go in
+> parallel worker threads (`gate-worker.ts`). Measured: greedy 259.0s, casual 528.5s,
+> bottleneck 812.0s (cut off at tier 7, dead 2.004 collections), determinism rerun
+> 256.3s -- **812s wall, against ~49 minutes before**. CI cap lowered 180 -> 90. The
+> `bottleneck` pins are re-measured: `reachesTier: 7`, tiers 1-7 pinned.
 
 **The pacing gate needs a per-policy day budget.** Fixing the advice made the gate three
 times slower, for a reason worth understanding: a policy that makes progress simulates far

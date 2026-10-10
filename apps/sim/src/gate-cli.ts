@@ -34,7 +34,7 @@ import type { RunReport } from "./report.js";
  * to its measured value with a reason, so the gate still fails on drift and every pin
  * names the thing that has to change for it to go away.
  *
- * Measured 2026-09-16, seed 42, `slice.v1`.
+ * Measured 2026-09-16, seed 42, `slice.v1`; `bottleneck` re-measured 2026-10-10.
  */
 const CASUAL =
   "spec E.5 asks every policy to hit the same targets; calibration fits one set of " +
@@ -81,75 +81,63 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
   {
     policy: "bottleneck",
     untilTier: 10,
-    reachesTier: 6,
+    // Measured 2026-10-10 with the gridlock walk and the starved-generator fix: the run
+    // is cut off at tier 7 after 2.004 collections with nothing bought, advised to buy
+    // quantum storage for `packaged_fuel` and buying nothing. Was tier 6 before the walk.
+    reachesTier: 7,
     knownRed: [
       {
         tier: 1,
         observed: 0.0748,
         why:
-          "target 0.42, measured 0.075 (-82%): bottleneck clears tier 1 far faster " +
-          "than target because it buys almost nothing before the milestone-aware " +
-          "reporter's advice starts biting. Fast is not on-target -- both directions " +
-          "count as red -- but this is no longer the tier-1 stall: see `reachesTier`.",
+          "target 0.42, measured 0.075 (-82%): bottleneck clears the early tiers far " +
+          "faster than target because it buys almost nothing beyond what the reporter " +
+          "names. Fast is not on-target -- both directions count as red.",
       },
       {
         tier: 2,
         observed: 0.1706,
-        why:
-          "target 0.8, measured 0.171 (-79%): same early-tier overshoot as tier 1 -- " +
-          "the policy is still buying minimally and clearing milestones on cheap " +
-          "recipes before the constraints that stall it at tier 6 become binding.",
+        why: "target 0.8, measured 0.171 (-79%): the same minimal-buying overshoot as tier 1.",
       },
       {
         tier: 3,
         observed: 0.4133,
-        why:
-          "target 1.2, measured 0.413 (-66%): still well ahead of target. The gap to " +
-          "target narrows tier over tier as the stalling constraints (refine_rubber, " +
-          "power:burn_biomass, mine_copper_ore, make_screw) start to bind.",
+        why: "target 1.2, measured 0.413 (-66%): the same overshoot, narrowing tier over tier.",
       },
       {
         tier: 4,
-        observed: 0.5899,
-        why:
-          "target 1.9, measured 0.590 (-69%): ahead of target, same shrinking-lead " +
-          "trend as tiers 1-3 heading into the tier-6 stall.",
+        observed: 0.5953,
+        why: "target 1.9, measured 0.595 (-69%): the same overshoot.",
       },
       {
         tier: 5,
-        observed: 0.6977,
-        why:
-          "target 2.9, measured 0.698 (-76%): ahead of target; the run reaches tier 6 " +
-          "only 0.47 collections later before it stalls for good.",
+        observed: 0.6995,
+        why: "target 2.9, measured 0.700 (-76%): the same overshoot.",
       },
       {
         tier: 6,
-        observed: 1.1697,
+        observed: 0.9337,
         why:
-          "target 4.4, measured 1.170 (-73%), and this is now where bottleneck stops: " +
-          "it does not reach tier 7 within the 120-day budget. Fixed from the prior " +
-          "permanent tier-1 stall (was: reachesTier 1, dead time from day ~20) to a " +
-          "tier-6 stall, bound by refine_rubber and power:burn_biomass with " +
-          "mine_copper_ore and make_screw also binding -- a real but partial fix. " +
-          "`bottleneck` reaches 6 of 10 tiers and is nowhere near `greedy`, which " +
-          "reaches all 10.",
+          "target 4.4, measured 0.934 (-79%). Earlier than the 1.170 it was pinned at " +
+          "before 2026-10-09, because a starved generator now names its fuel supplier " +
+          "instead of another generator -- the policy no longer sinks purchases into " +
+          "biomass burners it cannot fuel.",
+      },
+      {
+        tier: 7,
+        observed: 1.2871,
+        why:
+          "target 6.8, measured 1.287 (-81%), and this is where bottleneck stops. The " +
+          "gridlock walk got it through the tier-6 oil-lane jam (fuel had no consumer, " +
+          "so it now buys fuel storage instead of a 51st refinery); at tier 7 the " +
+          "reporter advises quantum storage for packaged_fuel and the policy buys " +
+          "nothing, so the run is cut off for dead time. The next defect to investigate. " +
+          "`bottleneck` reaches 7 of 10 tiers; `greedy` reaches all 10.",
       },
     ],
   },
 ];
 
-/**
- * `bottleneck` no longer stalls at tier 1 forever -- the milestone-aware reporter fix
- * (this SDD plan, tasks 1-3) moved it from a permanent tier-1 stall to a tier-6 one.
- *
- * Measured 2026-09-19, seed 42, `slice.v1`, --max-days 120: reaches tier 6 (was tier 1),
- * 229 purchases, then stalls again -- binding constraints refine_rubber,
- * power:burn_biomass, mine_copper_ore and make_screw. At every tier it reaches it is
- * 66-82% FASTER than target, not slower: it still wins by buying almost nothing. This is
- * a real fix (6 of 10 tiers instead of 1 of 10) but not a complete one, and it lands
- * nowhere near `greedy`, which reaches all 10. See task-4-report.md for the full
- * before/after numbers.
- */
 export interface GateCliOptions {
   contentDir?: string;
   seed: number;
