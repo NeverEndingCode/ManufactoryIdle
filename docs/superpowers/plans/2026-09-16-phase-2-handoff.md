@@ -232,8 +232,16 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 > FIXED -- a starved generator now names what starves it. (2) The oil lane gridlocks:
 > `fuel` has no consumer at tier 6, so residue fills and the FULL sweep holds both
 > refineries at zero while the reporter keeps naming `refine_rubber` (50 refineries
-> bought). Designed in `specs/2026-10-09-byproduct-gridlock-design.md` -- the forward
-> walk, part (B). (3) Content part (A): give `fuel` a sink at tier 6 by moving
+> bought). FIXED -- the forward walk (`specs/2026-10-09-byproduct-gridlock-design.md`).
+> Measured by resuming `bottleneck` from the saved step-80 gridlocked state: step 0 now
+> advises storage for `fuel` (limitingTarget `item:rubber`) where it advised
+> `refine_rubber`; rubber rose from 8,192 at step 0, its `net` first printed positive
+> (0.242) at step 10, and the policy crossed into tier 7 at step 8. Run on from the
+> tier-6 checkpoint for 200 steps (sampled every 20, 0.98 to 1.84 offline caps): tier 6
+> clears before step 80, and by step 100 the advice is storage for `packaged_fuel`
+> (`upgrade: "quantum"`, tier 7 -> 8 needs 600 `packaged_fuel` and 800 `modular_frame`)
+> with no purchases emitted, unchanged through step 180. `bottleneck` stalls next at
+> tier 7. (3) Content part (A): give `fuel` a sink at tier 6 by moving
 > `burn_fuel` / `fuel_generator` down from tier 7, and teach the validator to check
 > byproduct sinks transitively (check 5 stops one hop short). **(A) needs an engine
 > change first:** `activeRecipe` is keyed by primary output and every generator's is
@@ -357,7 +365,8 @@ rediscovered as new.**
   milestone needs (spec 4.1 makes `paused` the remove verb) gets silence from the
   reporter instead of a blocker. No automated policy emits pause today, so this is
   human-CLI-only, not something the pacing gate can hit.
-- **The milestone branch checks FULL on the requirement item only, not on the output
+- **CLOSED 2026-10-09** by the gridlock walk, which checks every output of the recipe it
+  would name. **The milestone branch checks FULL on the requirement item only, not on the output
   of the recipe it names — pre-existing, not introduced by this change.** A milestone
   needing `cable`, limited by `make_wire`, with `wire` itself at cap, yields "buy N
   more wire machines" when the real answer is a storage level for `wire`. The old

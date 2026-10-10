@@ -714,6 +714,18 @@ The reporter now resolves the next milestone's unmet requirements first, resolvi
 unmet requirement to its own blocker (the waterfall has already chased its input chain),
 and falls back to the priority scan when the milestone is satisfied or nothing in it is
 blocked. The returned kinds are unchanged: a zero-capacity recipe is reported as
+
+**Amended 2026-10-09 (Phase 2): a recipe throttled by a full output is not the
+blocker.** Before naming any recipe, the reporter checks that recipe's outputs,
+byproducts included. If one is FULL, buying the recipe cannot help -- the solver's FULL
+sweep holds it at the drain rate -- so the reporter walks forward from the full item to
+its live consumers and names the first that is missing, too slow, or itself blocked
+further on; with no live consumer, it names storage for the full item. Measured cause:
+`bottleneck` bought 50 refineries into a gridlocked oil lane at tier 6 of the vertical
+slice, because `fuel` -- two hops past the rubber it was asked for -- had nowhere to go.
+The trigger is FULL **and held** (net >= -`FLOW_TOLERANCE`), and checks the target's own
+active recipe before the recipe the branch would name; a consumer's held outputs are
+checked before its capacity. See `specs/2026-10-09-byproduct-gridlock-design.md`.
 `kind: "recipe"`, because it genuinely is the binding constraint.
 
 ### C.4 Power
