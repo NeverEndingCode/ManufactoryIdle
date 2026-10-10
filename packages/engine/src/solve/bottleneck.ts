@@ -8,13 +8,16 @@
 // machinesToClear is the count that would make some other recipe the binding
 // constraint, which is what "6 more constructors clears it" means. The waterfall
 // already recorded the runner-up ratio, so no second solve is needed.
+//
+// Every answer is then priced, and one that can never be paid for -- a cost above its
+// item's liquid cap -- becomes storage advice for that payer.
 import { POWER_ITEM, type ItemId, type RecipeId } from "../content/types.js";
 import { isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
-import type { CapacityTable } from "../economy/capacity.js";
-import { liquid, type ItemStateTag } from "../economy/storage.js";
-import { levelCostRange } from "../economy/curves.js";
+import { bestUnlockedMark, type CapacityTable } from "../economy/capacity.js";
+import { liquid, liquidCap, type ItemStateTag } from "../economy/storage.js";
+import { levelCostRange, machineCostRange } from "../economy/curves.js";
 import { D, type Dec } from "../numbers/decimal.js";
-import type { WorldState } from "../state/world.js";
+import { installedAt, type WorldState } from "../state/world.js";
 import type { EntryAllocation } from "./waterfall.js";
 import type { PowerReport } from "./power.js";
 import { FLOW_TOLERANCE, type ItemFlow } from "./fixpoint.js";
@@ -70,11 +73,44 @@ function levelOf(record: Readonly<Record<string, number>>, key: string): number 
 }
 
 /**
+ * The first item in `costs` -- in the map's order, which is the curve's or the mark's
+ * authored order -- whose amount is more than that item can ever be held, or null if
+ * every one fits. Its liquid cap, not its stock: ruling R7 pays from liquid stock, so
+ * waiting fixes a shortfall of stock and only storage fixes a cap. `>` and not `>=`: a
+ * player holding exactly the cost can pay it.
+ */
+export function overflowingPayer(
+  content: IndexedContent,
+  state: WorldState,
+  costs: ReadonlyMap<ItemId, Dec>,
+): ItemId | null {
+  for (const [itemId, amount] of costs) {
+    if (amount.gt(liquidCap(content, state, itemId))) return itemId;
+  }
+  return null;
+}
+
+/** What one more level of `upgrade` for `itemId` costs. */
+function upgradeCost(
+  content: IndexedContent,
+  state: WorldState,
+  itemId: ItemId,
+  upgrade: StorageUpgrade,
+): Map<ItemId, Dec> {
+  if (upgrade === "storage") {
+    return levelCostRange(content.bundle.storage, levelOf(state.storageLevel, itemId), 1);
+  }
+  const lane = content.items.get(itemId)!.lane;
+  return levelCostRange(content.bundle.quantumStorage, levelOf(state.qsLevel, lane), 1);
+}
+
+/**
  * Which container to buy when a cap is what binds. Cheaper next level wins; a curve
  * already at maxLevel is not a candidate. Only one level is ever recommended -- the
  * caller re-solves after buying, so an iterative honest answer beats quoting a
  * "levels to clear" count derived from the same 10%-lift heuristic that produced the
- * bad machine advice in the first place.
+ * bad machine advice in the first place. Of the open curves, one whose next level fits
+ * under its cost item's liquid cap is preferred over one that never can.
  */
 function cheaperUpgrade(
   content: IndexedContent,
@@ -92,10 +128,19 @@ function cheaperUpgrade(
   if (!qsOpen) return "storage";
   if (!storageOpen) return "quantum";
 
-  // Both open: compare what one more level costs. Each curve names a single cost
-  // item, and they need not be the same one, so compare the amounts that are there.
+  // Both open. Prefer one whose next level can ever be paid for -- measured on the
+  // slice at tier 7, both of packaged_fuel's overflowed iron_plate's 4,000 cap, and on a
+  // bundle that pays the two curves in different items the cheaper one can overflow
+  // while the dearer fits. When neither fits, the cheaper is still named and the final
+  // `payable` step redirects to the payer.
   const storageCost = levelCostRange(content.bundle.storage, storageLevel, 1);
   const qsCost = levelCostRange(content.bundle.quantumStorage, qsLevel, 1);
+  const storageFits = overflowingPayer(content, state, storageCost) === null;
+  const qsFits = overflowingPayer(content, state, qsCost) === null;
+  if (storageFits !== qsFits) return storageFits ? "storage" : "quantum";
+
+  // Each curve names a single cost item, and they need not be the same one, so compare
+  // the amounts that are there.
   const total = (costs: Map<ItemId, Dec>): Dec =>
     [...costs.values()].reduce((sum, amount) => sum.plus(amount), D(0));
   return total(qsCost).lt(total(storageCost)) ? "quantum" : "storage";
@@ -328,7 +373,73 @@ function resolveBlocker(
   return null;
 }
 
-export function computeBottleneck(
+/** The cost of one machine of `recipeId`'s class at the best unlocked mark, or null. */
+function machinePrice(
+  content: IndexedContent,
+  state: WorldState,
+  recipeId: RecipeId,
+): Map<ItemId, Dec> | null {
+  const recipe = content.recipes.get(recipeId);
+  if (!recipe) return null;
+  const mark = bestUnlockedMark(content, recipe.machineClass, state.tier);
+  if (mark === null) return null;
+  const owned = installedAt(state, recipe.lane, recipe.machineClass, mark);
+  return machineCostRange(content, recipe.machineClass, mark, owned, 1);
+}
+
+/**
+ * The purchase an answer implies, priced the way the `bottleneck` policy prices it:
+ * one level for storage advice, ONE machine for recipe and generator advice (the
+ * policy falls back to one when it cannot afford more, so one is what must be
+ * possible). Null when the answer implies no purchase.
+ */
+function priceOf(walk: WalkContext, answer: NonNullable<Bottleneck>): Map<ItemId, Dec> | null {
+  const { content, state } = walk;
+  switch (answer.kind) {
+    case "storage":
+      return answer.upgrade === null ? null : upgradeCost(content, state, answer.itemId, answer.upgrade);
+    case "recipe":
+      return machinePrice(content, state, answer.recipeId);
+    case "power":
+      return answer.generatorRecipeId === null ? null : machinePrice(content, state, answer.generatorRecipeId);
+  }
+}
+
+/**
+ * The final step every answer passes through (spec §4.5, amended 2026-10-10). A
+ * purchase that costs more of some item than that item can be held can never be made,
+ * so the advice becomes storage for that payer -- priced the same way, so a payer whose
+ * own upgrade overflows steps back again. Measured cause: `bottleneck` stalled at tier 7
+ * of the vertical slice told to buy a 4,473 iron_plate Quantum Storage level while
+ * iron_plate could hold 4,000; one iron_plate storage level, 90, was the way out.
+ * `visited` bounds the steps at one per payer; reaching one twice, or a payer with both
+ * curves maxed, ends at `upgrade: null` -- the honest wall, which check 12 makes
+ * unreachable at the deepest tier but not before it.
+ */
+function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
+  if (answer === null) return null;
+  const { content, state } = walk;
+  const visited = new Set<ItemId>();
+  let current: NonNullable<Bottleneck> = answer;
+  for (;;) {
+    const costs = priceOf(walk, current);
+    if (costs === null) return current;
+    const payer = overflowingPayer(content, state, costs);
+    if (payer === null) return current;
+    if (visited.has(payer)) {
+      return { kind: "storage", itemId: payer, limitingTarget: answer.limitingTarget, upgrade: null };
+    }
+    visited.add(payer);
+    current = {
+      kind: "storage",
+      itemId: payer,
+      limitingTarget: answer.limitingTarget,
+      upgrade: cheaperUpgrade(content, state, payer),
+    };
+  }
+}
+
+function adviseBottleneck(
   content: IndexedContent,
   capacity: CapacityTable,
   entries: readonly EntryAllocation[],
@@ -452,4 +563,17 @@ export function computeBottleneck(
     limitingTarget: firstLimited.entryId,
     machinesToClear: machinesToClearRecipe(capacity, firstLimited),
   };
+}
+
+export function computeBottleneck(
+  content: IndexedContent,
+  capacity: CapacityTable,
+  entries: readonly EntryAllocation[],
+  power: PowerReport,
+  state: WorldState,
+  itemStates: ReadonlyMap<ItemId, ItemStateTag>,
+  itemRates: ReadonlyMap<ItemId, ItemFlow>,
+): Bottleneck {
+  const answer = adviseBottleneck(content, capacity, entries, power, state, itemStates, itemRates);
+  return payable({ content, capacity, state, itemStates, itemRates }, answer);
 }

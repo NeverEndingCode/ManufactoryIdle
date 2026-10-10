@@ -9,7 +9,8 @@ import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
 import { indexContent, isLiveRecipe } from "../graph/index-content.js";
 import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
-import { quantumCap, storageCap } from "../economy/storage.js";
+import { liquidCap, quantumCap, storageCap } from "../economy/storage.js";
+import { levelCostRange, machineCostRange } from "../economy/curves.js";
 import { POWER_ITEM } from "../content/types.js";
 import { D } from "../numbers/decimal.js";
 import { computeBottleneck } from "./bottleneck.js";
@@ -559,6 +560,204 @@ describe("the gridlock walk", () => {
       recipeId: "residual_fuel",
       limitingTarget: "power",
       machinesToClear: 1,
+    });
+  });
+});
+
+describe("payable advice", () => {
+  // Measured 2026-10-10 on the vertical slice: `bottleneck` stalled at tier 7 told to
+  // buy a Quantum Storage level costing 4,473 iron_plate while iron_plate could hold
+  // 4,000. Purchases are paid from liquid stock (ruling R7), so that advice could never
+  // be followed. One iron_plate storage level, 90, was the way out.
+  //
+  // Fixture numbers these tests stand on: iron_plate's liquid cap is 1,500 at storage
+  // and QS level 0; storage levels cost 50 * 1.5^L iron_plate, Quantum Storage levels
+  // 500 * 1.55^L. The grid is raised so no setup reaches the power branch by accident.
+  const variant = (over: Partial<typeof fixtureBundle>) =>
+    indexContent({
+      ...fixtureBundle,
+      baseGridCapacityMw: 100_000,
+      milestones: [
+        {
+          tier: 3,
+          name: "Plastics",
+          requires: [{ item: "plastic", amount: 100_000 }],
+          laneMultipliers: {},
+        },
+      ],
+      ...over,
+    });
+
+  /** One extractor and one refinery on refine_plastic, so plastic's recipe has capacity
+   *  and a FULL plastic reaches the storage branch rather than the zero-machines one. */
+  function oilWorld(c: ReturnType<typeof variant>, refineries = 1): WorldState {
+    let w: WorldState = { ...initialWorld(c, 1, 0), tier: 2 };
+    w = withInstalled(w, "oil", "extractor", 1, 2 * refineries);
+    w = withInstalled(w, "oil", "refinery", 1, refineries);
+    return {
+      ...w,
+      assignment: { ...w.assignment, extract_oil: 2 * refineries, refine_plastic: refineries },
+    };
+  }
+
+  const withLevels = (
+    w: WorldState,
+    storage: Record<string, number>,
+    qs: Record<string, number>,
+  ): WorldState => ({
+    ...w,
+    storageLevel: { ...w.storageLevel, ...storage },
+    qsLevel: { ...w.qsLevel, ...qs },
+  });
+
+  const cost = (m: Map<string, { toNumber(): number }>, item: string) => m.get(item)!.toNumber();
+
+  it("names storage for the payer when the advised level costs more than it can hold", () => {
+    const c = variant({});
+    let w = withLevels(oilWorld(c), { plastic: 9 }, { oil: 3 });
+    w = atCap(w, "plastic");
+    // Preconditions: both of plastic's next levels overflow iron_plate's cap.
+    const ironCap = liquidCap(c, w, "iron_plate").toNumber();
+    expect(ironCap).toBe(1500);
+    expect(cost(levelCostRange(c.bundle.storage, 9, 1), "iron_plate")).toBeGreaterThan(ironCap);
+    expect(cost(levelCostRange(c.bundle.quantumStorage, 3, 1), "iron_plate")).toBeGreaterThan(ironCap);
+
+    expect(solve(w, c, NO_FLOOR).bottleneck).toEqual({
+      kind: "storage",
+      itemId: "iron_plate",
+      // Still "what is stopping your plastic".
+      limitingTarget: "item:plastic",
+      upgrade: "storage",
+    });
+  });
+
+  it("picks the dearer upgrade when the cheaper one can never be paid for", () => {
+    // Quantum Storage paid in heavy_oil_residue, which can hold 500: its 600 level is
+    // cheaper than storage's 854 iron_plate, and can never be bought.
+    const c = variant({
+      quantumStorage: { ...fixtureBundle.quantumStorage, baseCostItem: "heavy_oil_residue", baseCostAmount: 600 },
+    });
+    let w = withLevels(oilWorld(c), { plastic: 7 }, {});
+    w = atCap(w, "plastic");
+    expect(liquidCap(c, w, "heavy_oil_residue").toNumber()).toBe(500);
+    expect(cost(levelCostRange(c.bundle.quantumStorage, 0, 1), "heavy_oil_residue")).toBe(600);
+    expect(cost(levelCostRange(c.bundle.storage, 7, 1), "iron_plate")).toBeLessThanOrEqual(1500);
+
+    expect(solve(w, c, NO_FLOOR).bottleneck).toEqual({
+      kind: "storage",
+      itemId: "plastic",
+      limitingTarget: "item:plastic",
+      upgrade: "storage",
+    });
+  });
+
+  it("names payer storage for a machine it can never pay for", () => {
+    // Refinery #31 costs 3,595 iron_plate against a cap of 1,500 -- the refinery-#51
+    // shape the gridlock spec set aside.
+    const c = variant({ milestones: [{ tier: 3, name: "Plastics", requires: [{ item: "plastic", amount: 100 }], laneMultipliers: {} }] });
+    const w = oilWorld(c, 30);
+    expect(cost(machineCostRange(c, "refinery", 1, 30, 1), "iron_plate")).toBeGreaterThan(
+      liquidCap(c, w, "iron_plate").toNumber(),
+    );
+    const sol = solve(w, c, NO_FLOOR);
+    expect(sol.bottleneck).toEqual({
+      kind: "storage",
+      itemId: "iron_plate",
+      limitingTarget: "item:plastic",
+      upgrade: "storage",
+    });
+  });
+
+  it("names payer storage for a generator it can never pay for", () => {
+    // Hand-built brownout at tier 3, where burn_fuel is the active generator: 25
+    // installed, so generator #26 costs 1,725 iron_plate against 1,500.
+    const c = variant({ milestones: [] });
+    let w: WorldState = { ...initialWorld(c, 1, 0), tier: 3 };
+    w = withInstalled(w, "oil", "generator", 1, 25);
+    w = { ...w, assignment: { ...w.assignment, burn_fuel: 25 } };
+    const sol = solve(w, c, NO_FLOOR);
+    const ironCap = liquidCap(c, w, "iron_plate").toNumber();
+    expect(sol.capacity.unitsByRecipe.get("burn_fuel") ?? 0).toBeGreaterThan(0);
+    expect(cost(machineCostRange(c, "generator", 1, 25, 1), "iron_plate")).toBeGreaterThan(ironCap);
+    const b = computeBottleneck(
+      c,
+      sol.capacity,
+      [
+        {
+          entryId: "power",
+          itemId: POWER_ITEM,
+          requested: 400,
+          allocated: 0,
+          // The generator itself, so the branch gives generator advice, not supplier advice.
+          limitedBy: "burn_fuel",
+          limitingPerUnit: 1,
+          runnerUpRate: Number.POSITIVE_INFINITY,
+        },
+      ],
+      { demandMw: 200, fullDemandMw: 400, supplyMw: 200, ratio: 0.5, passes: 1 },
+      w,
+      sol.itemStates,
+      sol.itemRates,
+    );
+    expect(b).toEqual({
+      kind: "storage",
+      itemId: "iron_plate",
+      limitingTarget: "power",
+      upgrade: "storage",
+    });
+  });
+
+  it("ends at no upgrade when nothing anywhere fits", () => {
+    // Cost curves that outgrow capacity (costGrowth 3): plastic's next levels overflow
+    // iron_plate's cap, and so do iron_plate's own.
+    const c = variant({
+      storage: { ...fixtureBundle.storage, costGrowth: 3 },
+      quantumStorage: { ...fixtureBundle.quantumStorage, costGrowth: 3 },
+    });
+    let w = withLevels(oilWorld(c), { plastic: 6, iron_plate: 6 }, { oil: 3, iron: 3 });
+    w = atCap(w, "plastic");
+    const ironCap = liquidCap(c, w, "iron_plate").toNumber();
+    expect(cost(levelCostRange(c.bundle.storage, 6, 1), "iron_plate")).toBeGreaterThan(ironCap);
+    expect(cost(levelCostRange(c.bundle.quantumStorage, 3, 1), "iron_plate")).toBeGreaterThan(ironCap);
+
+    expect(solve(w, c, NO_FLOOR).bottleneck).toEqual({
+      kind: "storage",
+      itemId: "iron_plate",
+      limitingTarget: "item:plastic",
+      upgrade: null,
+    });
+  });
+
+  it("leaves advice the player can afford later alone", () => {
+    // Next storage level 380 iron_plate, within the 1,500 cap, with NO iron_plate in
+    // stock: waiting for income is the right advice, so it is unchanged.
+    const c = variant({});
+    let w = withLevels(oilWorld(c), { plastic: 5 }, {});
+    w = atCap(w, "plastic");
+    w = { ...w, stored: { ...w.stored, iron_plate: D(0) }, quantum: { ...w.quantum, iron_plate: D(0) } };
+    expect(solve(w, c, NO_FLOOR).bottleneck).toEqual({
+      kind: "storage",
+      itemId: "plastic",
+      limitingTarget: "item:plastic",
+      upgrade: "storage",
+    });
+
+    // Boundary: a cost EXACTLY equal to the cap fits -- a player holding it can pay. A
+    // variant storage curve makes plastic's level-5 cost exactly 1,500 against
+    // iron_plate's 1,500 cap, and QS(oil) level 3 (1,862) overflows, so storage is the
+    // only upgrade that can fit. With `>=` it would not, and the advice would move to
+    // iron_plate.
+    const tight = variant({ storage: { ...fixtureBundle.storage, baseCostAmount: 1500 / 7.59375 /* 1.5^5 */ } });
+    let t = withLevels(oilWorld(tight), { plastic: 5 }, { oil: 3 });
+    t = atCap(t, "plastic");
+    expect(liquidCap(tight, t, "iron_plate").toNumber()).toBe(1500);
+    expect(cost(levelCostRange(tight.bundle.storage, 5, 1), "iron_plate")).toBe(1500);
+    expect(cost(levelCostRange(tight.bundle.quantumStorage, 3, 1), "iron_plate")).toBeGreaterThan(1500);
+    expect(solve(t, tight, NO_FLOOR).bottleneck).toEqual({
+      kind: "storage",
+      itemId: "plastic",
+      limitingTarget: "item:plastic",
+      upgrade: "storage",
     });
   });
 });
