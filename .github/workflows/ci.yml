@@ -71,7 +71,11 @@ jobs:
     # gone the gate takes 85m18s locally (greedy 2m29s, casual 6m29s, bottleneck 85m17s,
     # determinism rerun 2m30s). The slowest two-core lane is about 85m17s locally,
     # ~207 minutes at the 2.43x runner factor, which STILL exceeds the 90-minute cap.
-    # `timeout-minutes` is left unchanged pending a decision on it.
+    # The remaining 85 minutes is NOT known to be needed simulation: a second cycle is
+    # left. Once reinforced_iron_plate is FULL (~2,270 s after the slice-tier-8 fixture),
+    # screw alone pins and un-pins ~5,000 times per 120 s resolve and trips MAX_EVENTS
+    # (the old per-entry R32 cycled there too, as iron_plate/screw). Fix that before
+    # deciding on the cap. `timeout-minutes` is left unchanged pending that decision.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4

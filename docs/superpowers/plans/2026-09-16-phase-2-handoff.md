@@ -424,11 +424,24 @@ rediscovered as new.**
 > factor the pacing job will exceed `.github/workflows/ci.yml`'s `timeout-minutes: 90`,
 > which is unchanged and needs a decision.
 >
-> **Partly fixed 2026-10-10 (R32 asked jointly):** about 50 of the 135 minutes was a solver
+> **Partly fixed 2026-10-10 (R32 asked jointly):** part of the 135 minutes was a solver
 > cycle, not needed simulation -- see `docs/superpowers/specs/2026-10-10-coupled-empty-pins-design.md`.
 > The gate now takes 85m18s locally (greedy 2m29s, casual 6m29s, bottleneck 85m17s,
 > determinism rerun 2m30s). That is still ~207 minutes at the 2.43x runner factor, over
-> the 90-minute cap, so the decision on it remains open.
+> the 90-minute cap, so the decision on it remains open. The 50-minute drop is not purely
+> the cycle's cost: bottleneck's trajectory changed too (500 purchases against 514, tier 10
+> at 5.58 days against 5.87). Pins moved: bottleneck tiers 8-10, and casual tier 10
+> (205.0095 -> 205.0120 days). Casual does not read the reporter, so that move is the
+> solver change itself; it is negligible.
+>
+> **Next follow-up: a second cycle remains.** Once `reinforced_iron_plate` is FULL (about
+> 2,270 s of play after the `slice-tier-8` fixture), `screw` alone pins and un-pins --
+> ~5,000 `drain:screw` events in one 120 s resolve, tripping MAX_EVENTS. It is not a
+> regression (from the same state the per-entry R32 cycled `iron_plate`/`screw`), but it
+> is the same kind of R32 escape, with the shared consumer FULL rather than starved. So
+> the remaining 85 minutes is not known to be needed simulation: fix this, with a frozen
+> fixture taken just before `reinforced_iron_plate` fills as the failing test, before
+> raising `timeout-minutes`.
 
 **The pacing gate needs a per-policy day budget.** Fixing the advice made the gate three
 times slower, for a reason worth understanding: a policy that makes progress simulates far

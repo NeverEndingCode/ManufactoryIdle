@@ -684,7 +684,9 @@ all candidates and releasing until stable, with an item's entries (ordinary and
 `reserve:`) treated as one. Measured cause: `iron_plate` and `screw`, both feeding
 `make_reinforced_iron_plate`, each looked sustainable only while the other's entry
 starved the shared consumer; neither was disqualified, and the pair cycled 6,668 times
-in 120 s of the vertical slice, which accounted for about 50 of the pacing gate's 135 minutes.
+in 120 s of the vertical slice, part of why the pacing gate took 135 minutes (it now
+takes 85). Not yet covered: once `reinforced_iron_plate` is FULL, `screw` alone still
+cycles (~5,000 events per 120 s resolve); see the Phase 2 handoff.
 
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
