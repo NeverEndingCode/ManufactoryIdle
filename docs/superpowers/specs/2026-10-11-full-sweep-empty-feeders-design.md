@@ -44,15 +44,26 @@ which lets its walkers draw from stock (net −34/s), which drains it, which re-
 
 ### The rule
 
-In the FULL sweep, an item pinned EMPTY whose production exactly matched its consumption
-in the waterfall's output is treated like a FULL item. If, by the time the sweep reaches
-it, its production exceeds its consumption, its producers are scaled down to match.
+In the FULL sweep, an item is treated like a FULL item when it is pinned EMPTY, its
+production exactly matched its consumption in the waterfall's output, and **no entry may
+bank it**: every live (unpaused) entry for the item is in the waterfall's R32
+`disqualified` set, or it has no live entry. If, by the time the sweep reaches it, its
+production exceeds its consumption, its producers are scaled down to match.
 
 The reasoning: a pinned EMPTY item balanced at net 0 is produced only to feed its
-consumers. Nobody banks it (if its own entry could bank it sustainably, R32 would have
-released it, and the waterfall's output would show a positive net). When the sweep
-throttles those consumers, the production that existed only to feed them follows them
-down.
+consumers. When the sweep throttles those consumers, the freed production has nowhere
+legitimate to go if no entry may bank the item, either because there is no live entry
+or because R32 has already ruled that banking it is unsustainable. Banking it anyway is
+what restarts the pin/unpin cycle, so that production follows the consumers down.
+
+If an entry *may* bank the item, the freed production is legitimate banking for the next
+entry in line, and the sweep leaves it alone, as today. Measured on the fixture bundle:
+with `iron_plate` at cap and one smelter feeding one constructor, `iron_ingot` (pinned
+EMPTY) is balanced before the sweep. With `item:iron_ingot` live and not disqualified,
+the freed smelter banks ingot at +0.5/s, which un-pins it without any cycle. A version
+of this rule without the "no entry may bank it" condition idled that smelter and left
+`iron_ingot` stuck at zero. That version was found while writing the plan, after this
+spec was first approved.
 
 ### The computation
 
@@ -60,9 +71,10 @@ In `solvePass` (`packages/engine/src/solve/fixpoint.ts`):
 
 1. Before the sweep, snapshot `computeFlows` at the waterfall's clocks: the **pre-sweep
    flows**.
-2. The downstream-first sweep visits an item when it is FULL (as today) **or** it is in
-   `pinnedEmpty` and its pre-sweep production ≤ its pre-sweep consumption +
-   `FLOW_TOLERANCE` (balanced).
+2. The downstream-first sweep visits an item when it is FULL (as today) **or** all
+   three hold: it is in `pinnedEmpty`; its pre-sweep production ≤ its pre-sweep
+   consumption + `FLOW_TOLERANCE` (balanced); and no entry with `!paused` and that
+   `itemId` is outside `waterfall.disqualified` (no entry may bank it).
 3. For a visited item, the existing body runs unchanged. If current production exceeds
    current consumption by more than `FLOW_TOLERANCE`, every producer is scaled by
    consumption / production and added to `sweepTouched`.
@@ -82,16 +94,20 @@ final) holds unchanged.
   expects the miner to stay at clock 1 after the `iron_ingot` throttle. A broader variant
   of this rule, which trimmed every sweep-created surplus on an EMPTY item, broke that
   test. The test stays as it is.
+- **A balanced pinned EMPTY item that an entry may still bank**: skipped, as today (the
+  fixture case above).
 - FULL items, the R30 EMPTY sweep, R32, the reconciliation pass, `resolve`, the
   bottleneck reporter and the policies.
 
 ### Determinism and cost
 
-Pure arithmetic in a fixed order, with no clock. It costs one extra `computeFlows` per
+Pure arithmetic in a fixed order, with no clock. The "no entry may bank it" check
+reads `waterfall.disqualified`, which the first `runWaterfall` call already returns. It costs one extra `computeFlows` per
 `solvePass`, plus one per newly visited item, the same per-item cost the sweep already
 pays. Measured with a throwaway version of this rule: the step that held 5,001 events
-holds 1 (the fill), the run stays quiet through 7,080 s, and the engine suite passes
-391/391.
+holds 1 (the fill), and the run stays quiet through 2,880 s. The engine suite, with
+acceptance tests 1-2 added, passes 393/393. Acceptance test 4 passes in the `resolve`
+suite. Each new test fails with the rule removed.
 
 ## Out of scope
 
@@ -108,20 +124,24 @@ holds 1 (the fill), the run stays quiet through 7,080 s, and the engine suite pa
 
 Unit tests, each asserting its preconditions first, each guard mutation-checked:
 
-1. **Balanced EMPTY feeder of a FULL item** (`fixpoint.test.ts`): an item pinned EMPTY,
-   balanced in the waterfall's output, whose only consumer makes an item at cap. Assert
-   these preconditions first: the feeder is pinned and its pre-sweep net is 0. After
-   `solvePass`, the feeder's net is 0 (not positive) and its producer's clock was scaled
-   by the same factor as the FULL item's producer. Fails today. If the test fixture has
-   no single-input chain that fits, use a minimal in-test bundle.
-2. **A banking EMPTY item is untouched**: the existing C.2 test passes unchanged
-   (`mine_iron` stays at clock 1).
-3. **Resolve, the measured case** (`resolve.test.ts`): a frozen world saved just before
+1. **A balanced EMPTY feeder nobody may bank** (`fixpoint.test.ts`, fixture bundle):
+   `iron_plate` at cap, `smelt_iron` assigned 1 unit, `item:iron_ingot` paused,
+   `iron_ore` and `iron_ingot` pinned. Preconditions: the waterfall alone runs
+   `smelt_iron` at clock 1 and `make_plate` at 1 unit. After `solvePass`, `make_plate`
+   and `smelt_iron` are both at clock 0, and `iron_ingot`'s net is 0. Fails today
+   (`smelt_iron` stays at 1).
+2. **A balanced EMPTY feeder an entry may bank**: the same world with `item:iron_ingot`
+   live. Precondition: it is not disqualified. `smelt_iron` stays at clock 1, and
+   `iron_ingot`'s net is +0.5. Passes today, and fails without the "no entry may bank
+   it" condition.
+3. **A banking EMPTY item is untouched**: the existing C.2 test passes unchanged
+   (`mine_iron` stays at clock 1). It fails without the "balanced" condition.
+4. **Resolve, the measured case** (`resolve.test.ts`): a frozen world saved just before
    `reinforced_iron_plate` fills (2,280 s after `slice-tier-8`, committed as
    `fixtures/slice-tier-8-reinforced-full.world.json`). A 120 s resolve finishes with the
    guard untripped, a `fill` of `reinforced_iron_plate`, no `drain` of `screw`, and fewer
    than 20 events. Today it trips the guard.
-4. **Existing properties**: the full suite, including `fuzz.test.ts` and
+5. **Existing properties**: the full suite, including `fuzz.test.ts` and
    `properties.test.ts`, passes.
 
 Measured on the vertical slice:
@@ -139,10 +159,12 @@ that amendment's "Not yet covered" sentence replaced with a pointer to this one:
 
 > **Amended 2026-10-11 (Phase 2): the FULL sweep throttles balanced EMPTY feeders.** The
 > downstream-first FULL sweep (R6) also visits an item pinned EMPTY whose production
-> matched its consumption in the waterfall's output, and scales its producers to its
-> consumption when a throttle further down has cut that consumption. Without this, a
-> FULL consumer's throttle left its EMPTY feeder with a surplus that only the sweep had
-> made. The surplus lifted the feeder off zero and restarted R32's pin/unpin cycle. A
-> pinned EMPTY item that was already banking is not visited. Measured cause: once
+> matched its consumption in the waterfall's output and that no entry may bank (every
+> live entry for it is R32-disqualified, or it has none). It scales the item's producers
+> to its consumption when a throttle further down has cut that consumption. Without
+> this, a FULL consumer's throttle left its EMPTY feeder with a surplus that only the
+> sweep had made. The surplus lifted the feeder off zero and restarted R32's pin/unpin
+> cycle. A pinned EMPTY item that was already banking, or that an entry may still bank,
+> is not visited. Measured cause: once
 > `reinforced_iron_plate` filled, `screw` cycled ~5,000 times per 120 s resolve of the
 > vertical slice.
