@@ -1,7 +1,7 @@
 # R32 for coupled EMPTY items
 
 **Amends:** spec C.3 (the solver), ruling R32 (Phase 1 task 14b).
-**Status:** approved 2026-10-10, not yet implemented.
+**Status:** implemented 2026-10-10 (commit 0c666a1).
 **Branch:** `worktree-phase-2-content`.
 **Follows:** `2026-10-10-payable-advice-design.md`. With payable advice in, `bottleneck`
 finishes all ten tiers -- and the pacing gate takes 135 minutes against CI's 90.

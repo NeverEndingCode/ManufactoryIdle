@@ -64,6 +64,14 @@ jobs:
     # run, and the 135m17s total is from the final one). At the 2.43x
     # runner factor the pacing job WILL exceed `timeout-minutes: 90`. The value is left
     # unchanged pending a decision on it (raise it, or make `bottleneck` cheaper).
+    #
+    # PARTLY FIXED 2026-10-10 (R32 asked jointly): part of bottleneck's 135 minutes was one
+    # solver cycle -- iron_plate and screw pinning and un-pinning 6,668 times per 120 s
+    # resolve, tripping the MAX_EVENTS guard -- not simulation the gate needed. With it
+    # gone the gate takes 85m18s locally (greedy 2m29s, casual 6m29s, bottleneck 85m17s,
+    # determinism rerun 2m30s). The slowest two-core lane is about 85m17s locally,
+    # ~207 minutes at the 2.43x runner factor, which STILL exceeds the 90-minute cap.
+    # `timeout-minutes` is left unchanged pending a decision on it.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4

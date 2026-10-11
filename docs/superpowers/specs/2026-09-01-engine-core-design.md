@@ -675,6 +675,17 @@ provable bound, not a hope. At 31 items that is a worst case of 31 and a typical
 × ~3 power passes ≈ 4,000 operations. Microseconds. An 8-hour resolve with 20 events is 20
 of those.
 
+**Amended 2026-10-10 (Phase 2): R32 for coupled EMPTY items.** Ruling R32 disqualifies
+an entry from drawing on its own item's producing recipe when that item is pinned
+EMPTY and, were it not pinned, would drain -- a surplus there un-pins the item and
+starts a pin/unpin limit cycle. The question is asked jointly: each candidate item is
+tested with every other disqualified item's entries still disqualified, starting from
+all candidates and releasing until stable, with an item's entries (ordinary and
+`reserve:`) treated as one. Measured cause: `iron_plate` and `screw`, both feeding
+`make_reinforced_iron_plate`, each looked sustainable only while the other's entry
+starved the shared consumer; neither was disqualified, and the pair cycled 6,668 times
+in 120 s of the vertical slice, which made the pacing gate take 135 minutes.
+
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
 grid is binding.

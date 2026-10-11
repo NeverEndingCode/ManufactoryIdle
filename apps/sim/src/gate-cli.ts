@@ -75,7 +75,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       { tier: 7, observed: 42.0167, why: CASUAL },
       { tier: 8, observed: 62.0021, why: CASUAL },
       { tier: 9, observed: 89.0014, why: CASUAL },
-      { tier: 10, observed: 205.0095, why: CASUAL },
+      { tier: 10, observed: 205.0120, why: CASUAL + " Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items)." },
     ],
   },
   {
@@ -84,7 +84,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     // Measured 2026-10-10 after payable advice: the reporter now prices its advice, so
     // the tier-7 stall (a 4,473 iron_plate storage level against a 4,000 cap) no longer
     // happens and the run goes on. `bottleneck` now FINISHES all 10
-    // tiers (dead time 0.221 collections), so there is no `reachesTier`; every tier
+    // tiers (dead time 0.225 collections), so there is no `reachesTier`; every tier
     // still lands far earlier than target.
     knownRed: [
       {
@@ -136,23 +136,26 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 8,
-        observed: 1.6482,
+        observed: 1.6678,
         why:
-          "target 11, measured 1.648 (-85%): the same minimal-buying overshoot, now reached " +
-          "because the run no longer stalls at tier 7.",
+          "target 11, measured 1.668 (-85%): the same minimal-buying overshoot, now reached " +
+          "because the run no longer stalls at tier 7. Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items).",
       },
       {
         tier: 9,
-        observed: 3.1939,
-        why: "target 16, measured 3.194 (-80%): the same overshoot, with the gap narrowing.",
+        observed: 3.0791,
+        why:
+          "target 16, measured 3.079 (-81%): the same overshoot, with the gap narrowing. " +
+          "Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items).",
       },
       {
         tier: 10,
-        observed: 5.8707,
+        observed: 5.5792,
         why:
-          "target 25, measured 5.871 (-77%): bottleneck now finishes all 10 tiers, but " +
-          "at under a quarter of the target time (514 purchases, dead time 0.221 " +
-          "collections). `greedy` reaches tier 10 at 20.87 and `casual` at 205.01.",
+          "target 25, measured 5.579 (-78%): bottleneck now finishes all 10 tiers, but " +
+          "at under a quarter of the target time (500 purchases, dead time 0.225 " +
+          "collections). `greedy` reaches tier 10 at 20.87 and `casual` at 205.01. " +
+          "Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items).",
       },
     ],
   },

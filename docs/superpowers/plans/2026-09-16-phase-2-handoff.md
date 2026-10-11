@@ -423,6 +423,12 @@ rediscovered as new.**
 > 6m24s, determinism rerun 2m29s, bottleneck 135m17s), not 812s. At the 2.43x runner
 > factor the pacing job will exceed `.github/workflows/ci.yml`'s `timeout-minutes: 90`,
 > which is unchanged and needs a decision.
+>
+> **Fixed 2026-10-10 (R32 asked jointly):** the 135 minutes was a solver cycle, not
+> needed simulation -- see `docs/superpowers/specs/2026-10-10-coupled-empty-pins-design.md`.
+> The gate now takes 85m18s locally (greedy 2m29s, casual 6m29s, bottleneck 85m17s,
+> determinism rerun 2m30s). That is still ~207 minutes at the 2.43x runner factor, over
+> the 90-minute cap, so the decision on it remains open.
 
 **The pacing gate needs a per-policy day budget.** Fixing the advice made the gate three
 times slower, for a reason worth understanding: a policy that makes progress simulates far
