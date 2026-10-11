@@ -147,4 +147,4 @@ To be added to `2026-09-01-engine-core-design.md` §C.3, after the cost paragrap
 > `reserve:`) treated as one. Measured cause: `iron_plate` and `screw`, both feeding
 > `make_reinforced_iron_plate`, each looked sustainable only while the other's entry
 > starved the shared consumer; neither was disqualified, and the pair cycled 6,668 times
-> in 120 s of the vertical slice, which made the pacing gate take 135 minutes.
+> in 120 s of the vertical slice, which accounted for about 50 of the pacing gate's 135 minutes.
