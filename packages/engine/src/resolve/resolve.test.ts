@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
@@ -6,6 +7,7 @@ import { indexContent } from "../graph/index-content.js";
 import { liquid, liquidCap } from "../economy/storage.js";
 import { initialWorld, type WorldState } from "../state/world.js";
 import { solve } from "../solve/solve.js";
+import { deserializeWorld } from "../state/serialize.js";
 import { buildWorld } from "../testing/arbitrary.js";
 import { COARSE_STEP_MS, EPSILON_MS, MAX_EVENTS, resolve } from "./index.js";
 
@@ -409,5 +411,27 @@ describe("task 14c: the milestone knife-edge", () => {
         }
       }
     }
+  });
+});
+
+describe("resolve — coupled EMPTY items settle (R32)", () => {
+  // The measured case itself: the vertical slice at tier 8 as `bottleneck` left it,
+  // saved 2026-10-10. Over the next 120 s iron_plate and screw both drain to zero.
+  // Before R32 tested items jointly, the pair then cycled at microsecond spacing --
+  // 6,668 events and the MAX_EVENTS guard. Now each drains once and stays pinned.
+  // The world is frozen data: if the slice's content changes underneath it, this test
+  // may stop reaching the coupled state, but it cannot start passing for a wrong reason.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+  const worldFile = fileURLToPath(new URL("./fixtures/slice-tier-8.world.json", import.meta.url));
+
+  it("drains each item once instead of cycling", () => {
+    const start = deserializeWorld(readFileSync(worldFile, "utf8"));
+    const out = resolve(start, slice, 120_000);
+    expect(out.summary.guardTripped).toBe(false);
+    const drains = out.events.filter((e) => e.kind === "drain").map((e) => e.itemId);
+    expect(drains).toContain("iron_plate");
+    expect(drains).toContain("screw");
+    expect(out.events.length).toBeLessThan(20);
   });
 });
