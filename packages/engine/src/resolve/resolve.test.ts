@@ -435,3 +435,25 @@ describe("resolve — coupled EMPTY items settle (R32)", () => {
     expect(out.events.length).toBeLessThan(20);
   });
 });
+
+describe("resolve — a FULL consumer's EMPTY feeder settles (R6)", () => {
+  // The measured case: slice-tier-8.world.json stepped 2,280 s forward with no
+  // purchases, saved 2026-10-11. reinforced_iron_plate fills 38.75 s into the next
+  // 120 s. Before the FULL sweep throttled unbankable EMPTY feeders, screw -- pinned
+  // EMPTY, R32-held -- was then left a surplus by make_reinforced_iron_plate's
+  // throttle and cycled: 4,999 drains and the MAX_EVENTS guard.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+  const worldFile = fileURLToPath(
+    new URL("./fixtures/slice-tier-8-reinforced-full.world.json", import.meta.url),
+  );
+
+  it("fills reinforced_iron_plate without cycling screw", () => {
+    const start = deserializeWorld(readFileSync(worldFile, "utf8"));
+    const out = resolve(start, slice, 120_000);
+    expect(out.summary.guardTripped).toBe(false);
+    expect(out.events.some((e) => e.kind === "fill" && e.itemId === "reinforced_iron_plate")).toBe(true);
+    expect(out.events.filter((e) => e.kind === "drain" && e.itemId === "screw")).toHaveLength(0);
+    expect(out.events.length).toBeLessThan(20);
+  });
+});

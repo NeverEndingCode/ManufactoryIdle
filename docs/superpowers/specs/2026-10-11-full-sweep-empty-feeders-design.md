@@ -1,7 +1,7 @@
 # The FULL sweep throttles unbankable EMPTY feeders
 
 **Amends:** spec C.2/C.3 (the solver), ruling R6 (the FULL backpressure sweep).
-**Status:** designed 2026-10-11; not implemented.
+**Status:** implemented 2026-10-11.
 **Branch:** `worktree-phase-2-content`.
 **Follows:** `2026-10-10-coupled-empty-pins-design.md`. R32 asked jointly removed the
 `iron_plate`/`screw` cycle and brought the pacing gate from 135 to 85 minutes. The final

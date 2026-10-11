@@ -166,7 +166,28 @@ export function solvePass(args: SolvePassArgs): SolvePassResult {
   for (let i = content.topologicalItems.length - 1; i >= 0; i -= 1) {
     const itemId = content.topologicalItems[i]!;
     if (itemId === POWER_ITEM) continue;
-    if (itemStates.get(itemId) !== "FULL") continue;
+    const full = itemStates.get(itemId) === "FULL";
+    // **Unbankable EMPTY feeders (2026-10-11, Phase 2).** A FULL item's throttle cuts what
+    // its consumers draw from their inputs. An input pinned EMPTY was produced only to
+    // feed them -- unless an entry banks it -- so with no entry that may bank it (none
+    // live, or every one R32-disqualified) the cut leaves a surplus only this sweep made.
+    // That surplus lifts the item off zero, un-pins it, and restarts R32's pin/unpin
+    // cycle: measured on the vertical slice, screw cycled ~5,000 times per 120 s once
+    // reinforced_iron_plate filled. So such an item is throttled here like a FULL one.
+    // Producers with other outputs are left alone: throttling them would cut those too.
+    // `pinnedEmpty` is a statement of scope, not a reachable guard: a stocked item's
+    // producer only ever runs for its own entries, and here none may run.
+    if (!full) {
+      if (!pinnedEmpty.has(itemId)) continue;
+      const bankable = entries.some(
+        (entry) => !entry.paused && entry.itemId === itemId && !waterfall.disqualified.has(entry.id),
+      );
+      if (bankable) continue;
+      const soleOutput = (content.producersOf.get(itemId) ?? []).every(
+        (recipeId) => (content.recipes.get(recipeId)?.outputPerSecond.size ?? 0) <= 1,
+      );
+      if (!soleOutput) continue;
+    }
 
     const flows = computeFlows(content, capacityUnits, clocks);
     const flow = flows.get(itemId);

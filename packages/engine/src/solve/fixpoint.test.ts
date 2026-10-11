@@ -7,7 +7,7 @@ import { indexContent } from "../graph/index-content.js";
 import { computeCapacity } from "../economy/capacity.js";
 import { liquidCap } from "../economy/storage.js";
 import { initialWorld, type WorldState } from "../state/world.js";
-import { effectivePriority } from "./waterfall.js";
+import { effectivePriority, runWaterfall } from "./waterfall.js";
 import { computeFlows, solveItems, solvePass } from "./fixpoint.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
@@ -218,5 +218,109 @@ describe("solveItems — the EMPTY fixed point (spec C.3)", () => {
     for (const itemId of ["iron_ore", "iron_ingot", "iron_plate"]) {
       expect(result.pass.flows.get(itemId)!.net).toBeGreaterThanOrEqual(-FLOATING_SLACK);
     }
+  });
+});
+
+describe("solvePass — unbankable EMPTY feeders of a FULL item (R6)", () => {
+  // iron_plate at cap with nothing consuming it, so the FULL sweep stops make_plate.
+  // One smelter unit makes 0.5 ingot/s, exactly what one constructor unit draws, so
+  // iron_ingot -- pinned EMPTY -- is balanced in the waterfall's output: its only
+  // production is item:iron_plate's walk, sized to feed make_plate. Pausing
+  // item:iron_ingot leaves no entry that may bank it.
+  function plateAtCap(pauseIngot: boolean): WorldState {
+    const base = initialWorld(content, 1, 0);
+    return {
+      ...base,
+      quantum: { ...base.quantum, iron_plate: liquidCap(content, base, "iron_plate") },
+      assignment: { ...base.assignment, smelt_iron: 1 },
+      priority: base.priority.map((entry) =>
+        entry.id === "item:iron_ingot" ? { ...entry, paused: pauseIngot } : entry,
+      ),
+    };
+  }
+  const pinned = new Set(["iron_ore", "iron_ingot"]);
+
+  it("throttles a feeder nobody may bank down with its throttled consumer", () => {
+    const args = setup(plateAtCap(true));
+    // Preconditions: the waterfall alone balances iron_ingot at 0.5/s, and plate is FULL.
+    const unswept = runWaterfall({
+      content,
+      vectors: args.vectors,
+      activeRecipe: args.state.activeRecipe,
+      capacityUnits: args.capacityUnits,
+      entries: args.entries,
+      pinnedEmpty: pinned,
+      reserveFloor: 0,
+    });
+    const smeltUnits = args.capacityUnits.get("smelt_iron")!;
+    expect(unswept.usedUnits.get("smelt_iron")! / smeltUnits).toBeCloseTo(1, 12);
+    expect(unswept.usedUnits.get("make_plate")!).toBeCloseTo(1, 12);
+
+    const result = solvePass({ ...args, pinnedEmpty: pinned });
+    expect(result.itemStates.get("iron_plate")).toBe("FULL");
+    expect(result.itemStates.get("iron_ingot")).toBe("EMPTY");
+    expect(result.clocks.get("make_plate")).toBeCloseTo(0, 12);
+    // The fix: smelting follows make_plate down instead of piling up a surplus on an
+    // item pinned EMPTY, which would un-pin it and start a pin/unpin cycle.
+    expect(result.clocks.get("smelt_iron")).toBeCloseTo(0, 12);
+    expect(result.flows.get("iron_ingot")!.net).toBeCloseTo(0, 12);
+  });
+
+  it("leaves a feeder alone when its own entry may still bank it", () => {
+    const args = setup(plateAtCap(false));
+    const result = solvePass({ ...args, pinnedEmpty: pinned });
+    // Precondition: item:iron_ingot is live and R32 did not disqualify it.
+    expect(result.waterfall.disqualified.has("item:iron_ingot")).toBe(false);
+    expect(result.clocks.get("make_plate")).toBeCloseTo(0, 12);
+    // The freed smelter banks ingot for the next entry in line: net +0.5/s.
+    expect(result.clocks.get("smelt_iron")).toBeCloseTo(1, 12);
+    expect(result.flows.get("iron_ingot")!.net).toBeCloseTo(0.5, 12);
+  });
+});
+
+describe("solvePass — an unbankable EMPTY feeder with a multi-output producer (R6)", () => {
+  // The same world as above, but smelt_iron also emits heavy_oil_residue as a byproduct.
+  // Throttling it would cut that output too, for a reason that has nothing to do with
+  // it, so the sweep leaves a feeder with a multi-output producer alone, as before.
+  const bundle = loadBundleDir(fixtureDir);
+  const twoOutputs = indexContent({
+    ...bundle,
+    recipes: bundle.recipes.map((recipe) =>
+      recipe.id === "smelt_iron"
+        ? {
+            ...recipe,
+            outputs: [
+              ...recipe.outputs,
+              { ...recipe.outputs[0]!, item: "heavy_oil_residue", byproduct: true },
+            ],
+          }
+        : recipe,
+    ),
+  });
+
+  it("does not throttle a producer that also makes something else", () => {
+    const base = initialWorld(twoOutputs, 1, 0);
+    const state: WorldState = {
+      ...base,
+      quantum: { ...base.quantum, iron_plate: liquidCap(twoOutputs, base, "iron_plate") },
+      assignment: { ...base.assignment, smelt_iron: 1 },
+      priority: base.priority.map((entry) =>
+        entry.id === "item:iron_ingot" ? { ...entry, paused: true } : entry,
+      ),
+    };
+    const capacity = computeCapacity(twoOutputs, state);
+    const result = solvePass({
+      content: twoOutputs,
+      vectors: computeExpansion(twoOutputs, state.tier, state.activeRecipe),
+      state,
+      capacityUnits: capacity.unitsByRecipe,
+      entries: effectivePriority(twoOutputs, state, capacity, 0),
+      reserveFloor: 0,
+      pinnedEmpty: new Set(["iron_ore", "iron_ingot"]),
+    });
+    // Preconditions: smelt_iron really has two outputs, and make_plate was stopped.
+    expect(twoOutputs.recipes.get("smelt_iron")!.outputPerSecond.size).toBe(2);
+    expect(result.clocks.get("make_plate")).toBeCloseTo(0, 12);
+    expect(result.clocks.get("smelt_iron")).toBeCloseTo(1, 12);
   });
 });
