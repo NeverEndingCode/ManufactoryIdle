@@ -13,7 +13,7 @@ replace it — it says where that plan is now and which parts of it have gone st
 ## Where the work is
 
 - Worktree: `.claude/worktrees/phase-1-engine`, branch `worktree-phase-2-content`,
-  pushed to `origin/worktree-phase-2-content` (PR #4; head `6b8a2d7` as of 2026-10-12).
+  pushed to `origin/worktree-phase-2-content` (PR #4).
   The top-level checkout's `main` is stale; do not work from it.
 - The vertical slice is `packages/content/bundles/vertical-slice/` — 5 lanes, 31 items,
   44 recipes, 14 machine classes.

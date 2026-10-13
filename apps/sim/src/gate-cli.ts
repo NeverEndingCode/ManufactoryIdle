@@ -3,8 +3,8 @@
 // The rules live in `gate.ts` and are unit-tested there in milliseconds. This file only
 // does the expensive half: run the policies, hand the reports over, print, exit.
 //
-// Two depths, because the full gate is ~14 minutes and a per-commit hook that costs
-// that gets switched off:
+// Two depths, because the full gate takes minutes (2m18s locally as of 2026-10-12; it
+// has been as slow as 135) and a per-commit hook that costs that gets switched off:
 //
 //   sim gate --smoke   greedy to tier 4, twice (determinism). Seconds. Per commit.
 //   sim gate           all three policies to tier 10, greedy twice. Nightly / PR job.

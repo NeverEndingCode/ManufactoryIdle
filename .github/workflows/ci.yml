@@ -3,7 +3,8 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request: { branches: [main] }
-  # The pacing gate is ~15 minutes, so it also runs nightly: a content change that
+  # The pacing gate is too slow for every commit (~5 minutes in CI as of 2026-10-12;
+  # ~15 when this was written), so it also runs nightly: a content change that
   # lands green on a shallow smoke run still gets measured to tier 10 within a day.
   schedule:
     - cron: "0 5 * * *"
@@ -28,9 +29,10 @@ jobs:
       # commit. The deep form is the `pacing` job.
       - run: pnpm --filter @manufactory/sim run gate:smoke
 
-  # A separate job so it runs ALONGSIDE `check` rather than after it: the two together
-  # are ~15 and ~11 minutes, and serialising them would put a 26-minute wall in front of
-  # every pull request.
+  # A separate job so it runs ALONGSIDE `check` rather than after it: measured in CI on
+  # 2026-10-12 they are ~13 minutes (`check`, mostly sim's calibrate tests) and ~5
+  # (`pacing`), and serialising them would put an ~18-minute wall in front of every
+  # pull request.
   pacing:
     runs-on: ubuntu-latest
     # The cap is a guard against a hang, NOT a performance budget. A timeout reads as a

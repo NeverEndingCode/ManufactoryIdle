@@ -141,6 +141,8 @@ this for reinforced iron plate" are both recoverable.
 **The visited set stays even though the walk no longer recurses.** With the recursive step
 removed (above), every top-level call from `computeBottleneck` visits at most one item, so
 today's walk cannot loop by construction — the guard is currently dormant, not load-bearing.
+*(Superseded 2026-10-09: the byproduct-gridlock walk made the visited set load-bearing
+again; see `2026-10-09-byproduct-gridlock-design.md` and `resolveBlocker`'s doc comment.)*
 It is kept anyway, at no cost, because it still fences `resolveBlocker`'s entry point against
 being re-walked for an item two requirements share within one sweep, and because acceptance
 criterion 1 below still requires a cyclic chain to terminate: the slice ships a deliberate

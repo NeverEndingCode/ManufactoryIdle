@@ -824,8 +824,10 @@ when, what stalled.
 
 **Amended 2026-10-12 (Phase 2): one solve per item-state configuration.** Within one
 `resolve` nothing can be bought, so the only inputs to `solve` that can change are stock,
-tier (a milestone) and tap stacks (a timer). `solve` reads stock only as each item's state
-tag (`liquid <= 0` and the FULL test). So `resolve` caches `solve` by tier, tap stacks and
+tier (a milestone) and tap stacks (a timer). The rates a step reads (`itemRates`) depend
+on stock only through each item's state tag (`liquid <= 0` and the FULL test) -- unlike
+the bottleneck report, which reads exact stock and which a step therefore never sees
+(`StepAnswer` is `Pick<Solution, "itemRates">`). So `resolve` caches `solve` by tier, tap stacks and
 every stock item's tag, and each distinct combination is solved once. The output is
 unchanged: tests compare it against an uncached resolve, and the pacing gate's pins come
 out byte-identical. `summary.solves` reports the count. A pin/unpin limit cycle, which

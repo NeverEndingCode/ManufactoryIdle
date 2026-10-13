@@ -23,7 +23,7 @@ const USAGE = `usage:
   tier time outside tolerance, dead time over threshold, an observed r_eff at the
   runaway floor, or a determinism divergence. --smoke runs greedy to tier 4 in
   seconds and is the per-commit form; the full gate runs three policies to tier 10
-  and takes about fifteen minutes. --emit-pins prints a paste-ready known-red block
+  and takes a few minutes. --emit-pins prints a paste-ready known-red block
   from the current measurements, for re-pinning after a calibration run.
 
   calibrate solves the free content numbers against pacing.targetCollectionsToTier
