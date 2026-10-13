@@ -49,6 +49,35 @@ export interface ItemFlow {
   net: number;
 }
 
+/**
+ * How small `production - consumption` has to be, relative to the flows it came from,
+ * before it is cancellation noise rather than a rate.
+ *
+ * `production` and `consumption` are independent sums of `units * clock * perSecond`
+ * over different recipes. When they are meant to balance -- a chain throttled so its
+ * consumers exactly match its producers -- the two sums round differently and land a few
+ * ULPs apart. Measured over 1,912 random flows: 20 crumbs (1.05%), the largest
+ * 3.552713678800501e-15 which is exactly 16 * Number.EPSILON, and nine of the twenty on
+ * items whose consumption did not even exceed production, so no clamp was involved.
+ * It is ordinary float cancellation, not one bad call site.
+ *
+ * Snapped HERE, where `net` is created, and nowhere else. That is the point: `net` is
+ * read by `resolve`'s event scheduler, by the bottleneck reporter and by the pin loop,
+ * and a tolerance at each reader is three chances to disagree about what "balanced"
+ * means. One authority, at the source, and every reader can go back to testing `=== 0`.
+ *
+ * Without it `resolve` live-locks: a crumb at an item resting on zero reads as a real
+ * rate, so it schedules an "unpin" a nanosecond out, integrates a nanosecond of
+ * 3.5e-15/s, reads the resulting 1e-24 as stock, schedules a "drain" back to zero, and
+ * repeats -- 117.7 iterations per resolve, 99% of the simulator's wall clock.
+ *
+ * The bound is relative because the error is: summing over ~44 recipes accumulates about
+ * 44 * Number.EPSILON ~= 1e-14 relative, and 1e-12 sits two orders above it while
+ * remaining far below any rate a player or a milestone could observe -- at these
+ * magnitudes it is one unit per thirty thousand years.
+ */
+export const FLOW_CANCELLATION_TOLERANCE = 1e-12;
+
 export function computeFlows(
   content: IndexedContent,
   capacityUnits: ReadonlyMap<RecipeId, number>,
@@ -72,6 +101,12 @@ export function computeFlows(
     if (!recipe) continue;
     for (const [itemId, perSecond] of recipe.outputPerSecond) bump(itemId, rate * perSecond, 0);
     for (const [itemId, perSecond] of recipe.inputPerSecond) bump(itemId, 0, rate * perSecond);
+  }
+
+  // Snap cancellation noise to a clean zero before anything downstream sees it.
+  for (const flow of flows.values()) {
+    const scale = Math.max(Math.abs(flow.production), Math.abs(flow.consumption));
+    if (scale > 0 && Math.abs(flow.net) <= scale * FLOW_CANCELLATION_TOLERANCE) flow.net = 0;
   }
   return flows;
 }

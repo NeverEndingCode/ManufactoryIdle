@@ -115,6 +115,78 @@ describe("BUY_MACHINE", () => {
       expect(next.assignment.refine_plastic).toBe(3);
     });
 
+    // Phase 2, Task 8. Priority rank alone is winner-take-all: the top-ranked
+    // recipe in a lane-class takes EVERY machine the player ever buys, forever.
+    // On the vertical slice that starved `make_iron_rod` to exactly zero machines
+    // across 1,639 greedy purchases while 194k iron_plate sat banked at cap, and
+    // tier 2 -- which needs 300 iron rods -- became unreachable at any milestone
+    // amount. A recipe whose output is already at its liquid cap cannot use another
+    // machine, so it stops being the answer.
+    it("skips a recipe whose output is at cap and takes the next one down the list", () => {
+      const base = refineryWorld();
+      // plastic ranks above fuel and is pinned at its liquid cap (200 + 800).
+      const w: WorldState = { ...base, stored: { ...base.stored, plastic: D(1000) } };
+      const next = expectAccepted(
+        applyBuyMachine(w, content, {
+          type: "BUY_MACHINE",
+          lane: "oil",
+          machineClass: "refinery",
+          mark: 1,
+          count: 1,
+        }),
+      );
+      expect(next.assignment.residual_fuel).toBe(1);
+      expect(next.assignment.refine_plastic ?? 0).toBe(0);
+    });
+
+    it("still takes the top-ranked recipe when every live recipe is at cap", () => {
+      const base = refineryWorld();
+      const w: WorldState = {
+        ...base,
+        stored: { ...base.stored, plastic: D(1000), fuel: D(1000) },
+      };
+      const next = expectAccepted(
+        applyBuyMachine(w, content, {
+          type: "BUY_MACHINE",
+          lane: "oil",
+          machineClass: "refinery",
+          mark: 1,
+          count: 1,
+        }),
+      );
+      expect(next.assignment.refine_plastic).toBe(1);
+    });
+
+    // The cap rule alone is still winner-take-all one level down. On the slice
+    // `cable` ranks above `wire` and cable is never full (it is never made), so
+    // every copper constructor piled onto `make_cable` while `make_wire` -- the
+    // producer of cable's only input -- got none: 99 cable machines, 0 wire, 0
+    // cable produced, tier 3 unreachable. A recipe that cannot run the machines it
+    // already has cannot run another one either, and the solver already says so
+    // per recipe, as a clock below nameplate.
+    it("skips a starved recipe in favour of one that can actually run", () => {
+      const base = refineryWorld();
+      // refine_plastic outranks residual_fuel and has machines, but crude_oil is
+      // empty so its clock is 0. residual_fuel has residue banked and no machines.
+      const w: WorldState = {
+        ...base,
+        stored: { ...base.stored, crude_oil: D(0), heavy_oil_residue: D(300) },
+        installed: { ...base.installed, oil: { ...base.installed.oil, refinery: [5] } },
+        assignment: { ...base.assignment, refine_plastic: 5 },
+      };
+      const next = expectAccepted(
+        applyBuyMachine(w, content, {
+          type: "BUY_MACHINE",
+          lane: "oil",
+          machineClass: "refinery",
+          mark: 1,
+          count: 1,
+        }),
+      );
+      expect(next.assignment.residual_fuel).toBe(1);
+      expect(next.assignment.refine_plastic).toBe(5);
+    });
+
     it("ignores a paused entry when ranking", () => {
       const base = refineryWorld();
       const w: WorldState = {

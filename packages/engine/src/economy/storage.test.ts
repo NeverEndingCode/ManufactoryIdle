@@ -354,3 +354,52 @@ describe("spendFromLiquid (spec C.5, D4)", () => {
     expect(next.bound.iron_plate!.toNumber()).toBe(4800);
   });
 });
+
+// Phase 2, Task 3, corrected. `capPerTier` was first keyed on the ITEM's tier, and the
+// measurement killed it: milestone tier 2 of the slice requires `iron_rod`, a tier-0
+// item, so its cap got capPerTier^0 -- no help at all -- and the ceiling for that
+// milestone could not be raised by any factor. Tier 3 requires reinforced iron plate,
+// tier 1, and got only one power. A milestone's ceiling is set by its LOWEST-tier
+// requirement, which is routinely far below the milestone's own tier.
+//
+// The key is the PLAYER's tier: every cap grows as you progress, so a tier-k milestone
+// can demand capPerTier^k more of anything, iron rods included. It is also the more
+// natural mechanic -- warehouses get bigger as the factory does.
+describe("caps grow with the player's tier, not the item's", () => {
+  const tiered = indexContent({
+    ...content.bundle,
+    storage: { ...content.bundle.storage, capPerTier: 2 },
+    quantumStorage: { ...content.bundle.quantumStorage, capPerTier: 2 },
+  });
+
+  it("raises a tier-0 item's cap once the player has tiered up", () => {
+    const base = initialWorld(tiered, 1, 0);
+    const atZero = storageCap(tiered, base, "iron_ore").toNumber();
+    const atThree = storageCap(tiered, { ...base, tier: 3 }, "iron_ore").toNumber();
+    expect(atThree).toBeCloseTo(atZero * 8, 6);
+  });
+
+  it("raises every item by the same factor, whatever its own tier", () => {
+    const base = initialWorld(tiered, 1, 0);
+    const at = (tier: number, id: string): number =>
+      storageCap(tiered, { ...base, tier }, id).toNumber();
+    // iron_ore is tier 0 and iron_plate is tier 1; both scale by the player's tier.
+    expect(at(2, "iron_ore") / at(0, "iron_ore")).toBeCloseTo(4, 6);
+    expect(at(2, "iron_plate") / at(0, "iron_plate")).toBeCloseTo(4, 6);
+  });
+
+  it("does the same for Quantum Storage", () => {
+    const base = initialWorld(tiered, 1, 0);
+    const atZero = quantumCap(tiered, base, "iron_ore").toNumber();
+    const atTwo = quantumCap(tiered, { ...base, tier: 2 }, "iron_ore").toNumber();
+    expect(atTwo).toBeCloseTo(atZero * 4, 6);
+  });
+
+  it("is inert at capPerTier 1, whatever tier the player is on", () => {
+    const base = initialWorld(content, 1, 0);
+    expect(storageCap(content, { ...base, tier: 9 }, "iron_ore").toNumber()).toBeCloseTo(
+      storageCap(content, base, "iron_ore").toNumber(),
+      6,
+    );
+  });
+});

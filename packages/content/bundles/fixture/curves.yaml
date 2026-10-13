@@ -1,16 +1,27 @@
 # Spec B.4. These are authored placeholders; the Phase 2 calibration script derives
 # them from `pacing`. Phase 1 only needs values that are self-consistent and that
 # make the fixture playable.
+# Check 12: cost growth must not exceed capacity growth, or the ladder
+# self-terminates -- past a crossover level the next level costs more than the
+# player can ever hold, and no level above it is reachable. Authored at 2.0 and 2.5
+# against a capGrowth of 1.6, both curves ended: the slice's storage stopped at level
+# 16 and its Quantum Storage at level 10, and every calibration run that needed more
+# than 194,425 iron_plate stalled there permanently.
+#
+# The SHAPE is the authoring decision, the same way the ladder is (spec B.3), and it
+# is the same argument spec C.0 makes about marks: a level whose cost scales with the
+# capacity it grants is pace-neutral, and anything steeper eventually stops being
+# buyable. The VALUES below are still placeholders for the calibration script.
 storage:
   capGrowth: 1.6
-  costGrowth: 2.0
+  costGrowth: 1.5
   baseCostItem: iron_plate
   baseCostAmount: 50
   maxLevel: 20
 
 quantumStorage:
   capGrowth: 1.6
-  costGrowth: 2.5
+  costGrowth: 1.55
   baseCostItem: iron_plate
   baseCostAmount: 500
   maxLevel: 15

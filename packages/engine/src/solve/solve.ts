@@ -125,6 +125,7 @@ export function solve(
       power,
       state,
       items.pass.itemStates,
+      items.pass.flows,
     ),
     power,
     capacity,

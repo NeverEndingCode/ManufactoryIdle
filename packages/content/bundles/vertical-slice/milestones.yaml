@@ -29,9 +29,23 @@ milestones:
     requires: [{ item: concrete, amount: 400 }, { item: rotor, amount: 100 }]
     laneMultipliers: { coal: 1.4, power: 1.5 }
 
+  # The RATIO between a tier's requirement items is authored; only the common scale is
+  # solved. That matters here. Calibration multiplies every item of a tier by ONE
+  # factor, so the ratio decides WHICH item is satisfied last -- and only the last one
+  # has any effect on the tier's time. At the seeded 800:300 the answer was always
+  # `steel_ingot`, whose reachable times either side of the target were 2.428 and
+  # 3.048 with nothing between: `copper_sheet` was inert at every amount up to its own
+  # cap, measured flat at 2.428110 from 1800 all the way to 2600.
+  #
+  # Re-weighted to 800:563 so `copper_sheet` is the one pushed past its cap (400 +
+  # 1600, plus levels bought by tier 4). Its cliff then lands between steel's two,
+  # and the tier becomes reachable: at the solved scale, steel 4800 / copper 3378
+  # measures 2.961 against a 2.9 target (+2.1%), inside tolerance where 800:300 could
+  # only manage +5.1%. The curve stays monotone in the scale factor across 4x-9x, so
+  # the bisection still has something it can search.
   - tier: 5
     name: Basic Steelworks
-    requires: [{ item: steel_ingot, amount: 800 }, { item: copper_sheet, amount: 300 }]
+    requires: [{ item: steel_ingot, amount: 800 }, { item: copper_sheet, amount: 563 }]
     laneMultipliers: { coal: 1.4, iron: 1.3 }
 
   - tier: 6

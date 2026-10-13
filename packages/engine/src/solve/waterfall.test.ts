@@ -3,6 +3,7 @@ import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
 import { POWER_ITEM } from "../content/types.js";
 import { computeExpansion } from "../graph/expand.js";
+import { computeFlows } from "./fixpoint.js";
 import { indexContent } from "../graph/index-content.js";
 import { computeCapacity } from "../economy/capacity.js";
 import { initialWorld, withInstalled, type PriorityEntry, type WorldState } from "../state/world.js";
@@ -468,5 +469,75 @@ describe("effectivePriority", () => {
     const entries = effectivePriority(content, paused, computeCapacity(content, paused), 0);
     expect(entries.some((e) => e.itemId === "iron_ingot")).toBe(false);
     expect(entries.some((e) => e.id.startsWith("reserve:"))).toBe(false);
+  });
+});
+
+describe("runWaterfall — R32 for coupled EMPTY items", () => {
+  // Measured 2026-10-10 on the vertical slice: iron_plate and screw, both pinned EMPTY
+  // and both feeding make_reinforced_iron_plate, cycled 6,668 times in a 120 s resolve.
+  // R32 tested each item with every OTHER item's entry still banking, so the shared
+  // consumer stayed starved and each item looked sustainable on its own. Neither was
+  // disqualified; both banked, un-pinned, and drained.
+  //
+  // The fixture has no two-input recipe, so these use the slice with capacity handed in
+  // directly. Rates per unit, per minute:
+  //   make_iron_plate             -> 20 plate
+  //   make_screw                  -> 40 screw
+  //   make_reinforced_iron_plate  30 plate + 60 screw ->
+  //   make_rotor                  100 screw (+ rods, not pinned) ->
+  // A second consumer of screw is what makes the pair unstable: with one shared
+  // consumer only, "plate drains while screws cap it" and "screw drains while plate
+  // caps it" contradict each other.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+
+  function coupled(units: Record<string, number>) {
+    // Tier 3: make_rotor unlocks there.
+    const state = { ...initialWorld(slice, 1, 0), tier: 3 };
+    const capacityUnits = new Map(Object.entries(units));
+    const result = runWaterfall({
+      content: slice,
+      vectors: computeExpansion(slice, state.tier, state.activeRecipe),
+      activeRecipe: state.activeRecipe,
+      capacityUnits,
+      entries: ["iron_plate", "screw", "reinforced_iron_plate", "rotor"].map((itemId) => entry(itemId)),
+      pinnedEmpty: new Set(["iron_plate", "screw"]),
+      reserveFloor: RESERVE_FLOOR,
+    });
+    const clocks = new Map<string, number>();
+    for (const [recipeId, u] of capacityUnits) clocks.set(recipeId, (result.usedUnits.get(recipeId) ?? 0) / u);
+    const flows = computeFlows(slice, capacityUnits, clocks);
+    return { result, net: (itemId: string) => flows.get(itemId)!.net };
+  }
+
+  it("disqualifies both entries when each item drains once the other's entry is held", () => {
+    // Plate 1/3 per s, screw 2 per s. Screw's entry held, plate un-pinned: the shared
+    // consumer takes the screws and wants ~1 plate/s, so plate drains. Plate's entry
+    // held, screw un-pinned: rotor alone wants 3.3 screw/s, so screw drains.
+    const { result, net } = coupled({
+      make_iron_plate: 1,
+      make_screw: 3,
+      make_reinforced_iron_plate: 10,
+      make_rotor: 2,
+    });
+    expect([...result.disqualified].sort()).toEqual(["item:iron_plate", "item:screw"]);
+    // Neither pinned item banks a surplus: a positive net is what un-pins it.
+    expect(net("iron_plate")).toBeCloseTo(0, 9);
+    expect(net("screw")).toBeCloseTo(0, 9);
+  });
+
+  it("releases the item whose spare really is spare", () => {
+    // Twenty plate constructors make 6.7 plate/s; the screws cap the shared consumer at
+    // ~1 plate/s. Plate's surplus survives with screw's entry held, so plate is
+    // released and its entry keeps banking; only screw is disqualified.
+    const { result, net } = coupled({
+      make_iron_plate: 20,
+      make_screw: 3,
+      make_reinforced_iron_plate: 10,
+      make_rotor: 2,
+    });
+    expect([...result.disqualified]).toEqual(["item:screw"]);
+    expect(net("iron_plate")).toBeGreaterThan(1);
+    expect(net("screw")).toBeCloseTo(0, 9);
   });
 });

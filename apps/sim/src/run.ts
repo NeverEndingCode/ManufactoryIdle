@@ -16,15 +16,64 @@ import { loadContent, newWorld } from "./bootstrap.js";
 import { getPolicy, type PolicyName } from "./policies.js";
 import { authoredREff, observedREff, type REffRow, type RunReport, type TierMark } from "./report.js";
 
+/**
+ * A world, frozen at the instant a tier unlocked, plus the clock reading then.
+ *
+ * Calibration bisects tier k's delivery requirements. Nothing before tier k-1
+ * unlocked can depend on them -- the purchase cadence in that span ramps against
+ * milestone k-1 (spec B.7, `tierProgress`), and no other policy input reads a future
+ * milestone -- so replaying the prefix from here is exact, not approximate. That
+ * matters: B.7's whole argument is that there is ONE implementation of "how long
+ * does this take", and a faster estimate of the prefix would be a second one.
+ */
+export interface RunCheckpoint {
+  tier: number;
+  state: WorldState;
+  nowMs: number;
+}
+
 export interface RunOptions {
   policy: PolicyName;
   contentDir?: string;
+  /** Pre-loaded content, for callers that mutate a bundle in memory (calibration). */
+  content?: IndexedContent;
   seed: number;
   /** Stop once this tier is reached. */
   untilTier: number;
-  /** Stop after this much simulated time regardless. */
+  /**
+   * Stop at this reading of the world clock. Absolute, not a duration: a resumed run
+   * starts with the clock already advanced, and the budget is the same deadline.
+   */
   maxSimMs: number;
+  /** Resume here instead of building a fresh world. */
+  startFrom?: RunCheckpoint;
+  /** Keep a world state per tier unlocked, so a later run can resume from one. */
+  captureCheckpoints?: boolean;
+  /**
+   * Called as the run goes. A long run prints nothing until it finishes otherwise, and
+   * a stalled policy is indistinguishable from a slow one. Read-only: the callback sees
+   * the run, it never steers it.
+   */
+  onProgress?: (event: RunProgress) => void;
+  /**
+   * Stop once the dead time -- simulated time since the last purchase or tier --
+   * exceeds this. A stalled policy otherwise simulates its whole budget to establish
+   * what its first idle stretch already showed: measured 2026-10-09, `bottleneck`
+   * stalled at tier 6 would have cost ~250 hours of compute to run out a 120-day
+   * budget. Read off the simulated clock only, so the stop is deterministic.
+   */
+  stopWhenDeadMs?: number;
 }
+
+/**
+ * `step` fires once per simulated interval, so it is far too frequent to print raw;
+ * the CLI throttles it by wall clock. `tier` fires once per tier, at the time the
+ * report will record for it. `bound` is the binding constraint over the interval just
+ * simulated, keyed the way `bindingConstraints` keys it, or null when nothing binds.
+ */
+export type RunProgress =
+  | { kind: "step"; tier: number; collections: number; purchases: number; bound: string | null }
+  | { kind: "tier"; tier: number; collections: number; purchases: number };
 
 interface ClassSlot {
   lane: LaneId;
@@ -50,16 +99,18 @@ function classSlots(content: IndexedContent, state: WorldState): ClassSlot[] {
 }
 
 export function runSimulation(options: RunOptions): RunReport {
-  const content = loadContent(options.contentDir);
+  const content = options.content ?? loadContent(options.contentDir);
   const policy = getPolicy(options.policy);
 
-  let state = newWorld(content, options.seed);
+  let state = options.startFrom?.state ?? newWorld(content, options.seed);
   const slots = classSlots(content, state);
+  const checkpoints: RunCheckpoint[] = [];
 
-  let nowMs = 0;
+  let nowMs = options.startFrom?.nowMs ?? 0;
   let purchases = 0;
   let lastEventMs = 0;
   let maxDeadTimeMs = 0;
+  let stalled = false;
   const tierTimes: TierMark[] = [];
   const boundMsByRecipe = new Map<string, number>();
 
@@ -76,7 +127,10 @@ export function runSimulation(options: RunOptions): RunReport {
       const result = apply(state, content, action, state.seed);
       if (result.rejected) continue;
       state = result.state;
-      purchases += 1;
+      // A purchase is a SPEND. Policies also emit ASSIGN_MACHINES to move machines
+      // they already own off an idle recipe, and counting those here would inflate the
+      // figure the report calls "purchases" with actions that cost nothing.
+      if (action.type.startsWith("BUY_")) purchases += 1;
       markEvent(nowMs);
     }
 
@@ -89,17 +143,18 @@ export function runSimulation(options: RunOptions): RunReport {
     );
     if (stepMs <= 0) break;
 
+    let bound: string | null = null;
     if (settled.bottleneck !== null) {
       const bottleneck = settled.bottleneck;
       // Storage-bound time is reported under the item rather than a recipe: time
       // spent at cap is not time a machine purchase would have shortened.
-      const id =
+      bound =
         bottleneck.kind === "recipe"
           ? bottleneck.recipeId
           : bottleneck.kind === "storage"
             ? `storage:${bottleneck.itemId}`
             : `power:${bottleneck.generatorRecipeId ?? "none"}`;
-      boundMsByRecipe.set(id, (boundMsByRecipe.get(id) ?? 0) + stepMs);
+      boundMsByRecipe.set(bound, (boundMsByRecipe.get(bound) ?? 0) + stepMs);
     }
 
     const advanced = resolve(state, content, stepMs);
@@ -109,8 +164,26 @@ export function runSimulation(options: RunOptions): RunReport {
     for (const tier of advanced.summary.tiersUnlocked) {
       const event = advanced.events.find((e) => e.kind === "milestone" && e.tier === tier);
       const atMs = event?.atMs ?? nowMs;
-      tierTimes.push({ tier, atMs, collections: atMs / content.offlineCapMs });
+      const collections = atMs / content.offlineCapMs;
+      tierTimes.push({ tier, atMs, collections });
+      options.onProgress?.({ kind: "tier", tier, collections, purchases });
       markEvent(atMs);
+      // The state AFTER the resolve that unlocked the tier, and the clock after it
+      // too. Resuming mid-step would replay part of an interval whose length was
+      // already decided, which is the one thing that would make this inexact.
+      if (options.captureCheckpoints === true) checkpoints.push({ tier, state, nowMs });
+    }
+    options.onProgress?.({
+      kind: "step",
+      tier: state.tier,
+      collections: nowMs / content.offlineCapMs,
+      purchases,
+      bound,
+    });
+
+    if (options.stopWhenDeadMs !== undefined && nowMs - lastEventMs > options.stopWhenDeadMs) {
+      stalled = true;
+      break;
     }
   }
   markEvent(nowMs);
@@ -146,6 +219,7 @@ export function runSimulation(options: RunOptions): RunReport {
     seed: options.seed,
     reachedTier: state.tier,
     finished: state.tier >= options.untilTier,
+    stalled,
     simulatedMs: nowMs,
     collections: nowMs / content.offlineCapMs,
     tierTimes,
@@ -153,5 +227,6 @@ export function runSimulation(options: RunOptions): RunReport {
     purchases,
     bindingConstraints,
     rEff,
+    checkpoints,
   };
 }

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
@@ -6,8 +7,9 @@ import { indexContent } from "../graph/index-content.js";
 import { liquid, liquidCap } from "../economy/storage.js";
 import { initialWorld, type WorldState } from "../state/world.js";
 import { solve } from "../solve/solve.js";
+import { deserializeWorld, serializeWorld } from "../state/serialize.js";
 import { buildWorld } from "../testing/arbitrary.js";
-import { COARSE_STEP_MS, EPSILON_MS, MAX_EVENTS, resolve } from "./index.js";
+import { COARSE_STEP_MS, EPSILON_MS, MAX_EVENTS, resolve, resolveWith } from "./index.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
 const content = indexContent(loadBundleDir(fixtureDir));
@@ -351,10 +353,25 @@ describe("task 14c: the milestone knife-edge", () => {
     refund: 0,
     rotate: 0,
   };
-  // The counterexample's window: the tier-2 milestone completes at
-  // START + 1,460,148.148...ms, inside [0, 2*halfMs] but past halfMs -- the
-  // knife-edge itself.
-  const halfMs = 730_075;
+  // The counterexample's window: the tier-2 milestone completes inside [0, 2*halfMs]
+  // but past halfMs -- the knife-edge itself. The ASSERTIONS below are untouched; only
+  // this window moved, and it moved because the rates it was calibrated against were
+  // wrong.
+  //
+  // It was 730_075, chosen when the milestone arrived at START + 1,460,148.148 ms. That
+  // arrival was an artefact of resolve's live-lock (see FLOW_CANCELLATION_TOLERANCE in
+  // solve/fixpoint.ts): an item whose production and consumption cancelled reported a
+  // net of float noise rather than zero, which resolve read as a real rate and used to
+  // schedule an event every nanosecond. Re-solving that often kept flipping the item
+  // just off its EMPTY pin, so its consumer dodged the 2% reserve-floor tax waterfall
+  // charges a contested recipe, and iron_plate produced 0.675/s instead of its true
+  // 0.6615/s.
+  //
+  // With the noise snapped at source the item stays pinned, the tax applies, and the
+  // milestone arrives 2.0% later at START + 1,489,947.091 ms -- measured by bisection,
+  // not guessed. The window follows it, keeping the property this test exists for: the
+  // milestone lands inside the window and past the halfway split.
+  const halfMs = 745_000;
 
   it("agrees between one long resolve and two split resolves, milestone inside the window", () => {
     const start = buildWorld(content, sketch, START);
@@ -394,5 +411,87 @@ describe("task 14c: the milestone knife-edge", () => {
         }
       }
     }
+  });
+});
+
+describe("resolve — coupled EMPTY items settle (R32)", () => {
+  // The measured case itself: the vertical slice at tier 8 as `bottleneck` left it,
+  // saved 2026-10-10. Over the next 120 s iron_plate and screw both drain to zero.
+  // Before R32 tested items jointly, the pair then cycled at microsecond spacing --
+  // 6,668 events and the MAX_EVENTS guard. Now each drains once and stays pinned.
+  // The world is frozen data: if the slice's content changes underneath it, this test
+  // may stop reaching the coupled state, but it cannot start passing for a wrong reason.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+  const worldFile = fileURLToPath(new URL("./fixtures/slice-tier-8.world.json", import.meta.url));
+
+  it("drains each item once instead of cycling", () => {
+    const start = deserializeWorld(readFileSync(worldFile, "utf8"));
+    const out = resolve(start, slice, 120_000);
+    expect(out.summary.guardTripped).toBe(false);
+    const drains = out.events.filter((e) => e.kind === "drain").map((e) => e.itemId);
+    expect(drains).toContain("iron_plate");
+    expect(drains).toContain("screw");
+    expect(out.events.length).toBeLessThan(20);
+  });
+});
+
+describe("resolve — solves each item-state configuration once per call", () => {
+  // The cache key is tier, tap stacks and every stock item's state tag. The tag is pinned
+  // by the cycle test below and tap stacks by the tap test; tier is pinned by the
+  // milestone tests above ("delivers a milestone out of liquid stock ..."), which fail
+  // when tier is dropped from the key.
+  // The vertical slice at tier 8 as `bottleneck` left it, stepped 2,280 s forward with no
+  // purchases (saved 2026-10-11). reinforced_iron_plate fills 38.75 s into the next 120 s,
+  // and screw then pins and un-pins at microsecond spacing -- a cycle this test does not
+  // fix, only prices. Every step of it used to re-run the whole solver.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+  const worldFile = fileURLToPath(
+    new URL("./fixtures/slice-tier-8-reinforced-full.world.json", import.meta.url),
+  );
+  const start = (): WorldState => deserializeWorld(readFileSync(worldFile, "utf8"));
+
+  it("runs the solver once per distinct item-state configuration, not once per step", () => {
+    const out = resolve(start(), slice, 120_000);
+    // Precondition: the cycle is still there -- the guard trips, as before.
+    expect(out.summary.guardTripped).toBe(true);
+    expect(out.events.filter((e) => e.kind === "drain" && e.itemId === "screw").length).toBeGreaterThan(1_000);
+    expect(out.summary.solves).toBeLessThan(20);
+  });
+
+  it("matches an uncached resolve exactly, through the cycle", () => {
+    // Two microseconds past the fill, ~300 events into the screw cycle (its drains are
+    // nanoseconds apart): long enough to revisit each item-state configuration many
+    // times, short enough to run uncached (~1.3 s measured).
+    const windowMs = 38_751.843;
+    const cached = resolve(start(), slice, windowMs);
+    const uncached = resolveWith(start(), slice, windowMs, (world) => solve(world, slice));
+    expect(cached.events.length).toBeGreaterThan(100);
+    expect(serializeWorld(cached.state)).toBe(serializeWorld(uncached.state));
+    expect(cached.events).toEqual(uncached.events);
+    expect({ ...cached.summary, solves: 0 }).toEqual({ ...uncached.summary, solves: 0 });
+  }, 30_000);
+
+  it("re-solves when a tap expires mid-window, though no item changes state", () => {
+    // slice-tier-8 is power-bound, so the tap's injection moves rates. Its expiry changes
+    // nothing a stock tag can see -- only tapStacks -- and must still re-solve.
+    const tier8 = deserializeWorld(
+      readFileSync(fileURLToPath(new URL("./fixtures/slice-tier-8.world.json", import.meta.url)), "utf8"),
+    );
+    const tapped: WorldState = {
+      ...tier8,
+      tapStacks: 1,
+      timers: [{ id: "tap", kind: "tapExpiry", fireAt: tier8.lastResolvedAt + 10_000 }],
+    };
+    // Precondition: the tap really changes the answer.
+    const withTap = solve(tapped, slice).itemRates.get("iron_plate")!.production;
+    const without = solve({ ...tapped, tapStacks: 0 }, slice).itemRates.get("iron_plate")!.production;
+    expect(withTap).not.toBeCloseTo(without, 6);
+
+    const cached = resolve(tapped, slice, 20_000);
+    const uncached = resolveWith(tapped, slice, 20_000, (world) => solve(world, slice));
+    expect(cached.events.some((e) => e.kind === "timer")).toBe(true);
+    expect(serializeWorld(cached.state)).toBe(serializeWorld(uncached.state));
   });
 });

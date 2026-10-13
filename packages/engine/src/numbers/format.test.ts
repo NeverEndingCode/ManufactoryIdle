@@ -85,4 +85,31 @@ describe("format", () => {
     expect(format(value, "sci")).toBe("1.00e15");
     expect(format(value, "short")).toBe("1.00 aa");
   });
+  // Spec A.4 zone 2 puts clocks and satisfaction in [0, 1], and early-game
+  // rates sit below 0.01/sec. A fixed two-decimal cap rendered every one of
+  // them "0.00", which during calibration is indistinguishable from stalled.
+  it("keeps three significant figures below 1", () => {
+    expect(format(D(0.004), "short")).toBe("0.004");
+    expect(format(D(0.0123), "short")).toBe("0.0123");
+    expect(format(D(0.00456), "short")).toBe("0.00456");
+    expect(format(D(0.5), "short")).toBe("0.5");
+    expect(format(D(0.999), "short")).toBe("0.999");
+  });
+
+  it("does not collapse distinct small rates onto the same string", () => {
+    expect(format(D(0.004), "short")).not.toBe(format(D(0.006), "short"));
+  });
+
+  it("renders negatives below 1", () => {
+    expect(format(D(-0.004), "short")).toBe("-0.004");
+  });
+
+  it("falls back to scientific below 1e-4 rather than printing leading zeros", () => {
+    expect(format(D("1e-5"), "short")).toBe("1.00e-5");
+    expect(format(D("4.2e-9"), "short")).toBe("4.20e-9");
+  });
+
+  it("still pads to two decimals at and above 1", () => {
+    expect(format(D(1), "short")).toBe("1.00");
+  });
 });

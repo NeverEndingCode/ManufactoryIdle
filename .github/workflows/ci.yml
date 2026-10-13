@@ -3,6 +3,11 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request: { branches: [main] }
+  # The pacing gate is too slow for every commit (~5 minutes in CI as of 2026-10-12;
+  # ~15 when this was written), so it also runs nightly: a content change that
+  # lands green on a shallow smoke run still gets measured to tier 10 within a day.
+  schedule:
+    - cron: "0 5 * * *"
 
 jobs:
   check:
@@ -19,4 +24,80 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm content:check
-      - run: pnpm --filter @manufactory/sim run sim:ci
+      # Spec E.5's gate, shallow: greedy to tier 4 against its pacing targets, plus
+      # dead time, the r_eff floor and determinism. ~3 seconds, so it belongs on every
+      # commit. The deep form is the `pacing` job.
+      - run: pnpm --filter @manufactory/sim run gate:smoke
+
+  # A separate job so it runs ALONGSIDE `check` rather than after it: measured in CI on
+  # 2026-10-12 they are ~13 minutes (`check`, mostly sim's calibrate tests) and ~5
+  # (`pacing`), and serialising them would put an ~18-minute wall in front of every
+  # pull request.
+  pacing:
+    runs-on: ubuntu-latest
+    # The cap is a guard against a hang, NOT a performance budget. A timeout reads as a
+    # gate failure, which is how a gate stops being believed.
+    #
+    # History, because the number has moved twice and the reason matters. It was 45,
+    # measured at 38m38s on a GitHub runner against 15m54s locally -- shared two-core
+    # boxes running CPU-bound single-threaded simulation, a 2.43x factor. Then the
+    # bottleneck reporter was made milestone-aware, and the `bottleneck` policy went
+    # from dying at tier 1 to reaching tier 6: greedy 141.8s, casual 382.8s,
+    # **bottleneck 2273.9s**, ~49 minutes locally and ~119 projected in CI.
+    #
+    # A policy that makes progress simulates far more than one sitting dead, so fixing
+    # the game made the gate slower. Almost all of bottleneck's 37.9 minutes is
+    # simulating a stall the gate has ALREADY pinned: it reaches tier 6 at 1.17
+    # collections, about half a day, then runs the remaining ~119 simulated days to
+    # confirm what `reachesTier: 6` already asserts.
+    #
+    # Fixed 2026-10-10 two ways, and the cap came back down. A stalled run is now cut
+    # off once its dead time passes the gate's own 2-collection threshold, and the
+    # runs go in parallel worker threads. Measured locally: greedy 259.0s, casual
+    # 528.5s, bottleneck 812.0s (cut off at tier 7), determinism rerun 256.3s, 812s
+    # wall for the whole gate. A two-core runner does two at a time, so the slowest
+    # lane is about max(812, 259 + 528 + 256) = 1043s locally, ~42 minutes at the
+    # 2.43x factor. 90 is ~2x that.
+    #
+    # SUPERSEDED 2026-10-10 (payable advice): `bottleneck` no longer stalls at tier 7,
+    # it finishes all 10 tiers, and the gate now takes 135m18s locally (greedy 2m30s,
+    # determinism rerun 2m29s, casual 6m24s, bottleneck 135m17s: tier 7 at 14m27s, tier 8
+    # at 22m13s, tier 9 at 73m17s, tier 10 at 139m31s; those tier timings are from the earlier, first gate
+    # run, and the 135m17s total is from the final one). At the 2.43x
+    # runner factor the pacing job WILL exceed `timeout-minutes: 90`. The value is left
+    # unchanged pending a decision on it (raise it, or make `bottleneck` cheaper).
+    #
+    # PARTLY FIXED 2026-10-10 (R32 asked jointly): part of bottleneck's 135 minutes was one
+    # solver cycle -- iron_plate and screw pinning and un-pinning 6,668 times per 120 s
+    # resolve, tripping the MAX_EVENTS guard -- not simulation the gate needed. With it
+    # gone the gate takes 85m18s locally (greedy 2m29s, casual 6m29s, bottleneck 85m17s,
+    # determinism rerun 2m30s). The slowest two-core lane is about 85m17s locally,
+    # ~207 minutes at the 2.43x runner factor, which STILL exceeds the 90-minute cap.
+    # The remaining 85 minutes is NOT known to be needed simulation: a second cycle is
+    # left. Once reinforced_iron_plate is FULL (~2,270 s after the slice-tier-8 fixture),
+    # screw alone pins and un-pins ~5,000 times per 120 s resolve and trips MAX_EVENTS
+    # (the old per-entry R32 cycled there too, as iron_plate/screw). Fix that before
+    # deciding on the cap. `timeout-minutes` is left unchanged pending that decision.
+    #
+    # FIXED 2026-10-12 (one solve per item-state configuration): resolve now caches solve()
+    # by tier, tap stacks and every stock item's state tag, so a pin/unpin cycle costs a
+    # handful of solves instead of ~10,000 per 120 s resolve. Pins are byte-identical. The
+    # gate takes 2m18s locally (greedy 23s, casual 22s, bottleneck 2m17s, determinism
+    # rerun 24s). The slowest two-core lane is bottleneck, ~137s locally, ~5.5 minutes at
+    # the 2.43x runner factor -- well under the 90-minute cap. The screw cycle itself
+    # remains (it is cheap now, not gone). Measured in CI on 6b8a2d7: 5m15s for the whole
+    # job. `timeout-minutes` lowered 90 -> 20 (2026-10-12): ~4x the measured run, so a hung
+    # or regressed gate fails in 20 minutes instead of 90.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # All three of spec E.5's policies to tier 10. Fails on a tier time outside
+      # tolerance, a known-red pin that has drifted OR gone stale, dead time over
+      # threshold, an observed r_eff at the runaway floor, or a determinism divergence.
+      - run: pnpm --filter @manufactory/sim run gate

@@ -17,6 +17,15 @@ export const FIXTURE_BUNDLE_DIR = fileURLToPath(
   new URL("../../../packages/content/bundles/fixture", import.meta.url),
 );
 
+/**
+ * Spec B.5's vertical slice. The fixture is a 7-recipe test artifact with
+ * hand-verified numbers; the slice is the content the game is actually paced
+ * around, and it is the bundle calibration runs against.
+ */
+export const SLICE_BUNDLE_DIR = fileURLToPath(
+  new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
+);
+
 export function loadContent(dir: string = FIXTURE_BUNDLE_DIR): IndexedContent {
   const bundle: ContentBundle = loadBundleDir(dir);
   return indexContent(bundle);

@@ -560,6 +560,18 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
   // let that walker's demand jump. Re-running the real mechanism is what
   // makes every one of those interactions fall out correctly for free.
   //
+  // **Asked jointly (2026-10-10, Phase 2).** "Were X not pinned" is asked with every
+  // OTHER item R32 is holding still held -- their entries excluded from the re-run --
+  // starting from every candidate held and releasing each item whose net survives,
+  // until a round releases nothing. Asked one item at a time with nobody else excluded,
+  // two coupled items each look sustainable only because the other's entry is still
+  // starving their shared consumer: measured on the vertical slice, iron_plate and
+  // screw (both feeding make_reinforced_iron_plate) escaped disqualification together,
+  // both banked, both un-pinned, and the pair cycled 6,668 times in a 120 s resolve.
+  // The verdict is per item, not per entry: an item's ordinary and `reserve:` entries
+  // bank the same stock, and excluding one sibling from the other's re-run broke two
+  // fuzz properties on exactly that shape.
+  //
   // Scoped to `mode === "guaranteed"`: no share-mode entry in the fixture or
   // generator exercises this shape, and folding disqualification into the
   // share group's weighted scale would complicate its renormalization for no
@@ -568,7 +580,9 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
   if (forceDisqualified) {
     disqualified = forceDisqualified;
   } else {
-    const computed = new Set<string>();
+    // The pre-checks are per entry; the test itself is per item (see "Asked jointly"
+    // above), so an item's entries -- ordinary and `reserve:` -- share one verdict.
+    const candidates: { id: string; itemId: ItemId }[] = [];
     for (const entry of live) {
       if (entry.mode !== "guaranteed" || entry.itemId === null) continue;
       if (!pinnedEmpty.has(entry.itemId)) continue;
@@ -576,18 +590,35 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
       const ownRecipe = activeRecipeOf(activeRecipe, entry.itemId);
       if (ownRecipe === undefined) continue;
       if ((touchCount.get(ownRecipe) ?? 0) < 2) continue;
+      candidates.push({ id: entry.id, itemId: entry.itemId });
+    }
 
-      const pinnedWithoutX = new Set(pinnedEmpty);
-      pinnedWithoutX.delete(entry.itemId);
-      const alt = runPasses(pinnedWithoutX, new Set());
-      const altClocks = new Map<RecipeId, number>();
-      for (const [recipeId, units] of capacityUnits) {
-        altClocks.set(recipeId, units > 0 ? (alt.usedUnits.get(recipeId) ?? 0) / units : 0);
-      }
-      if (netForItem(content, entry.itemId, capacityUnits, altClocks) < -1e-9) {
-        computed.add(entry.id);
+    // Start with every candidate item held and only ever release, so this ends in at
+    // most one round per candidate item.
+    const candidateItems = [...new Set(candidates.map((c) => c.itemId))];
+    const held = new Set<ItemId>(candidateItems);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const itemId of candidateItems) {
+        if (!held.has(itemId)) continue;
+        const pinnedWithoutX = new Set(pinnedEmpty);
+        pinnedWithoutX.delete(itemId);
+        const othersHeld = new Set<string>();
+        for (const c of candidates) if (c.itemId !== itemId && held.has(c.itemId)) othersHeld.add(c.id);
+        const alt = runPasses(pinnedWithoutX, othersHeld);
+        const altClocks = new Map<RecipeId, number>();
+        for (const [recipeId, units] of capacityUnits) {
+          altClocks.set(recipeId, units > 0 ? (alt.usedUnits.get(recipeId) ?? 0) / units : 0);
+        }
+        if (netForItem(content, itemId, capacityUnits, altClocks) >= -1e-9) {
+          held.delete(itemId);
+          changed = true;
+        }
       }
     }
+
+    const computed = new Set<string>();
+    for (const c of candidates) if (held.has(c.itemId)) computed.add(c.id);
     disqualified = computed;
   }
 

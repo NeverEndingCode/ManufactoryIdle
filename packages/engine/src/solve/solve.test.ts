@@ -101,6 +101,34 @@ describe("solve — power equilibrium (spec C.4)", () => {
     expect(bottleneck.machinesToClear).toBe(1);
   });
 
+  // Measured 2026-10-09 on the vertical slice: `bottleneck` stalled at tier 6 owning
+  // 77 biomass burners and zero collectors, every burner at clock 0, because this
+  // branch always named the generator. The waterfall's power entry already said
+  // `limitedBy: collect_biomass`; the reporter never read it.
+  it("names what starves an installed generator, not another generator", () => {
+    let w = brownout(3);
+    w = withInstalled(w, "oil", "generator", 1, 1);
+    w = { ...w, assignment: { ...w.assignment, burn_fuel: 1 } };
+    const sol = solve(w, content, NO_FLOOR);
+    // Preconditions: a real brownout, a generator that has capacity, and a waterfall
+    // that blames something other than the generator for the shortfall.
+    expect(sol.power.ratio).toBeLessThan(1);
+    expect(sol.capacity.unitsByRecipe.get("burn_fuel") ?? 0).toBeGreaterThan(0);
+    const powerEntry = sol.entries.find((entry) => entry.entryId === "power")!;
+    expect(powerEntry.limitedBy).not.toBeNull();
+    expect(powerEntry.limitedBy).not.toBe("burn_fuel");
+
+    expect(sol.bottleneck).toEqual({
+      kind: "recipe",
+      recipeId: powerEntry.limitedBy,
+      // Still the power bar: the advice reads "this is what is browning the grid".
+      limitingTarget: "power",
+      // The fuel chain has no machines at all, so one is the honest minimum -- the
+      // same argument resolveBlocker makes for a zero-capacity milestone recipe.
+      machinesToClear: 1,
+    });
+  });
+
   it("reports no generator to buy when none is unlocked", () => {
     const sol = solve(brownout(0), content, NO_FLOOR);
     const bottleneck = sol.bottleneck;
@@ -246,5 +274,64 @@ describe("solve — the EMPTY invariant holds through a byproduct (ruling R30)",
         expect(flow.consumption).toBeLessThanOrEqual(flow.production + 1e-9);
       }
     }
+  });
+});
+
+// Phase 2. The EMPTY clamp (ruling R30) throttles an over-consumed item's consumers by
+// `factor = production / consumption`, whose whole purpose is to make consumption equal
+// production exactly. It then re-derives the flows by summing the scaled terms, and in
+// float `sum(cᵢ · factor)` is not `(sum cᵢ) · factor` — so the two land a few ULPs apart
+// and `net` comes out as cancellation noise instead of zero.
+//
+// Measured on the fixture: iron_ingot at production 0.9922500000000002 against
+// consumption 0.9922500000000001, net 1.1102230246251565e-16; and elsewhere a net of
+// 3.552713678800501e-15, exactly 16 × Number.EPSILON.
+//
+// That crumb is not cosmetic. `resolve` reads a non-zero net as a real rate, and for an
+// item sitting at zero that means scheduling an "unpin" a nanosecond out, integrating a
+// nanosecond of 3.5e-15/s, reading the resulting 1e-24 as stock, scheduling a "drain"
+// back to zero, and repeating for ever — 117.7 loop iterations per resolve, 99% of the
+// simulator's wall clock.
+//
+// The same argument `machineCostRange` makes for LIFO refunds applies: an invariant the
+// code intends should be exact by construction, not approximately re-derived.
+describe("the EMPTY clamp balances exactly", () => {
+  /**
+   * iron_ingot empty, with four constructors eating it and one smelter making it:
+   * consumption 2/s against production 0.5/s, so ruling R30's clamp throttles the
+   * consumers by `production / consumption` to bring them level.
+   */
+  function overConsumed(): WorldState {
+    let w = initialWorld(content, 1, 0);
+    w = withInstalled(w, "iron", "miner", 1, 4);
+    w = withInstalled(w, "iron", "smelter", 1, 1);
+    w = withInstalled(w, "iron", "constructor", 1, 4);
+    return {
+      ...w,
+      assignment: { ...w.assignment, mine_iron: 4, smelt_iron: 1, make_plate: 4 },
+      stored: { ...w.stored, iron_ore: D(500) },
+    };
+  }
+
+  it("clamps consumption down to production", () => {
+    const flow = solve(overConsumed(), content, NO_FLOOR).itemRates.get("iron_ingot")!;
+    // Without the clamp this would be 2/s against 0.5/s.
+    expect(flow.consumption).toBeCloseTo(flow.production, 9);
+  });
+
+  it("leaves the clamped item's net at exactly zero, not a residue", () => {
+    const flow = solve(overConsumed(), content, NO_FLOOR).itemRates.get("iron_ingot")!;
+    expect(flow.consumption).toBeGreaterThan(0);
+    expect(flow.net).toBe(0);
+  });
+
+  it("reports consumption as exactly the production it was clamped to", () => {
+    const flow = solve(overConsumed(), content, NO_FLOOR).itemRates.get("iron_ingot")!;
+    expect(flow.consumption).toBe(flow.production);
+  });
+
+  it("leaves an unclamped item's net alone", () => {
+    // iron_ore has four miners feeding one smelter: a genuine surplus, nothing clamps it.
+    expect(solve(overConsumed(), content, NO_FLOOR).itemRates.get("iron_ore")!.net).toBeGreaterThan(0);
   });
 });

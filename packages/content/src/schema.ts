@@ -1,7 +1,10 @@
 // The authored shape of a content bundle. Spec B.1: the graph and the pacing
 // intent are hand-authored; cost ratios, storage curves, and milestone
-// requirements are derived by the calibration script in Phase 2 and land in a
-// separate `derived` block, so they are deliberately absent here.
+// requirements are solved by the calibration script and arrive in the `derived`
+// block at the bottom of this file, which `loadBundleDir` lays over the authored
+// values. The authored fields they replace are still present and still required --
+// a bundle has to load and validate before it can be calibrated at all -- but on a
+// calibrated bundle they are seeds, not the numbers the game runs on.
 import { z } from "zod";
 import { isPositive, parseRational } from "@manufactory/rational";
 
@@ -87,10 +90,20 @@ export const MachineClassSchema = z
     id: Id,
     name: z.string().min(1),
     ladder: LadderSchema,
-    // Spec B.4: `r` is derived by the Phase 2 calibration script. Until then it is
-    // authored, defaulting to spec D3's stated 1.09. Cost(n) = base * r^n, and n is
-    // always an integer, so it is evaluated by exponentiation by squaring (spec E.4).
+    // Spec B.4: `r` is derived by the calibration script. Cost(n) = base * r^n, and
+    // n is always an integer, so it is evaluated by exponentiation by squaring
+    // (spec E.4). The default is spec D3's stated 1.09.
     costRatio: z.number().gt(1).default(1.09),
+    // Spec D3's authoring inversion: you author the ladder (a feel decision) and
+    // `rEff` (a pacing decision), and calibration derives r = rEff * m where
+    // m = step^(1/interval). Retuning the ladder because it feels better then
+    // changes pacing by exactly zero. Optional because a bundle that authors `r`
+    // directly is still legal -- the fixture does, and its numbers are hand-verified
+    // by tests -- but content meant to be calibrated should author this instead.
+    //
+    // > 1 is D3's runaway floor: at rEff <= 1 machine count grows linearly or faster
+    // and production explodes, which check 8 exists to prevent.
+    rEff: z.number().gt(1).optional(),
     marks: z.array(MarkSchema).min(1),
   })
   .strict();
@@ -146,6 +159,14 @@ export const StorageCurveSchema = z
     baseCostItem: Id.nullable(),
     baseCostAmount: z.number().positive(),
     maxLevel: z.number().int().positive(),
+    // Amends spec B.4: cap = base * capGrowth^level * capPerTier^tier.
+    //
+    // Without it the most a player can ever bank does not grow with progression, so
+    // tier ceilings asymptote against targets that double and no milestone amount can
+    // stretch a deep tier. Authored per-item caps stay the relative intent; this is the
+    // single number calibration solves for the progression scaling. 1 is the old
+    // behaviour exactly, which is why it defaults there.
+    capPerTier: z.number().gt(0).default(1),
   })
   .strict();
 
@@ -214,6 +235,56 @@ export const StartSchema = z
   })
   .strict();
 
+
+// What the calibration script solved for (spec B.7), emitted as a generated file
+// alongside the authored ones and laid over them at load time by `applyDerived`.
+//
+// Every field is optional and every entry is a patch, not a replacement: a run that
+// solves only milestone amounts must not silently reset a storage curve it never
+// looked at. `loadBundleDir` rejects a patch that names something the bundle does
+// not have, because that means the content was re-authored after the calibration run
+// and the numbers no longer describe it.
+// Both, deliberately. `costRatio` is what the engine runs on; `rEff` beside it is the
+// pacing decision that produced it (spec D3, as amended in Phase 2 — calibration solves
+// r_eff and derives r = r_eff * m). Emitting only the cost ratio would leave a reader
+// unable to tell a solved number from a hand-picked one, and a re-run unable to start
+// from where the last one finished.
+const DerivedMachineClassSchema = z
+  .object({ id: Id, costRatio: z.number().gt(1), rEff: z.number().gt(1).optional() })
+  .strict();
+
+const DerivedMilestoneSchema = z
+  .object({ tier: z.number().int().min(1), requires: z.array(CostEntrySchema).min(1) })
+  .strict();
+
+const DerivedStorageCurveSchema = StorageCurveSchema.partial().strict();
+
+// Provenance. These are not inputs to the game -- nothing reads them at runtime --
+// they are the reviewable claim the calibration run is making: here is what I was
+// aiming at, here is what these numbers actually measured, run this policy on this
+// seed to check me. A calibrated bundle whose observed column has drifted from its
+// target column is visibly stale without anyone having to re-run anything.
+export const CalibrationRunSchema = z
+  .object({
+    calibratedAt: z.string().min(1),
+    policy: z.string().min(1),
+    seed: z.number().int(),
+    targetCollectionsToTier: z.array(z.number().positive()),
+    observedCollectionsToTier: z.array(z.number().nonnegative().nullable()),
+    observedStorageBindingCadence: z.number().nonnegative().nullable().optional(),
+  })
+  .strict();
+
+export const DerivedSchema = z
+  .object({
+    run: CalibrationRunSchema.optional(),
+    machineClasses: z.array(DerivedMachineClassSchema).optional(),
+    milestones: z.array(DerivedMilestoneSchema).optional(),
+    storage: DerivedStorageCurveSchema.optional(),
+    quantumStorage: DerivedStorageCurveSchema.optional(),
+  })
+  .strict();
+
 export const BundleSchema = z
   .object({
     version: z.string().min(1),
@@ -227,6 +298,7 @@ export const BundleSchema = z
       baseCostItem: null,
       baseCostAmount: 50,
       maxLevel: 20,
+      capPerTier: 1,
     }),
     quantumStorage: StorageCurveSchema.default({
       capGrowth: 1.6,
@@ -234,6 +306,7 @@ export const BundleSchema = z
       baseCostItem: null,
       baseCostAmount: 500,
       maxLevel: 15,
+      capPerTier: 1,
     }),
     softcaps: SoftcapsSchema.default({
       ladder: { threshold: 1000, slope: 0.25 },
@@ -255,6 +328,7 @@ export const BundleSchema = z
     // Spec section 8: the offline accrual cap, default 8h.
     offlineCapHours: z.number().positive().default(8),
     pacing: PacingSchema,
+    derived: DerivedSchema.optional(),
   })
   .strict();
 
@@ -273,4 +347,6 @@ export type Softcaps = z.infer<typeof SoftcapsSchema>;
 export type TapConfig = z.infer<typeof TapSchema>;
 export type Milestone = z.infer<typeof MilestoneSchema>;
 export type StartState = z.infer<typeof StartSchema>;
+export type Derived = z.infer<typeof DerivedSchema>;
+export type CalibrationRun = z.infer<typeof CalibrationRunSchema>;
 export type Bundle = z.infer<typeof BundleSchema>;

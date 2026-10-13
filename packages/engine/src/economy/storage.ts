@@ -48,7 +48,12 @@ export function storageCap(
 ): Dec {
   const item = content.items.get(itemId);
   if (!item) return DECIMAL_ZERO;
-  return capAtLevel(item.baseStorageCap, content.bundle.storage, numOf(state.storageLevel, itemId));
+  return capAtLevel(
+    item.baseStorageCap,
+    content.bundle.storage,
+    numOf(state.storageLevel, itemId),
+    state.tier,
+  );
 }
 
 /** Spec B.4: Quantum Storage is purchased per lane, so one level lifts every item. */
@@ -63,6 +68,7 @@ export function quantumCap(
     item.baseQuantumCap,
     content.bundle.quantumStorage,
     numOf(state.qsLevel, item.lane),
+    state.tier,
   );
 }
 

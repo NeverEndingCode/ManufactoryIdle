@@ -9,10 +9,13 @@ for years.
 
 ## Status
 
-**Phase 0 complete.** The monorepo, three packages (`rational`, `content`, `engine`), CI,
-and local infra (Postgres + SuperTokens via Docker Compose) are in place, with 151 tests,
-lint, typecheck, and `pnpm content:check` all green. The engine core design (below) is
-complete and Phase 1 — the engine and simulator — is next.
+**Phases 0 and 1 complete; Phase 2 (calibrated content) in progress.** The monorepo, four
+packages (`rational`, `content`, `engine`, `sim`), CI, and local infra (Postgres +
+SuperTokens via Docker Compose) are in place, with the test suite, lint, typecheck and
+`pnpm content:check` all green.
+
+There is deliberately no test count here. It was wrong three times before it was removed —
+run `pnpm test` for the number, which is the only place it cannot go stale.
 
 | Document | What it is |
 |---|---|

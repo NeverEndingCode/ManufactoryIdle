@@ -113,3 +113,42 @@ describe("fuzzing resolve", () => {
     30_000,
   );
 });
+
+// Phase 2. A net rate must be either meaningfully non-zero or exactly zero — never a
+// cancellation crumb in between.
+//
+// Ruling R30's EMPTY clamp throttles an over-consumed item's consumers by
+// `production / consumption`, whose entire purpose is to make the two equal. It then
+// re-derives the flows by summing the scaled terms, and in float `sum(cᵢ · factor)` is
+// not `(sum cᵢ) · factor` — so the pair lands a few ULPs apart and `net` comes out as
+// noise instead of zero. Measured in the wild: 3.552713678800501e-15, exactly 16 ×
+// Number.EPSILON, and 1.1102230246251565e-16 against flows of 0.99225.
+//
+// `resolve` reads that crumb as a real rate. For an item resting at zero it schedules an
+// "unpin" a nanosecond out, integrates a nanosecond of 3.5e-15/s, reads the resulting
+// 1e-24 as stock, schedules a "drain" back to zero, and repeats — 117.7 loop iterations
+// per resolve, 99% of the simulator's wall clock, at 108 ms a call.
+//
+// The property is stated over random states rather than one reproduction because the
+// crumb only appears at particular instants of particular configurations; the invariant
+// is what matters, not the example.
+describe("flows do not carry cancellation crumbs", () => {
+  it("never reports a net that is non-zero but negligible beside its own flows", () => {
+    fc.assert(
+      fc.property(arbWorldSketch(), (sketch) => {
+        const solution = solve(buildWorld(content, sketch, START), content);
+        for (const [itemId, flow] of solution.itemRates) {
+          if (flow.net === 0) continue;
+          const scale = Math.max(Math.abs(flow.production), Math.abs(flow.consumption));
+          if (scale === 0) continue;
+          expect(
+            Math.abs(flow.net) / scale,
+            `${itemId}: net ${flow.net} against production ${flow.production} and ` +
+              `consumption ${flow.consumption} is neither zero nor a real rate`,
+          ).toBeGreaterThan(1e-12);
+        }
+      }),
+      { seed: SEED, numRuns: 400 },
+    );
+  });
+});

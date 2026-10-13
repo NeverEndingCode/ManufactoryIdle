@@ -8,6 +8,7 @@
 // state, which is exactly why the engine's economy module does not compute it.
 import type { IndexedContent, LaneId, MachineClassId } from "@manufactory/engine";
 import type { PolicyName } from "./policies.js";
+import type { RunCheckpoint, RunProgress } from "./run.js";
 
 export interface TierMark {
   tier: number;
@@ -28,6 +29,8 @@ export interface RunReport {
   seed: number;
   reachedTier: number;
   finished: boolean;
+  /** Stopped by `stopWhenDeadMs`: nothing happened for longer than the cut-off. */
+  stalled: boolean;
   simulatedMs: number;
   collections: number;
   tierTimes: TierMark[];
@@ -36,6 +39,11 @@ export interface RunReport {
   purchases: number;
   bindingConstraints: { recipeId: string; boundMs: number }[];
   rEff: REffRow[];
+  /**
+   * Empty unless the run was asked for them. World states are large, so an ordinary
+   * `sim run` keeps none; only calibration, which replays prefixes, pays for them.
+   */
+  checkpoints: RunCheckpoint[];
 }
 
 /** r_eff = r / m, where m is the ladder's multiplier growth per machine (spec D3). */
@@ -114,4 +122,53 @@ export function formatReport(report: RunReport): string {
     );
   }
   return lines.join("\n");
+}
+
+export interface ProgressPrinterOptions {
+  /** Wall clock, injectable so the throttle is testable. */
+  now?: () => number;
+  /** When the run started, by the same clock. Defaults to the moment of creation. */
+  startedAt?: number;
+  /** Minimum wall-clock gap between two step lines. Tier lines are never throttled. */
+  everyMs?: number;
+}
+
+function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  return minutes > 0 ? `${minutes}m${String(total % 60).padStart(2, "0")}s` : `${total}s`;
+}
+
+/**
+ * Turns `RunProgress` events into human lines. A step fires once per simulated
+ * interval -- thousands of times a run -- so step lines are throttled by wall clock;
+ * tier lines always print, because they are the events a watcher is waiting for.
+ */
+export function progressPrinter(
+  label: string,
+  write: (line: string) => void,
+  options: ProgressPrinterOptions = {},
+): (event: RunProgress) => void {
+  const now = options.now ?? Date.now;
+  const startedAt = options.startedAt ?? now();
+  const everyMs = options.everyMs ?? 10_000;
+  let lastStepAt: number | null = null;
+
+  return (event) => {
+    const at = now();
+    const prefix = `[${label} ${formatElapsed(at - startedAt)}]`;
+    if (event.kind === "tier") {
+      write(
+        `${prefix} reached tier ${event.tier} at ${event.collections.toFixed(4)} colls · ` +
+          `${event.purchases} buys`,
+      );
+      return;
+    }
+    if (lastStepAt !== null && at - lastStepAt < everyMs) return;
+    lastStepAt = at;
+    write(
+      `${prefix} tier ${event.tier} · ${event.collections.toFixed(4)} colls · ` +
+        `${event.purchases} buys · bound ${event.bound ?? "nothing"}`,
+    );
+  };
 }

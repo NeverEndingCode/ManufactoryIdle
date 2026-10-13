@@ -90,9 +90,37 @@ Statically checkable by the content validator (B.6 check 8) and dynamically by t
 simulator with the whole stack maxed. Far stronger than prose against original §16.4's
 "runaway growth".
 
-**Authoring inversion.** You author the **ladder** (a feel decision) and **`r_eff`** (a
-pacing decision). The calibration script derives **`r = r_eff × m`**. Retuning the
-ladder because it feels better therefore changes pacing by exactly zero.
+**Authoring inversion.** You author the **ladder** (a feel decision); `r` is never
+hand-authored. The calibration script **solves `r_eff`** against
+`pacing.targetCollectionsToTier` and derives **`r = r_eff × m`** from it (B.7). Retuning
+the ladder because it feels better therefore changes pacing by exactly zero.
+
+> **Amended in Phase 2.** This paragraph previously said the author writes `r_eff` and
+> calibration only derives `r` from it, which contradicted B.7's own list of what
+> calibration solves. B.7 is now the single reading: `r_eff` is solved, not authored.
+>
+> The contradiction was decided by measurement, not by preference. Milestone delivery
+> amounts — the only other lever with any reach over tier length — turn out to be
+> logarithmically weak *and* bounded: on the vertical slice, multiplying tier 3's
+> requirement by 33,000 bought 2.56 collections (5.30 → 7.86) and then ran into the
+> liquid cap, converging on 5,010,000 `reinforced_iron_plate` against a maximum
+> attainable 5,010,283. Its target of 11 was not in the reachable set at any amount.
+> `r_eff` moves the same tier over a range of 13× and is the only knob that does.
+>
+> An author who wants to fix `r_eff` by hand still can — it is authorable, and a bundle
+> that sets it is honoured — but a bundle meant to be paced leaves it to the script.
+
+**`r_eff`'s effect on tier length is not monotone**, which constrains how it can be
+solved. Raising it makes machines dearer, so a player buys fewer of them and banks more
+of the same currency instead. While a tier's requirement is small relative to production,
+that hoarding *wins*: measured on the slice at a fixed 22,400 `iron_plate`, scaling
+`r_eff − 1` by 1 → 2 → 4 took tier 1 from 1.95 collections to 1.65 to 1.42. Only once the
+requirement is large does slower production dominate — at 1,000,000 the same scaling runs
+3.94 → 3.76 → 9.39 → 23.58 → 53.71.
+
+So calibration **scans** `r_eff` rather than bisecting it, and scores each candidate on
+the whole tier curve. A bisection would assume the monotonicity this measurement
+disproves, and would settle in the flat corner.
 
 **Reframe: logarithmic base growth is correct, not a bug.** Cookie Clicker, AdVenture
 Communist, and ISEPS are all logarithmic and all run for years. The failure mode is not
@@ -521,6 +549,13 @@ pacing:
 Solves for: per-class `r_eff` (hence `r`), milestone delivery requirements, storage `s`
 and `sc`, QS `q` and its cost curve.
 
+`r_eff` is solved as a single scale on `r_eff − 1` across every class, not per class
+independently. `r_eff − 1` is the pacing quantity — the invariant above is `r_eff > 1 + ε`,
+so the distance above the floor is what carries meaning, and scaling it preserves the
+relative ordering the author chose between classes. Ten tier targets against fourteen
+independent per-class knobs would be underdetermined; one scale against the shape of the
+curve is not. §D3 records why the scan is a scan and not a bisection.
+
 **The calibration script is the simulator with a search wrapper.** It runs
 `sim run --policy greedy` and binary-searches the free parameters until the observed curve
 matches the target. There is therefore exactly one implementation of "how long does this
@@ -640,6 +675,20 @@ provable bound, not a hope. At 31 items that is a worst case of 31 and a typical
 × ~3 power passes ≈ 4,000 operations. Microseconds. An 8-hour resolve with 20 events is 20
 of those.
 
+**Amended 2026-10-10 (Phase 2): R32 for coupled EMPTY items.** Ruling R32 disqualifies
+an entry from drawing on its own item's producing recipe when that item is pinned
+EMPTY and, were it not pinned, would drain -- a surplus there un-pins the item and
+starts a pin/unpin limit cycle. The question is asked jointly: each candidate item is
+tested with every other disqualified item's entries still disqualified, starting from
+all candidates and releasing until stable, with an item's entries (ordinary and
+`reserve:`) treated as one. Measured cause: `iron_plate` and `screw`, both feeding
+`make_reinforced_iron_plate`, each looked sustainable only while the other's entry
+starved the shared consumer; neither was disqualified, and the pair cycled 6,668 times
+in 120 s of the vertical slice, part of why the pacing gate took 135 minutes (it now
+takes 85). Not yet covered: once `reinforced_iron_plate` is FULL, `screw` alone still
+cycles (~5,000 events per 120 s resolve); see the Phase 2 handoff. That cycle is now cheap
+rather than gone (§C.7's 2026-10-12 amendment); removing it needs a stock-model change.
+
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
 grid is binding.
@@ -662,6 +711,48 @@ an iterative honest answer beats a "levels to clear" count derived from the same
 heuristic that produced the bad machine advice. `upgrade: null` is deliberately an empty
 recommendation rather than an invented one — that state is the permanent wall validator
 check 9 exists to make unreachable.
+
+**Amended 2026-09-19 (Phase 2): the scan is milestone-first.**
+
+§4.5 originally returned the constraint limiting the highest-priority *limited* target.
+Two measured defects follow from that wording. A target with zero machines has
+`limitedBy: null` and is invisible to the scan, since a recipe with no capacity is not
+limited by anything. And ranking by the authored priority list answers a question a
+stalled player is not asking.
+
+Measured on the vertical slice: `bottleneck` stalled at tier 1 for 120 simulated days
+holding 2,307,820 `iron_plate` and 430,367 `screw`, owning zero assemblers, needing 200
+`reinforced_iron_plate` — and was advised to buy three iron ore miners.
+
+The reporter now resolves the next milestone's unmet requirements first, resolving each
+unmet requirement to its own blocker (the waterfall has already chased its input chain),
+and falls back to the priority scan when the milestone is satisfied or nothing in it is
+blocked. The returned kinds are unchanged: a zero-capacity recipe is reported as
+`kind: "recipe"`, because it genuinely is the binding constraint.
+
+**Amended 2026-10-09 (Phase 2): a recipe throttled by a full output is not the
+blocker.** Before naming any recipe, the reporter checks that recipe's outputs,
+byproducts included. If one is FULL, buying the recipe cannot help -- the solver's FULL
+sweep holds it at the drain rate -- so the reporter walks forward from the full item to
+its live consumers and names the first that is missing, too slow, or itself blocked
+further on; with no live consumer, it names storage for the full item. Measured cause:
+`bottleneck` bought 50 refineries into a gridlocked oil lane at tier 6 of the vertical
+slice, because `fuel` -- two hops past the rubber it was asked for -- had nowhere to go.
+The trigger is FULL **and held** (net >= -`FLOW_TOLERANCE`), and checks the target's own
+active recipe before the recipe the branch would name; a consumer's held outputs are
+checked before its capacity. See `specs/2026-10-09-byproduct-gridlock-design.md`.
+
+**Amended 2026-10-10 (Phase 2): advice must be payable.** Before returning, the reporter
+prices the purchase its answer implies -- a storage level, a Quantum Storage level, or
+one machine at the best unlocked mark. If any cost item's amount exceeds that item's
+liquid cap plus held bound stock, the purchase can never be made (builds spend bound,
+then quantum, then stored; only bound + liquid cap bounds a cost), so the
+reporter names storage for that payer instead, priced the same way, ending at
+`upgrade: null` only when nothing fits. Measured cause: `bottleneck` stalled at tier 7
+of the vertical slice advised to buy a Quantum Storage level costing 4,473 `iron_plate`
+while `iron_plate` could hold 4,000. Measured before the fix: buying one `iron_plate`
+storage level, 90, made that 4,473 level payable (this is that probe, not a record of
+what the fixed run bought).
 
 ### C.4 Power
 
@@ -730,6 +821,20 @@ craft an oscillating factory that denies service to the server.
 
 `summary` powers the "while you were away" report: what was produced, what filled up and
 when, what stalled.
+
+**Amended 2026-10-12 (Phase 2): one solve per item-state configuration.** Within one
+`resolve` nothing can be bought, so the only inputs to `solve` that can change are stock,
+tier (a milestone) and tap stacks (a timer). The rates a step reads (`itemRates`) depend
+on stock only through each item's state tag (`liquid <= 0` and the FULL test) -- unlike
+the bottleneck report, which reads exact stock and which a step therefore never sees
+(`StepAnswer` is `Pick<Solution, "itemRates">`). So `resolve` caches `solve` by tier, tap stacks and
+every stock item's tag, and each distinct combination is solved once. The output is
+unchanged: tests compare it against an uncached resolve, and the pacing gate's pins come
+out byte-identical. `summary.solves` reports the count. A pin/unpin limit cycle, which
+alternates between a few such combinations, stops costing a solve per step. Measured: the
+vertical slice's `screw` cycle took ~10,000 solves and ~20 s per 120 s resolve, and now
+takes 5; the pacing gate went from 86m23s to 2m18s. **Constraint this places on `solve`:**
+anything new it reads that can change during a resolve must join the key.
 
 ---
 
