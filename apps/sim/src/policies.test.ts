@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { D, apply, computeCapacity, solve, type WorldState } from "@manufactory/engine";
+import { D, apply, computeCapacity, indexContent, solve, type WorldState } from "@manufactory/engine";
 import { SLICE_BUNDLE_DIR, loadContent, newWorld } from "./bootstrap.js";
 import {
   POLICY_NAMES,
@@ -487,14 +487,35 @@ describe("milestoneFirstReorder", () => {
     }
   });
 
-  it("optimal looks ahead from the reordered list, not the one it was handed", () => {
+  it("dedupes a milestone that lists the same item twice, so the reorder stays a permutation", () => {
+    const bundle = content.bundle;
+    const milestones = bundle.milestones.map((m) =>
+      m.tier === 3 ? { ...m, requires: [...m.requires, ...m.requires] } : m,
+    );
+    const dup = indexContent({ ...bundle, milestones });
+    const state: WorldState = { ...newWorld(dup, 1), tier: 2 };
+    const ctx: PolicyContext = { content: dup, state, solution: solve(state, dup), nowMs: 0 };
+    const entries = idsOf(milestoneFirstReorder(ctx))!;
+    expect(new Set(entries).size).toBe(entries.length);
+    expect(entries).toHaveLength(state.priority.length);
+    expect(apply(state, dup, milestoneFirstReorder(ctx)[0]!, state.seed).rejected).toBe(false);
+  });
+
+  it("optimal's reorder moves its lookahead target to the milestone item", () => {
+    // decide's output alone cannot tell the two states apart on this fixture (the
+    // smelter binds either way), so the lookahead target is asserted directly.
     const base = rich();
-    const ctx: PolicyContext = { ...base, state: { ...base.state, tier: 2 } };
-    ctx.solution = solve(ctx.state, content);
+    const handedPriority = ordered(
+      ["item:iron_ore", ...AUTHORED.filter((id) => id !== "item:iron_ore")],
+    );
+    const handedState: WorldState = { ...base.state, tier: 2, priority: handedPriority };
+    const ctx: PolicyContext = { ...base, state: handedState, solution: solve(handedState, content) };
     const [reorder, ...rest] = getPolicy("optimal").decide(ctx);
     const applied = apply(ctx.state, content, reorder!, ctx.state.seed);
     if (applied.rejected) throw new Error(applied.reason);
     const reordered: PolicyContext = { ...ctx, state: applied.state, solution: solve(applied.state, content) };
+    expect(topTargetItem(ctx)).toBe("iron_ore");
+    expect(topTargetItem(reordered)).toBe("iron_plate");
     expect(rest).toEqual(getPolicy("optimal").decide(reordered));
   });
 });

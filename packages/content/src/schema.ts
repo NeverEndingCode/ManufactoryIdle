@@ -270,7 +270,6 @@ export const CalibrationRunSchema = z
     seed: z.number().int(),
     targetCollectionsToTier: z.array(z.number().positive()),
     observedCollectionsToTier: z.array(z.number().nonnegative().nullable()),
-    observedStorageBindingCadence: z.number().nonnegative().nullable().optional(),
   })
   .strict();
 

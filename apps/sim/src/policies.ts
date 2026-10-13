@@ -301,9 +301,11 @@ export function milestoneFirstReorder(ctx: PolicyContext): Action[] {
   const current = state.priority.map((entry) => entry.id);
   const power = state.priority.filter((entry) => entry.kind === "power").map((entry) => entry.id);
   const next = content.milestoneByTier.get(state.tier + 1);
-  const lead = (next?.requires ?? [])
-    .map((requirement) => `item:${requirement.item}`)
-    .filter((id) => current.includes(id) && !power.includes(id));
+  // A milestone may list an item twice; a duplicate would make `desired` not a
+  // permutation and the engine would reject the reorder.
+  const lead = [...new Set((next?.requires ?? []).map((requirement) => `item:${requirement.item}`))].filter(
+    (id) => current.includes(id) && !power.includes(id),
+  );
   // An entry outside start.priority goes last, in its current relative order. None
   // exists today: reserve entries are injected by effectivePriority, never stored.
   const authored = new Map(content.bundle.start.priority.map((itemId, index) => [`item:${itemId}`, index]));
@@ -326,7 +328,10 @@ const greedy: Policy = {
     // Reassignments first: they cost nothing, and putting a starved recipe on the map
     // before buying means the purchase's own auto-assignment sees the corrected state.
     // The purchase choice does not read the priority list, so the reorder needs no
-    // re-solve here.
+    // re-solve here. idleReassignments does read the priority list and the solution,
+    // and here it reads them from BEFORE the reorder, so on a decision that reorders a
+    // reassignment can lag by one decision. The gate's pins were measured with this
+    // behaviour; changing it means re-gating.
     const moves = idleReassignments(ctx);
     const pick = cheapest(affordableCandidates(ctx));
     return pick === null ? [...reorder, ...moves] : [...reorder, ...moves, pick.action];
