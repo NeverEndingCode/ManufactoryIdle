@@ -211,6 +211,15 @@ describe("compareRuns", () => {
     expect(compareRuns(report(), report({ reachedTier: 2 }))).not.toEqual([]);
   });
 
+  // A run that stopped for dead time, ran a different length, or idled differently has
+  // diverged even when its tier times and purchases happen to agree.
+  it("rejects a difference in how the run ended or idled", () => {
+    const base = report();
+    expect(compareRuns(base, report({ stalled: !base.stalled }))).not.toEqual([]);
+    expect(compareRuns(base, report({ simulatedMs: base.simulatedMs + 60_000 }))).not.toEqual([]);
+    expect(compareRuns(base, report({ maxDeadTimeMs: base.maxDeadTimeMs + 60_000 }))).not.toEqual([]);
+  });
+
   it("tolerates a magnitude difference inside 1e-12 relative", () => {
     const nudged = report({
       tierTimes: [
