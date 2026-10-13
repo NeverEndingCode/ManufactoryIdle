@@ -26,6 +26,14 @@ export const SLICE_BUNDLE_DIR = fileURLToPath(
   new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
 );
 
+/**
+ * A frozen copy of the slice's authored files, for the calibrator's mechanics tests. It
+ * is never calibrated and never edited to follow the slice; see its README.
+ */
+export const CALIBRATION_FIXTURE_DIR = fileURLToPath(
+  new URL("../../../packages/content/bundles/calibration-fixture", import.meta.url),
+);
+
 export function loadContent(dir: string = FIXTURE_BUNDLE_DIR): IndexedContent {
   const bundle: ContentBundle = loadBundleDir(dir);
   return indexContent(bundle);
