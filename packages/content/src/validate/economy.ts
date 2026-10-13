@@ -262,18 +262,22 @@ export function checkStorageLadderClimbable(bundle: Bundle): ValidationIssue[] {
     // Caps only grow with progression, so "can this ladder EVER be climbed" is fairest
     // asked at the deepest tier the bundle reaches.
     const ladderTier = deepestTier(bundle);
-    const qsCeiling =
+    const storageAt = (level: number): number =>
+      item.baseStorageCap *
+      Math.pow(bundle.storage.capGrowth, level) *
+      Math.pow(bundle.storage.capPerTier, ladderTier);
+    const quantumAt = (level: number): number =>
       item.baseQuantumCap *
-      Math.pow(bundle.quantumStorage.capGrowth, bundle.quantumStorage.maxLevel) *
+      Math.pow(bundle.quantumStorage.capGrowth, level) *
       Math.pow(bundle.quantumStorage.capPerTier, ladderTier);
+    // The best case while climbing one ladder: the OTHER one already at its max.
+    const climbingStorage = curve === bundle.storage;
 
     for (let level = 0; level < curve.maxLevel; level += 1) {
       const cost = curve.baseCostAmount * Math.pow(curve.costGrowth, level);
-      const hold =
-        item.baseStorageCap *
-          Math.pow(bundle.storage.capGrowth, level) *
-          Math.pow(bundle.storage.capPerTier, ladderTier) +
-        qsCeiling;
+      const hold = climbingStorage
+        ? storageAt(level) + quantumAt(bundle.quantumStorage.maxLevel)
+        : storageAt(bundle.storage.maxLevel) + quantumAt(level);
       if (cost > hold) {
         issues.push(
           issue(
@@ -282,7 +286,7 @@ export function checkStorageLadderClimbable(bundle: Bundle): ValidationIssue[] {
               `${cost.toFixed(0)} "${curve.baseCostItem}" but the most a player can hold ` +
               `there is ${hold.toFixed(0)}, so it can never be bought and no level above ` +
               `it is reachable. costGrowth ${curve.costGrowth} against capGrowth ` +
-              `${bundle.storage.capGrowth} crosses over here, so either end the ladder ` +
+              `${curve.capGrowth} crosses over here, so either end the ladder ` +
               `below level ${level} or slow the cost curve. Cost growth ABOVE capacity ` +
               `growth is intended (§3.3 wants capacity to bind); outliving the crossover ` +
               `is not.`,

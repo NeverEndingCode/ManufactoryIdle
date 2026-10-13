@@ -239,6 +239,29 @@ describe("checkStorageLadderClimbable (check 12)", () => {
     expect(issues[0]!.message).toMatch(/level 0/);
   });
 
+  // Climbing the Quantum Storage ladder, the best a player can do is storage at ITS max
+  // plus Quantum Storage at the level being bought -- not the storage formula with the
+  // curves swapped. Here storage cannot be levelled at all (maxLevel 0), so plate holds
+  // 300 + 1200 * 1.6^L: level 4 costs 8,000 against 8,164 holdable, level 5 costs 16,000
+  // against 12,883. Putting the climbing level on the storage curve instead credits the
+  // player with Quantum Storage at max (~14.5M) and lets the ladder run to level 15.
+  it("asks the Quantum Storage ladder about Quantum Storage levels", () => {
+    const b = bundle();
+    b.storage = { ...b.storage, capGrowth: 1.3, maxLevel: 0 };
+    b.quantumStorage = {
+      ...b.quantumStorage,
+      capGrowth: 1.6,
+      costGrowth: 2,
+      baseCostItem: "plate",
+      baseCostAmount: 500,
+      maxLevel: 20,
+    };
+    const issues = checkStorageLadderClimbable(b);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.message).toMatch(/Quantum Storage ladder stops at level 5:/);
+    expect(issues[0]!.message).toMatch(/capGrowth 1\.6\b/);
+  });
+
   // A curve with no cost item is the schema's "levels are free" case. Free levels
   // cannot be unaffordable, and the fixture relies on that.
   it("says nothing about a curve whose levels are free", () => {
