@@ -1,6 +1,7 @@
 # Phase 2 handoff — calibrated content
 
-Written 2026-09-16, at the end of the session that finished Task 3. This is the
+Written 2026-09-16, at the end of the session that finished Task 3; header sections
+refreshed 2026-10-12 for PR #4 leaving draft. This is the
 orientation document: what is true now, what is left, and which assumptions have already
 been measured and disproved so the next session does not re-derive them.
 
@@ -12,13 +13,13 @@ replace it — it says where that plan is now and which parts of it have gone st
 ## Where the work is
 
 - Worktree: `.claude/worktrees/phase-1-engine`, branch `worktree-phase-2-content`,
-  pushed to `origin/worktree-phase-2-content` at `4cd5e32`. `main` is stale; do not
-  work from the top-level checkout.
+  pushed to `origin/worktree-phase-2-content` (PR #4; head `6b8a2d7` as of 2026-10-12).
+  The top-level checkout's `main` is stale; do not work from it.
 - The vertical slice is `packages/content/bundles/vertical-slice/` — 5 lanes, 31 items,
   44 recipes, 14 machine classes.
 - `derived.yaml` in that directory is **generated**. Do not hand-edit it.
 
-## State: Tasks 3 and 4 done; two policies are not gateable
+## State: Tasks 3 and 4 done; all three policies gated, two of them by known-red pins
 
 Phase 2's deliverable is a calibrated `derived.yaml` plus CI pacing gates. Both now
 ship. The gate is `sim gate` (`apps/sim/src/gate.ts` for the rules, `gate-cli.ts` for
@@ -27,15 +28,19 @@ the runs), in two depths:
 | | what it runs | cost | where |
 |---|---|---|---|
 | `pnpm --filter @manufactory/sim gate:smoke` | greedy to tier 4, twice | **2.6 s** | every commit, in `check` |
-| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **15m54s** local, **38m38s** in CI | `pacing` job, PRs + nightly |
+| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **2m18s** local, **5m15s** in CI | `pacing` job, PRs + nightly |
 
-Both currently PASS. It fails the build on a tier time outside tolerance, a known-red
+Both currently PASS. The full gate's cost history: 15m54s (2026-09-16), ~49 min once
+`bottleneck` made progress, 13 min after the stall cut-off and parallel workers, 135 min
+once `bottleneck` finished all ten tiers, 85 min after R32 asked jointly, and 2m18s since
+`resolve` solves each item-state configuration once (2026-10-12). `timeout-minutes` on
+the `pacing` job is 20. It fails the build on a tier time outside tolerance, a known-red
 pin that has drifted *or gone stale*, dead time over threshold, an observed `r_eff` at
 the runaway floor, or a determinism divergence. Verified to actually fail: pointed at
 the pre-retune bundle it exits 1 with `tier 1 at 0.4194 against target 0.5 (-16.1%)`.
 
 The rules are a pure function over `RunReport`s, unit-tested in 0.3 s (21 tests), so the
-judgement is not hidden behind a fifteen-minute run.
+judgement is not hidden behind a full gate run.
 
 Current fit — **9 of 10 tiers within 5%** (was 7; tiers 1 and 5 fixed 2026-09-16):
 
@@ -228,7 +233,11 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. `bottleneck` now finishes all 10 tiers, but at 5.87 collections against a target of 25 (was: the tier-7 stall).**
+**1. `bottleneck` now finishes all 10 tiers, but at 5.58 collections against a target of 25 (was: the tier-7 stall).**
+
+Current pins (re-measured 2026-10-10 after R32 asked jointly, unchanged since): tier 10 at
+5.5792, 500 purchases, dead time 0.225 collections. The 5.87 / 514 figures below are the
+payable-advice measurement before that.
 
 Gate-confirmed 2026-10-10 from a fresh run (not the resumed checkpoint): tier 6 at
 0.9337, tier 7 at 1.2871, 194 purchases, then cut off for dead time (2.004 collections).
@@ -376,9 +385,9 @@ since the `bottleneck` finding gives them a concrete reason to exist.)
 **6. Eleven carried-forward items** from Phases 0/1, none blocking. See the plan's
 "Carried forward, still open" table.
 
-**7. Plan hygiene.** The plan's "Still to do" list has duplicated numbering, claims a
-ten-tier scan costs "ten hours a scale" (~1 hour since the `resolve` fix), and still cites
-"33 collections for one rotor", which the floor measurement disproved.
+**7. Plan hygiene.** DONE 2026-10-12: the plan's "Still to do" list is renumbered, and
+its "ten hours a scale" and "33 collections for one rotor" claims are marked superseded
+in place.
 
 **8. Two gaps in the milestone-aware bottleneck reporter, noted so they are not
 rediscovered as new.**

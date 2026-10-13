@@ -932,16 +932,22 @@ that out, and it did; it just cost ten hours per scale to say so.
 
 ### Still to do
 
+*Renumbered 2026-10-12 (the list had two 2s and two 3s). Superseded claims are marked
+in place rather than deleted.*
+
 1. **Reconcile the pacing intent with the content.** Three routes, and this is a design
    decision rather than a calibration one:
    - **Retune `targetCollectionsToTier`** to the span the content actually supports.
      Cheapest, and the measured curve above is the evidence for what that span is.
-   - **Shorten the inter-tier bootstrap.** 33 collections for one rotor is the binding
+   - **Shorten the inter-tier bootstrap.** *(Superseded: the "33 collections for one
+     rotor" reading predates the tier fixes; tier 4 now lands at 1.84 against 1.90 and
+     tier 9 at 15.49 against 16.)* 33 collections for one rotor is the binding
      constraint on tiers 4 and 9, and it is a *policy* cost — `greedy` builds a new lane
      slowly. `SET_RESERVE` and `REORDER_PRIORITY` (still emitted by nothing) are exactly
      the levers a real player would use here.
    - **Add content per tier**, so a tier has more to ask for than one item's cap allows.
-2. **Make a ten-tier run affordable before attempting another.** At ten hours a scale an
+2. **Make a ten-tier run affordable before attempting another.** *(Superseded: since the
+   `resolve` fix a full ten-tier calibration takes ~1 hour.)* At ten hours a scale an
    eleven-scale scan is a week. A clearing probe has to simulate the whole 700-game-day
    run, so the cost is structural: either the scan gets far smaller, or the deep tiers
    are calibrated against something cheaper than a full replay.
@@ -949,14 +955,14 @@ that out, and it did; it just cost ten hours per scale to say so.
    34 runs halving its requirement to the minimum, and tier 9 another 34, when one run at
    the minimum answers "even this overshoots". The unreachable case already short-circuits;
    the overshoot case does not.
-2. **Decide what remains of B.7's storage list.** `capPerTier` is solved jointly with
+4. **Decide what remains of B.7's storage list.** `capPerTier` is solved jointly with
    `r_eff`. The cost curves — `capGrowth`, `costGrowth`, `baseCostAmount`, `maxLevel` on
    both storage and Quantum Storage — are still authored, and
    `pacing.storageBindingCadence` (12 machines between storage binding) is read by
    nothing. Either solve them against that target or drop the intent; leaving an
    authored pacing knob that nothing consumes is the `purchaseIntervalLateSeconds`
    pattern for a third time.
-3. **Decide `SET_RESERVE` and `REORDER_PRIORITY`.** Both are implemented in the engine
+5. **Decide `SET_RESERVE` and `REORDER_PRIORITY`.** Both are implemented in the engine
    and reachable from `sim play`, and no automated policy emits either. Every calibrated
    number is therefore tuned for a player who never uses two core mechanics. A spec
    decision about E.2's policy definitions, not a calibration one.

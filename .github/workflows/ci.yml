@@ -83,8 +83,10 @@ jobs:
     # gate takes 2m18s locally (greedy 23s, casual 22s, bottleneck 2m17s, determinism
     # rerun 24s). The slowest two-core lane is bottleneck, ~137s locally, ~5.5 minutes at
     # the 2.43x runner factor -- well under the 90-minute cap. The screw cycle itself
-    # remains (it is cheap now, not gone). `timeout-minutes` is left unchanged.
-    timeout-minutes: 90
+    # remains (it is cheap now, not gone). Measured in CI on 6b8a2d7: 5m15s for the whole
+    # job. `timeout-minutes` lowered 90 -> 20 (2026-10-12): ~4x the measured run, so a hung
+    # or regressed gate fails in 20 minutes instead of 90.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
