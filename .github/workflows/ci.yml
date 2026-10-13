@@ -77,7 +77,7 @@ jobs:
     # (the old per-entry R32 cycled there too, as iron_plate/screw). Fix that before
     # deciding on the cap. `timeout-minutes` is left unchanged pending that decision.
     #
-    # FIXED 2026-10-13 (one solve per item-state configuration): resolve now caches solve()
+    # FIXED 2026-10-12 (one solve per item-state configuration): resolve now caches solve()
     # by tier, tap stacks and every stock item's state tag, so a pin/unpin cycle costs a
     # handful of solves instead of ~10,000 per 120 s resolve. Pins are byte-identical. The
     # gate takes 2m18s locally (greedy 23s, casual 22s, bottleneck 2m17s, determinism

@@ -1,10 +1,10 @@
 # Unbankable EMPTY Feeders Implementation Plan
 
-> **SUPERSEDED 2026-10-13.** This approach was implemented (8a7caec), reverted
+> **SUPERSEDED 2026-10-12.** This approach was implemented (8a7caec), reverted
 > (d8d87a1) after the gate showed it stalled `bottleneck` at tier 1, and two redesigns
 > prototyped after it also failed the gate. The cycle it targeted is now cheap rather
 > than gone: `resolve` caches `solve` per item-state configuration (engine spec §C.7,
-> 2026-10-13). Kept as the record of what was tried and why it failed.
+> 2026-10-12). Kept as the record of what was tried and why it failed.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

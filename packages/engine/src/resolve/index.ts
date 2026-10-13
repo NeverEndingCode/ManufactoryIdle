@@ -196,7 +196,7 @@ interface NextEvent {
 function nextDiscontinuity(
   content: IndexedContent,
   state: WorldState,
-  solution: Solution,
+  solution: StepAnswer,
   cursorMs: number,
 ): NextEvent {
   let best: NextEvent = { dtMs: Number.POSITIVE_INFINITY, kind: null };
@@ -249,7 +249,7 @@ function nextDiscontinuity(
 function integrate(
   content: IndexedContent,
   state: WorldState,
-  solution: Solution,
+  solution: StepAnswer,
   dtMs: number,
 ): WorldState {
   const seconds = dtMs / 1000;
@@ -278,9 +278,12 @@ function integrate(
 }
 
 /**
- * What one step of `resolve` asks the solver. Only `itemRates` is read from the answer.
+ * What one step of `resolve` reads from the solver: only `itemRates`. Narrowed on purpose:
+ * the cache in `resolve` is exact for rates, but not for, e.g., `bottleneck`, which reads
+ * exact stock -- so a step must not be able to see it.
  */
-export type StepSolve = (world: WorldState) => Solution;
+export type StepAnswer = Pick<Solution, "itemRates">;
+export type StepSolve = (world: WorldState) => StepAnswer;
 
 /**
  * Spec C.7. Within one call nothing can be bought, so machines, assignments, priorities,
@@ -288,7 +291,7 @@ export type StepSolve = (world: WorldState) => Solution;
  * and tap stacks (a timer). `solve` reads stock only as `liquid <= 0` and the FULL test,
  * both of which are an item's state tag -- so tier, tap stacks and every stock item's tag
  * decide its answer exactly, and each distinct combination is solved once. That is what
- * keeps a pin/unpin cycle cheap: measured 2026-10-13, the vertical slice's screw cycle
+ * keeps a pin/unpin cycle cheap: measured 2026-10-12, the vertical slice's screw cycle
  * cost ~10,000 solves per 120 s resolve, ~20 s, and now costs a handful. If `solve` ever
  * reads anything else that can change mid-resolve, it belongs in this key.
  */
@@ -297,7 +300,7 @@ export function resolve(
   content: IndexedContent,
   elapsedMs: number,
 ): ResolveResult {
-  const cache = new Map<string, Solution>();
+  const cache = new Map<string, StepAnswer>();
   let solves = 0;
   const out = resolveWith(state, content, elapsedMs, (world) => {
     let key = `${world.tier}|${world.tapStacks}|`;
@@ -314,7 +317,10 @@ export function resolve(
   return { ...out, summary: { ...out.summary, solves: solves + 1 } };
 }
 
-/** `resolve`, with the per-step solver supplied: it runs once per step, uncached. */
+/**
+ * `resolve`, with the per-step solver supplied: it runs once per step, uncached.
+ * @internal Exported for tests, which compare `resolve` against it. Game code calls `resolve`.
+ */
 export function resolveWith(
   state: WorldState,
   content: IndexedContent,

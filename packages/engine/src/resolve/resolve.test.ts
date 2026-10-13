@@ -437,6 +437,10 @@ describe("resolve — coupled EMPTY items settle (R32)", () => {
 });
 
 describe("resolve — solves each item-state configuration once per call", () => {
+  // The cache key is tier, tap stacks and every stock item's state tag. The tag is pinned
+  // by the cycle test below and tap stacks by the tap test; tier is pinned by the
+  // milestone tests above ("delivers a milestone out of liquid stock ..."), which fail
+  // when tier is dropped from the key.
   // The vertical slice at tier 8 as `bottleneck` left it, stepped 2,280 s forward with no
   // purchases (saved 2026-10-11). reinforced_iron_plate fills 38.75 s into the next 120 s,
   // and screw then pins and un-pins at microsecond spacing -- a cycle this test does not

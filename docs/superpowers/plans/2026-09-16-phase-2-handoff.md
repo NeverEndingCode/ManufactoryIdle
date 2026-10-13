@@ -443,12 +443,12 @@ rediscovered as new.**
 > fixture taken just before `reinforced_iron_plate` fills as the failing test, before
 > raising `timeout-minutes`.
 >
-> **Resolved differently 2026-10-13: the cycle is now cheap, not gone.** Three attempts to
+> **Resolved differently 2026-10-12: the cycle is now cheap, not gone.** Three attempts to
 > remove it in the solver failed the gate (see
 > `docs/superpowers/specs/2026-10-11-full-sweep-empty-feeders-design.md`, superseded). Each
 > rule moved the flip somewhere else, because the three-state stock model lets a consumer's
 > draw switch between "from stock" and "through the recipe" at zero stock. Instead
-> `resolve` caches `solve` per item-state configuration (engine spec §C.7, 2026-10-13):
+> `resolve` caches `solve` per item-state configuration (engine spec §C.7, 2026-10-12):
 > pins are byte-identical and the gate takes 2m18s (greedy 23s, casual 22s, bottleneck
 > 2m17s, determinism rerun 24s), ~5.5 minutes in CI against the 90-minute cap. The
 > frozen fixture `slice-tier-8-reinforced-full.world.json` prices the cycle in

@@ -687,7 +687,7 @@ starved the shared consumer; neither was disqualified, and the pair cycled 6,668
 in 120 s of the vertical slice, part of why the pacing gate took 135 minutes (it now
 takes 85). Not yet covered: once `reinforced_iron_plate` is FULL, `screw` alone still
 cycles (~5,000 events per 120 s resolve); see the Phase 2 handoff. That cycle is now cheap
-rather than gone (§C.7's 2026-10-13 amendment); removing it needs a stock-model change.
+rather than gone (§C.7's 2026-10-12 amendment); removing it needs a stock-model change.
 
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
@@ -822,7 +822,7 @@ craft an oscillating factory that denies service to the server.
 `summary` powers the "while you were away" report: what was produced, what filled up and
 when, what stalled.
 
-**Amended 2026-10-13 (Phase 2): one solve per item-state configuration.** Within one
+**Amended 2026-10-12 (Phase 2): one solve per item-state configuration.** Within one
 `resolve` nothing can be bought, so the only inputs to `solve` that can change are stock,
 tier (a milestone) and tap stacks (a timer). `solve` reads stock only as each item's state
 tag (`liquid <= 0` and the FULL test). So `resolve` caches `solve` by tier, tap stacks and
