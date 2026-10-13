@@ -56,7 +56,8 @@ export interface RunOptions {
    */
   onProgress?: (event: RunProgress) => void;
   /**
-   * Stop once the dead time -- simulated time since the last purchase or tier --
+   * Stop once the dead time -- simulated time since the last accepted policy action
+   * (a purchase or a machine reassignment) or tier --
    * exceeds this. A stalled policy otherwise simulates its whole budget to establish
    * what its first idle stretch already showed: measured 2026-10-09, `bottleneck`
    * stalled at tier 6 would have cost ~250 hours of compute to run out a 120-day
@@ -108,7 +109,8 @@ export function runSimulation(options: RunOptions): RunReport {
 
   let nowMs = options.startFrom?.nowMs ?? 0;
   let purchases = 0;
-  let lastEventMs = 0;
+  // Dead time counts from where this run starts: a resumed run has not been idle since 0.
+  let lastEventMs = nowMs;
   let maxDeadTimeMs = 0;
   let stalled = false;
   const tierTimes: TierMark[] = [];
