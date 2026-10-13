@@ -179,6 +179,17 @@ export function renderStatus(session: Session): string[] {
       `BOTTLENECK  no storage level for ${bottleneck.itemId} can be paid for ` +
         `(curves maxed, or each costs more than can be held)`,
     );
+  } else if (
+    bottleneck.limitingTarget !== `item:${bottleneck.itemId}` &&
+    solution.itemStates.get(bottleneck.itemId) === "FULL"
+  ) {
+    // A full item holding a recipe up from downstream: the gridlock walk, or a jammed
+    // power supplier. Not about a purchase fitting.
+    const what = bottleneck.upgrade === "storage" ? "storage" : "quantum storage";
+    lines.push(
+      `BOTTLENECK  ${bottleneck.itemId} is at its cap, holding up ${bottleneck.limitingTarget} — ` +
+        `one more ${what} level for ${bottleneck.itemId} clears it`,
+    );
   } else if (bottleneck.limitingTarget !== `item:${bottleneck.itemId}`) {
     // A payer whose cap is too small for the purchase, not necessarily a full item.
     const what = bottleneck.upgrade === "storage" ? "storage" : "quantum storage";
