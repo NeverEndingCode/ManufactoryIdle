@@ -63,6 +63,8 @@ export interface ResolveSummary {
   tiersUnlocked: number[];
   events: number;
   guardTripped: boolean;
+  /** How many times the solver actually ran. Spec C.7's cost, next to `events`. */
+  solves: number;
 }
 
 export interface ResolveResult {
@@ -275,10 +277,49 @@ function integrate(
   return { ...next, lifetime };
 }
 
+/**
+ * What one step of `resolve` asks the solver. Only `itemRates` is read from the answer.
+ */
+export type StepSolve = (world: WorldState) => Solution;
+
+/**
+ * Spec C.7. Within one call nothing can be bought, so machines, assignments, priorities,
+ * storage levels and active recipes are fixed; what changes is stock, tier (a milestone)
+ * and tap stacks (a timer). `solve` reads stock only as `liquid <= 0` and the FULL test,
+ * both of which are an item's state tag -- so tier, tap stacks and every stock item's tag
+ * decide its answer exactly, and each distinct combination is solved once. That is what
+ * keeps a pin/unpin cycle cheap: measured 2026-10-13, the vertical slice's screw cycle
+ * cost ~10,000 solves per 120 s resolve, ~20 s, and now costs a handful. If `solve` ever
+ * reads anything else that can change mid-resolve, it belongs in this key.
+ */
 export function resolve(
   state: WorldState,
   content: IndexedContent,
   elapsedMs: number,
+): ResolveResult {
+  const cache = new Map<string, Solution>();
+  let solves = 0;
+  const out = resolveWith(state, content, elapsedMs, (world) => {
+    let key = `${world.tier}|${world.tapStacks}|`;
+    for (const itemId of content.stockItemIds) key += `${itemStateTag(content, world, itemId)},`;
+    let answer = cache.get(key);
+    if (answer === undefined) {
+      answer = solve(world, content);
+      cache.set(key, answer);
+      solves += 1;
+    }
+    return answer;
+  });
+  // resolveWith counts every step as a solve; here most of them were cache hits.
+  return { ...out, summary: { ...out.summary, solves: solves + 1 } };
+}
+
+/** `resolve`, with the per-step solver supplied: it runs once per step, uncached. */
+export function resolveWith(
+  state: WorldState,
+  content: IndexedContent,
+  elapsedMs: number,
+  solveStep: StepSolve,
 ): ResolveResult {
   const events: ResolveEvent[] = [];
   const elapsed = Math.max(0, elapsedMs);
@@ -310,7 +351,7 @@ export function resolve(
     }
     steps += 1;
 
-    const solution = solve(current, content);
+    const solution = solveStep(current);
     let dtMs: number;
     let fired: NextEvent | null = null;
     if (coarse) {
@@ -373,6 +414,8 @@ export function resolve(
       tiersUnlocked,
       events: events.length,
       guardTripped,
+      // Every step, plus the final solve below the loop.
+      solves: steps + 1,
     },
   };
 }

@@ -7,9 +7,9 @@ import { indexContent } from "../graph/index-content.js";
 import { liquid, liquidCap } from "../economy/storage.js";
 import { initialWorld, type WorldState } from "../state/world.js";
 import { solve } from "../solve/solve.js";
-import { deserializeWorld } from "../state/serialize.js";
+import { deserializeWorld, serializeWorld } from "../state/serialize.js";
 import { buildWorld } from "../testing/arbitrary.js";
-import { COARSE_STEP_MS, EPSILON_MS, MAX_EVENTS, resolve } from "./index.js";
+import { COARSE_STEP_MS, EPSILON_MS, MAX_EVENTS, resolve, resolveWith } from "./index.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
 const content = indexContent(loadBundleDir(fixtureDir));
@@ -433,5 +433,61 @@ describe("resolve — coupled EMPTY items settle (R32)", () => {
     expect(drains).toContain("iron_plate");
     expect(drains).toContain("screw");
     expect(out.events.length).toBeLessThan(20);
+  });
+});
+
+describe("resolve — solves each item-state configuration once per call", () => {
+  // The vertical slice at tier 8 as `bottleneck` left it, stepped 2,280 s forward with no
+  // purchases (saved 2026-10-11). reinforced_iron_plate fills 38.75 s into the next 120 s,
+  // and screw then pins and un-pins at microsecond spacing -- a cycle this test does not
+  // fix, only prices. Every step of it used to re-run the whole solver.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+  const worldFile = fileURLToPath(
+    new URL("./fixtures/slice-tier-8-reinforced-full.world.json", import.meta.url),
+  );
+  const start = (): WorldState => deserializeWorld(readFileSync(worldFile, "utf8"));
+
+  it("runs the solver once per distinct item-state configuration, not once per step", () => {
+    const out = resolve(start(), slice, 120_000);
+    // Precondition: the cycle is still there -- the guard trips, as before.
+    expect(out.summary.guardTripped).toBe(true);
+    expect(out.events.filter((e) => e.kind === "drain" && e.itemId === "screw").length).toBeGreaterThan(1_000);
+    expect(out.summary.solves).toBeLessThan(20);
+  });
+
+  it("matches an uncached resolve exactly, through the cycle", () => {
+    // Two microseconds past the fill, ~300 events into the screw cycle (its drains are
+    // nanoseconds apart): long enough to revisit each item-state configuration many
+    // times, short enough to run uncached (~1.3 s measured).
+    const windowMs = 38_751.843;
+    const cached = resolve(start(), slice, windowMs);
+    const uncached = resolveWith(start(), slice, windowMs, (world) => solve(world, slice));
+    expect(cached.events.length).toBeGreaterThan(100);
+    expect(serializeWorld(cached.state)).toBe(serializeWorld(uncached.state));
+    expect(cached.events).toEqual(uncached.events);
+    expect({ ...cached.summary, solves: 0 }).toEqual({ ...uncached.summary, solves: 0 });
+  }, 30_000);
+
+  it("re-solves when a tap expires mid-window, though no item changes state", () => {
+    // slice-tier-8 is power-bound, so the tap's injection moves rates. Its expiry changes
+    // nothing a stock tag can see -- only tapStacks -- and must still re-solve.
+    const tier8 = deserializeWorld(
+      readFileSync(fileURLToPath(new URL("./fixtures/slice-tier-8.world.json", import.meta.url)), "utf8"),
+    );
+    const tapped: WorldState = {
+      ...tier8,
+      tapStacks: 1,
+      timers: [{ id: "tap", kind: "tapExpiry", fireAt: tier8.lastResolvedAt + 10_000 }],
+    };
+    // Precondition: the tap really changes the answer.
+    const withTap = solve(tapped, slice).itemRates.get("iron_plate")!.production;
+    const without = solve({ ...tapped, tapStacks: 0 }, slice).itemRates.get("iron_plate")!.production;
+    expect(withTap).not.toBeCloseTo(without, 6);
+
+    const cached = resolve(tapped, slice, 20_000);
+    const uncached = resolveWith(tapped, slice, 20_000, (world) => solve(world, slice));
+    expect(cached.events.some((e) => e.kind === "timer")).toBe(true);
+    expect(serializeWorld(cached.state)).toBe(serializeWorld(uncached.state));
   });
 });
