@@ -112,4 +112,18 @@ describe("format", () => {
   it("still pads to two decimals at and above 1", () => {
     expect(format(D(1), "short")).toBe("1.00");
   });
+
+  // Three significant figures can round a value just under 1 up to 1: "1.00", which
+  // trimming the trailing zeros left as "1.".
+  it("renders a value that rounds up to 1 the way 1 itself renders", () => {
+    expect(format(D(0.9996), "short")).toBe("1.00");
+    expect(format(D(-0.9996), "short")).toBe("-1.00");
+  });
+
+  // The same carry in scientific notation: a mantissa that rounds to 10 belongs to the
+  // next power of ten.
+  it("carries a scientific mantissa that rounds up to 10", () => {
+    expect(format(D("9.996e-5"), "short")).toBe("1.00e-4");
+    expect(format(D("9.996e5"), "sci")).toBe("1.00e6");
+  });
 });

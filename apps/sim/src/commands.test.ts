@@ -77,6 +77,35 @@ describe("status and lane views", () => {
     expect(text).toContain("1 more");
   });
 
+  // A storage answer whose item is not its target's own item comes from two places: a
+  // payer too small for a purchase (the item is not full), or a full item holding a
+  // recipe up from downstream (the gridlock walk, a jammed power supplier). Only the
+  // first is about a purchase fitting.
+  function withStorageAdvice(fuelState: "FULL" | "FLOWING"): Session {
+    const base = session();
+    const itemStates = new Map(base.solution.itemStates);
+    itemStates.set("fuel", fuelState);
+    return {
+      ...base,
+      solution: {
+        ...base.solution,
+        itemStates,
+        bottleneck: { kind: "storage", itemId: "fuel", limitingTarget: "item:rubber", upgrade: "storage" },
+      },
+    };
+  }
+
+  it("names a full item holding its target up, not a purchase that will not fit", () => {
+    const text = renderStatus(withStorageAdvice("FULL")).join("\n");
+    expect(text).toContain("fuel is at its cap, holding up item:rubber");
+    expect(text).not.toContain("lets the purchase fit");
+  });
+
+  it("names a payer's storage when the item is not full", () => {
+    const text = renderStatus(withStorageAdvice("FLOWING")).join("\n");
+    expect(text).toContain("lets the purchase fit");
+  });
+
   it("renders a lane with a rate and a storage readout per item", () => {
     const lines = renderLane(session(), "iron");
     expect(lines.join("\n")).toContain("Iron Plate");

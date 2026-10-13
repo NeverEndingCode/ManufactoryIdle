@@ -55,8 +55,18 @@ function plain(value: number): string {
   // [0, 1], and during calibration "0.00" is indistinguishable from stalled.
   // Keep the same three significant figures, minus the zeros toPrecision pads
   // with. `format` guarantees abs >= 1e-4 here, so the result always starts
-  // "0." and trimming can never strip a significant digit.
-  return value.toPrecision(3).replace(/0+$/, "");
+  // "0." and trimming can never strip a significant digit -- unless rounding carried
+  // it to 1 (0.9996 -> "1.00"), which then renders as 1 does.
+  const rounded = value.toPrecision(3);
+  if (Math.abs(Number(rounded)) >= 1) return Number(rounded).toFixed(2);
+  return rounded.replace(/0+$/, "");
+}
+
+// Scientific notation from a mantissa in [1, 10). toFixed(2) can round it up to
+// "10.00" (9.996e5), which belongs to the next power of ten.
+function scientific(mantissa: number, exponent: number): string {
+  const digits = mantissa.toFixed(2);
+  return digits === "10.00" ? `1.00e${exponent + 1}` : `${digits}e${exponent}`;
 }
 
 // Renders an already-tiered magnitude (`scaled` in [1, 1000), grouped into
@@ -97,7 +107,7 @@ export function format(value: Dec, mode: NotationMode): string {
   // underflows to 0 at very negative exponents; rendering straight from
   // mantissa/exponent is exact at any scale.
   if (exponent < PLAIN_FLOOR_EXPONENT) {
-    return `${sign}${mantissa.toFixed(2)}e${exponent}`;
+    return sign + scientific(mantissa, exponent);
   }
 
   if (exponent < 3) {
@@ -118,7 +128,7 @@ export function format(value: Dec, mode: NotationMode): string {
   // sci mode renders from the raw mantissa/exponent, not the tier grouping
   // below, so it never needs the boundary-carry fix that follows and is
   // handled first.
-  if (mode === "sci") return `${sign}${mantissa.toFixed(2)}e${exponent}`;
+  if (mode === "sci") return sign + scientific(mantissa, exponent);
 
   // eslint-disable-next-line no-restricted-properties -- display-only (spec E.4 exemption); do not copy into economy/
   const scaled = mantissa * Math.pow(10, exponent - tier * 3);

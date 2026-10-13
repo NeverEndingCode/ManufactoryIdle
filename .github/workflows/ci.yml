@@ -12,6 +12,9 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A hang guard, not a budget: measured 13-21 minutes in CI (2026-10-12), mostly sim's
+    # calibrate tests. Without it a hung job runs GitHub's six-hour default.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -309,6 +309,39 @@ describe("resuming from a checkpoint", () => {
     expect(resumed.simulatedMs).toBe(whole.simulatedMs);
   }, 60_000);
 
+  // Dead time is simulated time since the last event, so a resumed run starts counting
+  // from where it resumes. Counted from clock 0, a run resumed at tier 1 (0.42
+  // collections in) has already "been dead" longer than this cut-off on its first step.
+  // greedy's longest dead stretch on the slice is 0.06 collections.
+  it("measures dead time from where it resumes, not from clock 0", () => {
+    const whole = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 3,
+      maxSimMs: THIRTY_DAYS_MS,
+      captureCheckpoints: true,
+    });
+    const atTier1 = whole.checkpoints.find((c) => c.tier === 1);
+    if (!atTier1) throw new Error("no tier 1 checkpoint");
+    const cutoff = 0.1 * content.offlineCapMs;
+    // Precondition: the resume point is further from clock 0 than the cut-off.
+    expect(atTier1.nowMs).toBeGreaterThan(cutoff);
+
+    const resumed = runSimulation({
+      policy: "greedy",
+      contentDir: SLICE_BUNDLE_DIR,
+      seed: 42,
+      untilTier: 3,
+      maxSimMs: THIRTY_DAYS_MS,
+      startFrom: atTier1,
+      stopWhenDeadMs: cutoff,
+    });
+    expect(resumed.stalled).toBe(false);
+    expect(resumed.reachedTier).toBe(3);
+    expect(resumed.maxDeadTimeMs).toBeLessThan(cutoff);
+  }, 60_000);
+
   it("captures one checkpoint per tier it unlocks", () => {
     const report = runSimulation({
       policy: "greedy",

@@ -238,6 +238,13 @@ export function compareRuns(a: RunReport, b: RunReport): string[] {
   discrete("contentVersion", a.contentVersion, b.contentVersion);
   discrete("seed", a.seed, b.seed);
   discrete("tierTimes.length", a.tierTimes.length, b.tierTimes.length);
+  discrete("stalled", a.stalled, b.stalled);
+  if (magnitudesDiffer(a.simulatedMs, b.simulatedMs)) {
+    out.push(`simulatedMs: ${a.simulatedMs} vs ${b.simulatedMs}`);
+  }
+  if (magnitudesDiffer(a.maxDeadTimeMs, b.maxDeadTimeMs)) {
+    out.push(`maxDeadTimeMs: ${a.maxDeadTimeMs} vs ${b.maxDeadTimeMs}`);
+  }
 
   for (let i = 0; i < Math.min(a.tierTimes.length, b.tierTimes.length); i += 1) {
     const x = a.tierTimes[i]!;
