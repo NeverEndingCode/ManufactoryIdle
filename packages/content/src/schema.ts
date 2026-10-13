@@ -139,7 +139,6 @@ export const PacingSchema = z
     offlineCollectionsPerDay: z.number().positive(),
     purchaseIntervalEarlySeconds: z.number().positive(),
     purchaseIntervalLateSeconds: z.number().positive(),
-    storageBindingCadence: z.number().int().positive(),
   })
   .strict();
 

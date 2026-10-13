@@ -53,7 +53,6 @@ function bundle(): Bundle {
       offlineCollectionsPerDay: 3,
       purchaseIntervalEarlySeconds: 120,
       purchaseIntervalLateSeconds: 1800,
-      storageBindingCadence: 12,
     },
   };
 }

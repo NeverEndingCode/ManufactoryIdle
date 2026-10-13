@@ -136,7 +136,6 @@ export interface PacingDef {
   offlineCollectionsPerDay: number;
   purchaseIntervalEarlySeconds: number;
   purchaseIntervalLateSeconds: number;
-  storageBindingCadence: number;
 }
 
 export interface ContentBundle {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BundleSchema, ItemSchema, MarkSchema, RecipeSchema } from "./schema.js";
+import { BundleSchema, ItemSchema, MarkSchema, PacingSchema, RecipeSchema } from "./schema.js";
 
 const minimalBundle = {
   version: "fixture.v1",
@@ -42,7 +42,6 @@ const minimalBundle = {
     offlineCollectionsPerDay: 3,
     purchaseIntervalEarlySeconds: 120,
     purchaseIntervalLateSeconds: 1800,
-    storageBindingCadence: 12,
   },
 };
 
@@ -135,5 +134,23 @@ describe("ItemSchema", () => {
     expect(() =>
       ItemSchema.parse({ id: "x", lane: "iron", tier: 0, name: "X", baseStorageCap: -1, baseQuantumCap: 1 }),
     ).toThrow();
+  });
+});
+
+// Spec 2026-10-12: storageBindingCadence was read by nothing and is gone. The schema
+// is strict, so a bundle still carrying it is rejected rather than silently ignored.
+describe("PacingSchema without storageBindingCadence", () => {
+  const pacing = {
+    targetCollectionsToTier: [2, 5],
+    activeHoursPerDay: 2.5,
+    offlineCollectionsPerDay: 3,
+    purchaseIntervalEarlySeconds: 120,
+    purchaseIntervalLateSeconds: 1800,
+  };
+  it("accepts a pacing block without it", () => {
+    expect(PacingSchema.safeParse(pacing).success).toBe(true);
+  });
+  it("rejects one that still carries it", () => {
+    expect(PacingSchema.safeParse({ ...pacing, storageBindingCadence: 12 }).success).toBe(false);
   });
 });

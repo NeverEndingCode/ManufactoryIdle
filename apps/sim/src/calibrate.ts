@@ -13,7 +13,7 @@
 //
 //   1. `r` from the authored `r_eff` -- arithmetic, no simulation. Spec D3's
 //      authoring inversion, so retuning the ladder moves pacing by zero.
-//   2. Storage cap growth against `pacing.storageBindingCadence`. Before milestone
+//   2. Storage cap growth (`capPerTier`), solved jointly with `r_eff`. Before milestone
 //      amounts, because a storage curve that binds too early makes a tier
 //      unreachable at ANY amount, and bisection against an infeasible target does
 //      not converge -- it just burns the iteration cap.

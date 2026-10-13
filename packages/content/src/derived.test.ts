@@ -91,7 +91,6 @@ describe("a bundle carrying a serialised derived block", () => {
         offlineCollectionsPerDay: 3,
         purchaseIntervalEarlySeconds: 120,
         purchaseIntervalLateSeconds: 1800,
-        storageBindingCadence: 12,
       },
       derived: parsed.derived,
     });
