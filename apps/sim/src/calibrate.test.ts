@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { applyDerived, loadBundleDir, maxAttainableCap } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
-import { FIXTURE_BUNDLE_DIR, SLICE_BUNDLE_DIR } from "./bootstrap.js";
+import { CALIBRATION_FIXTURE_DIR, FIXTURE_BUNDLE_DIR, SLICE_BUNDLE_DIR } from "./bootstrap.js";
 import { indexContent } from "@manufactory/engine";
 import {
   bisectMonotone,
@@ -71,11 +71,28 @@ const shallow = (bundle: typeof slice): typeof slice => ({
   ...withLadder(bundle, 20, 15),
   storage: { ...bundle.storage, maxLevel: 20, costGrowth: 1.5 },
 });
-const slice = loadBundleDir(SLICE_BUNDLE_DIR, raw);
+// Every mechanics test measures the frozen copy (see the describe below); `liveSlice` is
+// for the two canaries that keep the calibrator exercised on real content.
+const slice = loadBundleDir(CALIBRATION_FIXTURE_DIR, raw);
+const liveSlice = loadBundleDir(SLICE_BUNDLE_DIR, raw);
 const fixture = loadBundleDir(
   fileURLToPath(new URL("../../../packages/content/bundles/fixture", import.meta.url)),
   raw,
 );
+
+// The mechanics tests below measure a frozen copy of the slice, not the live one. Four
+// times a content edit to the slice moved the premise under one of them -- "this bundle
+// measurably cannot reach that target" -- and left it green for no reason. The live
+// slice keeps two canaries: the authored-numbers guard below and "moves an observed
+// tier time onto its target".
+describe("the bundle the calibrator's mechanics are tested against", () => {
+  it("is the frozen calibration fixture, which nothing ever calibrates", () => {
+    const frozen = loadBundleDir(CALIBRATION_FIXTURE_DIR);
+    expect(frozen.version).toBe("calibration-fixture.v1");
+    expect(frozen.derived).toBeUndefined();
+    expect(slice.version).toBe("calibration-fixture.v1");
+  });
+});
 
 // A guard on the fixture rather than on any one assertion. The slice ships a
 // derived.yaml, and every "the slice is measurably short here" claim below is about
@@ -85,7 +102,7 @@ describe("the fixture the calibrator sees", () => {
   it("is the authored slice, not the calibrated one", () => {
     const calibrated = loadBundleDir(SLICE_BUNDLE_DIR);
     expect(calibrated.derived).toBeDefined();
-    expect(slice.milestones.find((m) => m.tier === 1)!.requires[0]!.amount).not.toBe(
+    expect(liveSlice.milestones.find((m) => m.tier === 1)!.requires[0]!.amount).not.toBe(
       calibrated.milestones.find((m) => m.tier === 1)!.requires[0]!.amount,
     );
   });
@@ -213,7 +230,8 @@ describe("calibrate", () => {
   // against a target of 2 -- a hundredfold miss. This is the whole job of the phase,
   // reduced to one tier so it runs in a test.
   it("moves an observed tier time onto its target", () => {
-    const result = calibrate({ bundle: withTargets(slice, [2]), maxTier: 1, tolerance: 0.05, solveREff: false, solveCapPerTier: false });
+    // A canary: the live slice, so the calibrator is still exercised on real content.
+    const result = calibrate({ bundle: withTargets(liveSlice, [2]), maxTier: 1, tolerance: 0.05, solveREff: false, solveCapPerTier: false });
     const tier1 = result.tiers[0]!;
     expect(tier1.target).toBe(2);
     expect(tier1.observed).not.toBeNull();

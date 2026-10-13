@@ -1,3 +1,6 @@
+# Editing this bundle no longer moves the calibrator's mechanics tests: they measure the
+# frozen copy in ../calibration-fixture/ (see its README). Only two canaries read this one.
+#
 # Spec B.7. Pacing intent is authored in COLLECTIONS, not hours: with an 8h offline
 # cap a player gets ~3 meaningful collections a day, so a tier costing 40 collections
 # is a two-week tier no matter what an hour count claims.

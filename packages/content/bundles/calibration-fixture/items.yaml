@@ -1,0 +1,46 @@
+# 31 items, per spec B.5: Iron 9, Copper 5, Coal 7, Oil 9, Power 1.
+#
+# `terminal: true` marks an item that is allowed to have no consumer (check 4).
+# Only the two genuine end products carry it -- everything else earns its keep as
+# an input or a build cost, which is what makes checks 3 and 4 worth running.
+items:
+  # --- Iron (9) ---------------------------------------------------------------
+  - { id: iron_ore,               lane: iron,   tier: 0,  name: Iron Ore,               baseStorageCap: 800, baseQuantumCap: 3200 }
+  - { id: iron_ingot,             lane: iron,   tier: 0,  name: Iron Ingot,             baseStorageCap: 600, baseQuantumCap: 2400 }
+  - { id: iron_plate,             lane: iron,   tier: 0,  name: Iron Plate,             baseStorageCap: 500, baseQuantumCap: 2000 }
+  - { id: iron_rod,               lane: iron,   tier: 0,  name: Iron Rod,               baseStorageCap: 500, baseQuantumCap: 2000 }
+  - { id: screw,                  lane: iron,   tier: 1,  name: Screw,                  baseStorageCap: 900, baseQuantumCap: 3600 }
+  - { id: reinforced_iron_plate,  lane: iron,   tier: 1,  name: Reinforced Iron Plate,  baseStorageCap: 300, baseQuantumCap: 1200 }
+  - { id: rotor,                  lane: iron,   tier: 3,  name: Rotor,                  baseStorageCap: 300, baseQuantumCap: 1200 }
+  - { id: modular_frame,          lane: iron,   tier: 5,  name: Modular Frame,          baseStorageCap: 200, baseQuantumCap: 800 }
+  - { id: smart_plating,          lane: iron,   tier: 8,  name: Smart Plating,          baseStorageCap: 200, baseQuantumCap: 800, terminal: true }
+
+  # --- Power (1) --------------------------------------------------------------
+  - { id: biomass,                lane: power,  tier: 0,  name: Biomass,                baseStorageCap: 600, baseQuantumCap: 2400 }
+
+  # --- Copper (5) -------------------------------------------------------------
+  - { id: copper_ore,             lane: copper, tier: 2,  name: Copper Ore,             baseStorageCap: 800, baseQuantumCap: 3200 }
+  - { id: copper_ingot,           lane: copper, tier: 2,  name: Copper Ingot,           baseStorageCap: 600, baseQuantumCap: 2400 }
+  - { id: wire,                   lane: copper, tier: 2,  name: Wire,                   baseStorageCap: 900, baseQuantumCap: 3600 }
+  - { id: cable,                  lane: copper, tier: 2,  name: Cable,                  baseStorageCap: 500, baseQuantumCap: 2000 }
+  - { id: copper_sheet,           lane: copper, tier: 3,  name: Copper Sheet,           baseStorageCap: 400, baseQuantumCap: 1600 }
+
+  # --- Coal (7) ---------------------------------------------------------------
+  - { id: limestone,              lane: coal,   tier: 3,  name: Limestone,              baseStorageCap: 800, baseQuantumCap: 3200 }
+  - { id: concrete,               lane: coal,   tier: 3,  name: Concrete,               baseStorageCap: 500, baseQuantumCap: 2000 }
+  - { id: coal,                   lane: coal,   tier: 4,  name: Coal,                   baseStorageCap: 800, baseQuantumCap: 3200 }
+  - { id: steel_ingot,            lane: coal,   tier: 4,  name: Steel Ingot,            baseStorageCap: 600, baseQuantumCap: 2400 }
+  - { id: steel_beam,             lane: coal,   tier: 5,  name: Steel Beam,             baseStorageCap: 400, baseQuantumCap: 1600 }
+  - { id: steel_pipe,             lane: coal,   tier: 5,  name: Steel Pipe,             baseStorageCap: 400, baseQuantumCap: 1600 }
+  - { id: encased_industrial_beam, lane: coal,  tier: 5,  name: Encased Industrial Beam, baseStorageCap: 200, baseQuantumCap: 800 }
+
+  # --- Oil (9) ----------------------------------------------------------------
+  - { id: water,                  lane: oil,    tier: 4,  name: Water,                  baseStorageCap: 1000, baseQuantumCap: 4000, fluid: true }
+  - { id: crude_oil,              lane: oil,    tier: 6,  name: Crude Oil,              baseStorageCap: 800, baseQuantumCap: 3200, fluid: true }
+  - { id: heavy_oil_residue,      lane: oil,    tier: 6,  name: Heavy Oil Residue,      baseStorageCap: 400, baseQuantumCap: 1600, fluid: true }
+  - { id: plastic,                lane: oil,    tier: 6,  name: Plastic,                baseStorageCap: 400, baseQuantumCap: 1600 }
+  - { id: rubber,                 lane: oil,    tier: 6,  name: Rubber,                 baseStorageCap: 400, baseQuantumCap: 1600 }
+  - { id: fuel,                   lane: oil,    tier: 6,  name: Fuel,                   baseStorageCap: 400, baseQuantumCap: 1600, fluid: true }
+  - { id: empty_canister,         lane: oil,    tier: 7,  name: Empty Canister,         baseStorageCap: 500, baseQuantumCap: 2000 }
+  - { id: packaged_fuel,          lane: oil,    tier: 7,  name: Packaged Fuel,          baseStorageCap: 300, baseQuantumCap: 1200, terminal: true }
+  - { id: polymer_resin,          lane: oil,    tier: 8,  name: Polymer Resin,          baseStorageCap: 400, baseQuantumCap: 1600 }

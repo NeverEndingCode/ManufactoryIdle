@@ -353,7 +353,12 @@ What is left is the content-design decision, and it now rests on a search that w
   — recipe depth, or a power or throughput wall.** Still your call, but the amount-shaped
   half of the decision space is now closed by measurement rather than by argument.
 
-**4. Test-fixture coupling — a correctness problem, not a speed one.**
+**4. Test-fixture coupling — a correctness problem, not a speed one.** **DONE 2026-10-12:**
+the calibrator's mechanics tests now measure `packages/content/bundles/calibration-fixture/`,
+a frozen copy of the slice's authored files that is never calibrated or edited to follow
+the slice (its README states the rules). Two canaries stay on the live slice. Verified by
+deepening the live slice's storage ladder to 30/24 and re-running the calibrate tests:
+unaffected. History below.
 Three times this session a content change silently invalidated mechanics-test premises
 (5 tests on retuned targets, 4 on the deeper ladder, 6 on `costGrowth`). One test had
 stopped testing its claim entirely: the pre-filter test that exists to prove the expensive
