@@ -14,6 +14,7 @@ items:
   - { id: rotor,                  lane: iron,   tier: 3,  name: Rotor,                  baseStorageCap: 300, baseQuantumCap: 1200 }
   - { id: modular_frame,          lane: iron,   tier: 5,  name: Modular Frame,          baseStorageCap: 200, baseQuantumCap: 800 }
   - { id: smart_plating,          lane: iron,   tier: 8,  name: Smart Plating,          baseStorageCap: 200, baseQuantumCap: 800, terminal: true }
+  - { id: heavy_modular_frame,    lane: iron,   tier: 9,  name: Heavy Modular Frame,    baseStorageCap: 200, baseQuantumCap: 800, terminal: true }
 
   # --- Power (1) --------------------------------------------------------------
   - { id: biomass,                lane: power,  tier: 0,  name: Biomass,                baseStorageCap: 600, baseQuantumCap: 2400 }

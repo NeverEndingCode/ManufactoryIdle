@@ -71,6 +71,7 @@ recipes:
 
   # === Tier 8 -- smart plating and the resin branch ===========================
   - { id: make_smart_plating,      name: Smart Plating,    lane: iron, machineClass: manufacturer, inputs: [{ item: reinforced_iron_plate, rate: "2" }, { item: rotor, rate: "2" }], outputs: [{ item: smart_plating, rate: "2" }], unlockTier: 8 }
+  - { id: make_heavy_modular_frame, name: Heavy Modular Frame, lane: iron, machineClass: assembly_rig, inputs: [{ item: modular_frame, rate: "10" }, { item: steel_pipe, rate: "30" }, { item: encased_industrial_beam, rate: "10" }, { item: screw, rate: "200" }], outputs: [{ item: heavy_modular_frame, rate: "0.1" }], unlockTier: 9 }
   - { id: refine_polymer_resin,    name: Polymer Resin,    lane: oil,  machineClass: refinery, inputs: [{ item: crude_oil, rate: "60" }], outputs: [{ item: polymer_resin, rate: "130" }, { item: heavy_oil_residue, rate: "20", byproduct: true }], unlockTier: 8 }
   - { id: refine_residual_plastic, name: Residual Plastic, lane: oil,  machineClass: refinery, inputs: [{ item: polymer_resin, rate: "60" }, { item: water, rate: "20" }], outputs: [{ item: plastic, rate: "20" }], unlockTier: 8 }
   - { id: refine_residual_rubber,  name: Residual Rubber,  lane: oil,  machineClass: refinery, inputs: [{ item: polymer_resin, rate: "40" }, { item: water, rate: "40" }], outputs: [{ item: rubber, rate: "20" }], unlockTier: 8 }

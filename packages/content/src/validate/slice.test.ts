@@ -125,6 +125,30 @@ describe("the vertical slice", () => {
     expect(tight).toEqual([]);
   });
 
+  // Spec 2026-10-13 (tier 10's capstone). Tier 10 was storage-capped: it asked for
+  // items the player already makes at scale, and milestones are paid from stock. It now
+  // asks for one capstone, made on a class whose cost doubles per machine -- measured as
+  // the only lever that makes tier-10 time grow with the amount rather than its log.
+  it("builds tier 10 toward a capstone on a steeply priced class of its own", () => {
+    const b = bundle();
+    const item = b.items.find((i) => i.id === "heavy_modular_frame");
+    expect(item?.terminal).toBe(true);
+
+    const rig = b.machineClasses.find((c) => c.id === "assembly_rig");
+    expect(rig?.costRatio).toBe(2);
+    // Authored outside the r_eff scan, so calibration cannot flatten it.
+    expect(rig?.rEff).toBeUndefined();
+
+    expect(recipe("make_heavy_modular_frame").machineClass).toBe("assembly_rig");
+    // Producible during tier 9: a milestone's requirement must exist before it unlocks.
+    expect(recipe("make_heavy_modular_frame").unlockTier).toBe(9);
+    expect(outputIds("make_heavy_modular_frame")).toEqual(["heavy_modular_frame"]);
+
+    const tier10 = b.milestones.find((m) => m.tier === 10)!;
+    expect(tier10.requires.map((r) => r.item)).toEqual(["heavy_modular_frame"]);
+    expect(b.start.priority).toContain("heavy_modular_frame");
+  });
+
   it("carries alternate recipes and machine marks", () => {
     expect(bundle().recipes.filter((r) => r.isAlternate).length).toBeGreaterThanOrEqual(7);
     expect(bundle().machineClasses.some((m) => m.marks.length > 1)).toBe(true);

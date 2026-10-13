@@ -133,12 +133,6 @@ derived:
           amount: 512000
         - item: polymer_resin
           amount: 2048000
-    - tier: 10
-      requires:
-        - item: smart_plating
-          amount: 7663000
-        - item: encased_industrial_beam
-          amount: 5747250
   storage:
     capPerTier: 1
   quantumStorage:

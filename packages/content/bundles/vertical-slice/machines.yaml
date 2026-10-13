@@ -76,6 +76,17 @@ machineClasses:
     marks:
       - { mark: 1, name: Manufacturer Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 55, buildCost: [{ item: modular_frame, amount: 10 }, { item: cable, amount: 50 }, { item: plastic, amount: 50 }], unlockTier: 8 }
 
+  # Spec 2026-10-13: tier 10's capstone is built here. Its cost growth IS the pacing
+  # lever -- each rig costs twice the last, so buying more stops answering a bigger
+  # requirement -- so it authors costRatio directly and no rEff, which keeps it out of
+  # calibration's single r_eff scale (calibrate.ts withREffScale / deriveCostRatios).
+  - id: assembly_rig
+    name: Assembly Rig
+    ladder: { step: 1.5, interval: 10 }
+    costRatio: 2.0
+    marks:
+      - { mark: 1, name: Assembly Rig Mk.1, rateMultiplier: 1, buildCostMultiplier: 1, powerDraw: 55, buildCost: [{ item: smart_plating, amount: 200 }, { item: encased_industrial_beam, amount: 200 }], unlockTier: 9 }
+
   - id: collector
     name: Biomass Collector
     ladder: { step: 1.5, interval: 10 }
