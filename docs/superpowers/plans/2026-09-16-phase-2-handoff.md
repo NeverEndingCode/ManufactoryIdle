@@ -442,6 +442,18 @@ rediscovered as new.**
 > the remaining 85 minutes is not known to be needed simulation: fix this, with a frozen
 > fixture taken just before `reinforced_iron_plate` fills as the failing test, before
 > raising `timeout-minutes`.
+>
+> **Resolved differently 2026-10-13: the cycle is now cheap, not gone.** Three attempts to
+> remove it in the solver failed the gate (see
+> `docs/superpowers/specs/2026-10-11-full-sweep-empty-feeders-design.md`, superseded). Each
+> rule moved the flip somewhere else, because the three-state stock model lets a consumer's
+> draw switch between "from stock" and "through the recipe" at zero stock. Instead
+> `resolve` caches `solve` per item-state configuration (engine spec §C.7, 2026-10-13):
+> pins are byte-identical and the gate takes 2m18s (greedy 23s, casual 22s, bottleneck
+> 2m17s, determinism rerun 24s), ~5.5 minutes in CI against the 90-minute cap. The
+> frozen fixture `slice-tier-8-reinforced-full.world.json` prices the cycle in
+> `resolve.test.ts`. Removing the cycle for real is a separate project: a solver that
+> rations an item's stock by priority, with no stock-dependent switch.
 
 **The pacing gate needs a per-policy day budget.** Fixing the advice made the gate three
 times slower, for a reason worth understanding: a policy that makes progress simulates far
