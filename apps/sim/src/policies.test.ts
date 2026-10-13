@@ -5,6 +5,7 @@ import {
   POLICY_NAMES,
   affordableCandidates,
   idleReassignments,
+  milestoneFirstReorder,
   costScore,
   getPolicy,
   tierProgress,
@@ -409,4 +410,91 @@ describe("policies move idle machines before buying more", () => {
       ).toBe(true);
     });
   }
+});
+
+// Spec 2026-10-12 (milestone-first policies). The fixture's start priority is
+// iron_plate, iron_ingot, iron_ore, plastic, fuel, heavy_oil_residue, crude_oil, and
+// its tier-3 milestone needs iron_plate then plastic.
+describe("milestoneFirstReorder", () => {
+  const AUTHORED = [
+    "item:iron_plate",
+    "item:iron_ingot",
+    "item:iron_ore",
+    "item:plastic",
+    "item:fuel",
+    "item:heavy_oil_residue",
+    "item:crude_oil",
+  ];
+  const TIER3_FIRST = [
+    "item:iron_plate",
+    "item:plastic",
+    "item:iron_ingot",
+    "item:iron_ore",
+    "item:fuel",
+    "item:heavy_oil_residue",
+    "item:crude_oil",
+  ];
+  /** The fixture world's priority, reordered to `ids` (power wherever `powerAt` says). */
+  function ordered(ids: string[], powerAt = 0): WorldState["priority"] {
+    const base = newWorld(content, 1).priority;
+    const byId = new Map(base.map((e) => [e.id, e]));
+    const items = ids.map((id) => byId.get(id)!);
+    const power = base.find((e) => e.kind === "power")!;
+    return [...items.slice(0, powerAt), power, ...items.slice(powerAt)];
+  }
+  const idsOf = (actions: ReturnType<typeof milestoneFirstReorder>) =>
+    actions.length === 0 ? null : (actions[0] as { entries: string[] }).entries;
+
+  it("puts power first, then the next milestone's items, then the rest as authored", () => {
+    // Precondition: at tier 2 the list is still authored, and plastic sits fourth.
+    const ctx = context({ tier: 2 });
+    expect(ctx.state.priority.map((e) => e.id)).toEqual(["power", ...AUTHORED]);
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...TIER3_FIRST]);
+  });
+
+  it("keeps power first even where the player moved it", () => {
+    const ctx = context({ tier: 2, priority: ordered(TIER3_FIRST, 3) });
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...TIER3_FIRST]);
+  });
+
+  it("emits nothing when the list is already in that order", () => {
+    expect(milestoneFirstReorder(context({ tier: 2, priority: ordered(TIER3_FIRST) }))).toEqual([]);
+  });
+
+  it("puts an item back where it was authored once its milestone is no longer next", () => {
+    // Tier 1's next milestone (tier 2) needs only iron_plate, so plastic goes home.
+    const ctx = context({ tier: 1, priority: ordered(TIER3_FIRST) });
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...AUTHORED]);
+  });
+
+  it("reverts to the authored order when there is no next milestone", () => {
+    const ctx = context({ tier: 3, priority: ordered(TIER3_FIRST) });
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...AUTHORED]);
+  });
+
+  it("is used by greedy and optimal, never by casual or bottleneck", () => {
+    const base = rich();
+    const ctx: PolicyContext = { ...base, state: { ...base.state, tier: 2 } };
+    ctx.solution = solve(ctx.state, content);
+    for (const name of ["greedy", "optimal"] as const) {
+      const first = getPolicy(name).decide(ctx)[0]!;
+      expect(first.type).toBe("REORDER_PRIORITY");
+      // The engine accepts it: it is a permutation of the existing entries.
+      expect(apply(ctx.state, content, first, ctx.state.seed).rejected).toBe(false);
+    }
+    for (const name of ["casual", "bottleneck"] as const) {
+      expect(getPolicy(name).decide(ctx).some((a) => a.type === "REORDER_PRIORITY")).toBe(false);
+    }
+  });
+
+  it("optimal looks ahead from the reordered list, not the one it was handed", () => {
+    const base = rich();
+    const ctx: PolicyContext = { ...base, state: { ...base.state, tier: 2 } };
+    ctx.solution = solve(ctx.state, content);
+    const [reorder, ...rest] = getPolicy("optimal").decide(ctx);
+    const applied = apply(ctx.state, content, reorder!, ctx.state.seed);
+    if (applied.rejected) throw new Error(applied.reason);
+    const reordered: PolicyContext = { ...ctx, state: applied.state, solution: solve(applied.state, content) };
+    expect(rest).toEqual(getPolicy("optimal").decide(reordered));
+  });
 });

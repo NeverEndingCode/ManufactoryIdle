@@ -1047,10 +1047,17 @@ sim run --policy casual --seed 42
 
 | Policy | Behaviour |
 |---|---|
-| `optimal` | Perfect ordering. The upper bound |
-| `greedy` | Buy the cheapest available upgrade |
+| `optimal` | Perfect ordering; plays milestone-first. The upper bound |
+| `greedy` | Buy the cheapest available upgrade; plays milestone-first |
 | `casual` | Checks in 3×/day, never reorders priorities. The lower bound |
 | **`bottleneck`** | Always buys exactly what §4.5's bottleneck reporter recommends |
+
+**Amended 2026-10-12: milestone-first.** `greedy` and `optimal` keep the next milestone's
+required items at the top of the priority list and return them to the authored order
+once delivered (`milestoneFirstReorder`); `casual` and `bottleneck` never reorder. Measured
+before adopting it: a milestone-first `greedy` moves only tier 4, by −0.9%, so the
+calibration fitted to the old `greedy` holds for a milestone-first player and was not
+redone. See `specs/2026-10-12-milestone-first-policies-design.md`.
 
 The fourth policy answers the only question that matters about the game's advice
 mechanism: **is the advice actually good?** If `bottleneck` lands materially worse than
