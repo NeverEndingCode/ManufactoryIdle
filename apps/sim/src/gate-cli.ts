@@ -20,6 +20,7 @@ import { indexContent, type ContentBundle } from "@manufactory/engine";
 import { SLICE_BUNDLE_DIR } from "./bootstrap.js";
 import { DEFAULT_THRESHOLDS, compareRuns, evaluateGate, type PolicyGate } from "./gate.js";
 import type { GateJob } from "./gate-worker.js";
+import { runPool, type Started } from "./pool.js";
 import type { RunReport } from "./report.js";
 
 /**
@@ -172,40 +173,16 @@ export interface GateCliOptions {
 const SMOKE_TIER = 4;
 
 /** One run in its own worker thread; resolves with its report. */
-function runInWorker(job: GateJob): Promise<RunReport> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL("./gate-worker.ts", import.meta.url), { workerData: job });
+function runInWorker(job: GateJob): Started<RunReport> {
+  const worker = new Worker(new URL("./gate-worker.ts", import.meta.url), { workerData: job });
+  const result = new Promise<RunReport>((resolve, reject) => {
     worker.once("message", (report: RunReport) => resolve(report));
     worker.once("error", reject);
     worker.once("exit", (code) => {
       if (code !== 0) reject(new Error(`${job.label}: worker exited with code ${code}`));
     });
   });
-}
-
-/**
- * Runs every job with at most `limit` in flight, and returns the results in JOB order
- * rather than completion order, so the table and the judging are what a serial gate
- * would have produced.
- */
-async function runAll(
-  jobs: readonly GateJob[],
-  limit: number,
-): Promise<{ reports: RunReport[]; seconds: number[] }> {
-  const reports: RunReport[] = new Array(jobs.length);
-  const seconds: number[] = new Array(jobs.length);
-  let next = 0;
-  const lane = async (): Promise<void> => {
-    while (next < jobs.length) {
-      const index = next;
-      next += 1;
-      const started = Date.now();
-      reports[index] = await runInWorker(jobs[index]!);
-      seconds[index] = (Date.now() - started) / 1000;
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, lane));
-  return { reports, seconds };
+  return { result, stop: () => void worker.terminate() };
 }
 
 export async function runGate(options: GateCliOptions): Promise<number> {
@@ -237,7 +214,7 @@ export async function runGate(options: GateCliOptions): Promise<number> {
     ...gates.map((gate) => ({ ...base, label: gate.policy, policy: gate.policy, untilTier: gate.untilTier })),
     { ...base, label: "greedy (determinism rerun)", policy: "greedy", untilTier: deepest },
   ];
-  const { reports: all, seconds } = await runAll(jobs, availableParallelism());
+  const { results: all, seconds } = await runPool(jobs, availableParallelism(), runInWorker);
   const reports = all.slice(0, gates.length);
   const second = all[gates.length]!;
   const timings = jobs.map((job, i) => `${job.label} ${seconds[i]!.toFixed(1)}s`);
