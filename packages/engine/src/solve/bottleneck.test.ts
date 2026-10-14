@@ -815,9 +815,9 @@ describe("payable advice", () => {
 describe("computeBottleneck — a drained payer gets a reserve", () => {
   const start = initialWorld(content, 1, 0);
   const sol = solve(start, content, NO_FLOOR);
-  const advise = (state: WorldState, net: number) => {
+  const advise = (state: WorldState, net: number, production = 1) => {
     const rates = new Map(sol.itemRates);
-    for (const [itemId] of priceItems) rates.set(itemId, { production: 0, consumption: 0, net });
+    for (const [itemId] of priceItems) rates.set(itemId, { production, consumption: production - net, net });
     return computeBottleneck(content, sol.capacity, sol.entries, sol.power, state, sol.itemStates, rates);
   };
   // What the fresh fixture's advice costs: its machine's build cost items.
@@ -839,6 +839,11 @@ describe("computeBottleneck — a drained payer gets a reserve", () => {
       percent: RESERVE_ADVICE_PERCENT,
       limitingTarget: firstAdvice!.limitingTarget,
     });
+  });
+
+  it("names no reserve on a payer nothing produces", () => {
+    // A reserve banks a share of production; with production 0 there is nothing to bank.
+    expect(advise(start, 0, 0)).toMatchObject({ kind: "recipe" });
   });
 
   it("leaves the advice alone when the payer is growing", () => {

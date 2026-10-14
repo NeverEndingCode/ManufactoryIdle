@@ -428,7 +428,8 @@ function priceOf(walk: WalkContext, answer: NonNullable<Bottleneck>): Map<ItemId
  * With a reserve already set, it is named again only while its net rate is positive: the
  * reserve is working, so it is kept until the price is met. A reserved item still not
  * growing is skipped -- the reserve is not helping, and naming it again would loop.
- * An item missing from `itemRates` reads as net 0 (drained); `solve` lists every item.
+ * An item nothing produces is never named: a reserve cannot bank what no machine makes.
+ * An item missing from `itemRates` reads as net 0 and unmade; `solve` lists every item.
  */
 function drainedPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemId | null {
   const { state, itemRates } = walk;
@@ -437,7 +438,9 @@ function drainedPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemI
     if (liquid(state, itemId).plus(bound).gte(amount)) continue;
     const reserved = (Object.hasOwn(state.reserve, itemId) ? state.reserve[itemId]! : 0) > 0;
     const growing = (itemRates.get(itemId)?.net ?? 0) > FLOW_TOLERANCE;
-    if (reserved === growing) return itemId;
+    // A reserve banks a share of production, so with none set the item must be made.
+    const made = (itemRates.get(itemId)?.production ?? 0) > FLOW_TOLERANCE;
+    if (reserved ? growing : !growing && made) return itemId;
   }
   return null;
 }

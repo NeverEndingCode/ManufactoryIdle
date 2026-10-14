@@ -257,6 +257,15 @@ drained: the run waits about 22.6 hours for 239,695 more beams, past the gate's 
 dead-time cut-off. The next question is whether that wait is a pacing finding or wants
 more beam capacity.
 
+**Follow-ups from the reserves branch (2026-10-13):**
+- **Size a reserve against the remaining upstream.** A reserve's target (25% of the
+  unconstrained rate, ranked right after power) can take nearly all of a short shared
+  upstream and starve its consumers (`steel_pipe` reserved: consumption 4.386 to 0), so each
+  reserve lasts one interval. Cap the target by what is left of the upstream.
+- **Latent livelock.** The policy holds one reserve at a time, so two items both short in
+  the same price could alternate reserves without either reaching the price (not seen in
+  the gate). A fix would keep reserves for every short payer of the current price.
+
 History, kept below (the pre-capstone state, no longer current):
 
 **`bottleneck` finished all 10 tiers, at 5.58 collections against a target of 25 (was: the tier-7 stall).**

@@ -54,7 +54,10 @@ reserve entry (`reserve:X` with `targetRate > 0`):
    Every requirement walk uses `pinnedEmpty ∪ reserved` (and `pinnedEmptyForPass ∪
    reserved` in R32's re-runs). The reserve's share of X's production therefore builds
    up as stock, consumers get only the remaining capacity, and their draw does not depend
-   on how much stock X holds. That removes the pin/unpin flip for X.
+   on how much stock X holds. That removes the pin/unpin flip for X. A 25% reserve is
+   sized from the unconstrained rate and ranked right after power, so on a short shared
+   upstream it can take nearly all of it for that interval (see "Measured after
+   implementation").
 
 And in `effectivePriority`:
 
@@ -116,6 +119,8 @@ nothing otherwise.
 
 ## Measured with the prototype
 
+The table below is the prototype, measured from the tier-9 checkpoint, not the final branch.
+
 **Without reserves**, nothing changes. With all three engine rules in place and no policy
 setting a reserve, the full gate emitted pins **identical** to the branch's for all three
 policies. The engine suite passed 396/396.
@@ -126,20 +131,38 @@ policies. The engine suite passed 396/396.
 |---|---|
 | today | stalls at 3.49 collections (`steel_pipe` drained) |
 | reserve habit, current engine | 3.49: R32 gives the reserve 0 |
-| reserve habit, **reserves protect stock** | buys on to ~**6.6**, then a second, different stall |
+| reserve habit, **reserves protect stock** | buys on to ~**6.6** (prototype; the branch measured ~5.07), then a second, different stall |
 
 **The second stall** is not a drained payer.
 - **The price:** the 10th assembly rig costs 102,400 `smart_plating` + 102,400
   `encased_industrial_beam`. `smart_plating` is FULL at 720,576; `encased_industrial_beam`
   is at 90,851 and growing ~2/s.
-- **Still unexplained:** it should be payable within ~0.2 collections, yet no purchase
-  came for 2 collections.
+- **Explained afterwards:** see "Measured after implementation": the wait is for beams
+  (the 12th rig on the branch), not an unexplained stall.
 
-It is out of scope here and recorded as a follow-up.
+## Measured after implementation
+
+On the branch (full gate, seed 42):
+- `greedy` and `casual` are unchanged. `bottleneck` still gives `reachesTier: 9` (tier 9
+  at 2.5329), with 428 purchases.
+- **The drained-payer stall is fixed.** The last purchase moved from ~3.65 to ~5.07
+  collections.
+- **The remaining wait is explained.** The advice is the 12th assembly rig (409,600
+  `smart_plating` + 409,600 `encased_industrial_beam`). `smart_plating` is FULL at 720,576
+  and covers it. `encased_industrial_beam` holds 169,905 of a 450,360 liquid cap, growing
+  +2.94/s, so the run waits ~22.6 h for it, beyond the gate's 2-collection cut-off.
+- **Reserves are one-interval nudges.** 15 reserves were set over the run, each cleared one
+  interval later, from ~0.0375 collections (`iron_ore`, `iron_ingot`), which is why tiers
+  1-6 got faster. A 25% reserve (target = percent x unconstrained rate, ranked right after
+  power) can take nearly all of a short shared upstream for that interval: with
+  `steel_pipe` reserved its consumption went 4.386 to 0 and `heavy_modular_frame`
+  production to 0, so the advice moved upstream and the policy cleared the reserve. On the
+  slice a reserve is a nudge, not a long savings period.
 
 ## Out of scope
 
-- The 10th-rig stall above.
+- The 12th-rig beam wait (pacing or beam capacity), and sizing a reserve against the
+  remaining upstream; both are handoff follow-ups.
 - **Reserves for any policy but `bottleneck`.** Calibration is unaffected, since
   `greedy` never reserves.
 - **Protecting stock by priority rank in general**, rather than for reserves only: the
@@ -169,10 +192,10 @@ Unit tests:
 Measured:
 - The full suite, lint, typecheck and `content:check` pass.
 - A full `sim gate`: `greedy` and `casual` pins byte-identical. `bottleneck` is
-  re-measured, and its tier-9 stall is expected around 6.6 collections, still `reachesTier:
-  9`. Moved pins are listed, and the `why` text records the new stall's cause as far as it
+  re-measured: the drained-payer stall is fixed (last purchase ~3.65 to ~5.07
+  collections), still `reachesTier: 9`, now waiting on beams for the 12th rig. Moved pins are listed, and the `why` text records the new stall's cause as far as it
   is known.
-- The handoff gains the 10th-rig stall as a follow-up.
+- The handoff records the 12th-rig beam wait and reserve sizing as follow-ups.
 
 ## The §4.5 amendment
 

@@ -98,35 +98,36 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
         why:
           "target 0.42, measured 0.066 (-84%): bottleneck clears the early tiers far " +
           "faster than target because it buys almost nothing beyond what the reporter " +
-          "names. Fast is not on-target -- both directions count as red.",
+          "names. Fast is not on-target -- both directions count as red. " +
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 2,
         observed: 0.1321,
         why:
           "target 0.8, measured 0.132 (-84%): the same minimal-buying overshoot as tier 1. " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 3,
         observed: 0.3055,
         why:
           "target 1.2, measured 0.306 (-75%): the same overshoot, narrowing tier over tier. " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 4,
         observed: 0.4986,
         why:
           "target 1.9, measured 0.499 (-74%): the same overshoot. " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 5,
         observed: 0.6190,
         why:
           "target 2.9, measured 0.619 (-79%): the same overshoot. " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 6,
@@ -136,7 +137,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "before 2026-10-09, because a starved generator now names its fuel supplier " +
           "instead of another generator -- the policy no longer sinks purchases into " +
           "biomass burners it cannot fuel. " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 7,
@@ -147,7 +148,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
           "bought nothing. After payable advice the run passes tier 7; the advice it took there " +
           "was not captured (the probe started from a pre-payable checkpoint). " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 8,
@@ -155,7 +156,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
         why:
           "target 11, measured 1.647 (-85%): the same minimal-buying overshoot, now reached " +
           "because the run no longer stalls at tier 7. " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
       },
       {
         tier: 9,
