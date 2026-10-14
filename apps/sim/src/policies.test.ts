@@ -519,3 +519,34 @@ describe("milestoneFirstReorder", () => {
     expect(rest).toEqual(getPolicy("optimal").decide(reordered));
   });
 });
+
+describe("bottleneck and reserve advice (spec 2026-10-13)", () => {
+  const advice = { kind: "reserve", itemId: "iron_ingot", percent: 0.25, limitingTarget: "item:iron_plate" } as const;
+
+  it("sets the reserve it is advised to", () => {
+    const base = rich();
+    const ctx: PolicyContext = { ...base, solution: { ...base.solution, bottleneck: advice } };
+    expect(getPolicy("bottleneck").decide(ctx)).toContainEqual({ type: "SET_RESERVE", itemId: "iron_ingot", percent: 0.25 });
+  });
+
+  it("clears a reserve the advice no longer names", () => {
+    const base = rich();
+    const state: WorldState = { ...base.state, reserve: { ...base.state.reserve, iron_ingot: 0.25 } };
+    const solution = solve(state, content);
+    // Precondition: the advice is not a reserve on iron_ingot.
+    expect(solution.bottleneck).not.toMatchObject({ kind: "reserve", itemId: "iron_ingot" });
+    expect(getPolicy("bottleneck").decide({ ...base, state, solution })).toContainEqual({
+      type: "SET_RESERVE",
+      itemId: "iron_ingot",
+      percent: 0,
+    });
+  });
+
+  it("is the only policy that ever reserves", () => {
+    const base = rich();
+    const ctx: PolicyContext = { ...base, solution: { ...base.solution, bottleneck: advice } };
+    for (const name of ["greedy", "casual", "optimal"] as const) {
+      expect(getPolicy(name).decide(ctx).some((a) => a.type === "SET_RESERVE")).toBe(false);
+    }
+  });
+});

@@ -698,6 +698,16 @@ takes 85). Not yet covered: once `reinforced_iron_plate` is FULL, `screw` alone 
 cycles (~5,000 events per 120 s resolve); see the Phase 2 handoff. That cycle is now cheap
 rather than gone (§C.7's 2026-10-12 amendment); removing it needs a stock-model change.
 
+**Amended 2026-10-13: a reserve protects the stock it banks.** While an item has an
+active reserve, none of its entries is an R32 candidate. Every other entry's
+requirement walk treats the item as pinned EMPTY, drawing through its recipe rather
+than from its stock. A reserve on a FULL item is not injected. Without the first rule,
+R32 gave a reserve on a drained item zero, which broke §4.1's promise that a reserve
+diverts output to storage. Without the second, consumers drew the banked stock straight
+back out. Without the third, a reserve claiming a FULL item's recipe deadlocked its
+consumers. None of this applies when no reserve is set: the pacing gate's pins are
+unchanged.
+
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
 grid is binding.
@@ -762,6 +772,16 @@ of the vertical slice advised to buy a Quantum Storage level costing 4,473 `iron
 while `iron_plate` could hold 4,000. Measured before the fix: buying one `iron_plate`
 storage level, 90, made that 4,473 level payable (this is that probe, not a record of
 what the fixed run bought).
+
+**Amended 2026-10-13: a drained payer gets a reserve.** If a purchase's price includes an
+item whose stock (plus bound) is below the price and which either has no reserve and a
+net rate that is not positive, or has a reserve and a positive net rate (the reserve is
+working, so it is kept until the price is met), the advice becomes `{ kind: "reserve", itemId, percent: 0.25 }`:
+reserve a share of that item so it can bank. That works because of the 2026-10-13
+amendment to §C.3: a reserved item is exempt from R32, and while it is set, other entries
+walk through the reserved item's recipe rather than drawing its stock. Measured cause:
+`bottleneck` stalled at tier 9 of the vertical slice told to buy a constructor priced
+in `steel_pipe`, which the assembly rigs drain to zero.
 
 ### C.4 Power
 
@@ -1060,6 +1080,8 @@ sim run --policy casual --seed 42
 | `greedy` | Buy the cheapest available upgrade; plays milestone-first |
 | `casual` | Checks in 3×/day, never reorders priorities. The lower bound |
 | **`bottleneck`** | Always buys exactly what §4.5's bottleneck reporter recommends |
+
+**Amended 2026-10-13:** bottleneck also follows reserve advice (SET_RESERVE), and clears a reserve once the advice no longer names it; no other policy reserves.
 
 **Amended 2026-10-12: milestone-first.** `greedy` and `optimal` keep the next milestone's
 required items at the top of the priority list and return them to the authored order

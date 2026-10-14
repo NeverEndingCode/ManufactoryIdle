@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
 import { D } from "../numbers/decimal.js";
+import { computeBottleneck } from "./bottleneck.js";
 import { indexContent } from "../graph/index-content.js";
 import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
 import { solve } from "./solve.js";
@@ -57,7 +58,15 @@ describe("solve — the healthy case", () => {
     w = { ...w, assignment: { ...w.assignment, smelt_iron: 8 } };
     // Only the plate entry, so nothing else competes for miner or smelter capacity.
     w = { ...w, priority: w.priority.filter((e) => e.itemId !== "iron_ingot" && e.itemId !== "iron_ore") };
-    const sol = solve(w, content, NO_FLOOR);
+    const solved = solve(w, content, NO_FLOOR);
+    // This test is about the recipe, not about a drained payer (spec 2026-10-13 would
+    // advise a reserve on iron_ingot, which the constructor is priced in), so ask the
+    // reporter again with that payer growing.
+    const rates = new Map(solved.itemRates);
+    rates.set("iron_ingot", { production: 1, consumption: 0, net: 1 });
+    const sol = {
+      bottleneck: computeBottleneck(content, solved.capacity, solved.entries, solved.power, w, solved.itemStates, rates),
+    };
     // Ratios: make_plate 1/3, smelt_iron 8/3, mine_iron 2/1.5 = 4/3. Runner-up is
     // mine_iron at 4/3. (4/3 - 1/3) x 3 = 3 constructor units, one per machine.
     expect(sol.bottleneck).toEqual({

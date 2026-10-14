@@ -106,6 +106,20 @@ describe("status and lane views", () => {
     expect(text).toContain("lets the purchase fit");
   });
 
+  it("renders reserve advice as a share to set aside", () => {
+    const base = session();
+    const s: Session = {
+      ...base,
+      solution: {
+        ...base.solution,
+        bottleneck: { kind: "reserve", itemId: "steel_pipe", percent: 0.25, limitingTarget: "item:heavy_modular_frame" },
+      },
+    };
+    expect(renderStatus(s).join("\n")).toContain(
+      "BOTTLENECK  reserve 25% of steel_pipe so it can bank toward item:heavy_modular_frame",
+    );
+  });
+
   it("renders a lane with a rate and a storage readout per item", () => {
     const lines = renderLane(session(), "iron");
     expect(lines.join("\n")).toContain("Iron Plate");

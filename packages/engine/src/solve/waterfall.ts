@@ -16,6 +16,7 @@ import type { IndexedContent } from "../graph/index-content.js";
 import type { ExpansionVectors } from "../graph/expand.js";
 import type { PriorityEntry, WorldState } from "../state/world.js";
 import { unconstrainedRate, type CapacityTable } from "../economy/capacity.js";
+import { itemStateTag } from "../economy/storage.js";
 
 /** Spec 4.2's suggested 2%. Keeps a low-priority target off a hard 0%. */
 export const RESERVE_FLOOR = 0.02;
@@ -143,6 +144,10 @@ export function effectivePriority(
     const raw = reservePercentOf(state, itemId);
     const percent = Math.min(RESERVE_MAX_PERCENT, Math.max(0, raw));
     if (percent <= 0) continue;
+    // Spec 2026-10-13: nowhere to bank into. Without this a reserve would claim a FULL
+    // item's recipe, the FULL sweep would stop it, and every consumer walking through
+    // that recipe (rule below) would get nothing.
+    if (itemStateTag(content, state, itemId) === "FULL") continue;
     reserves.push({
       id: `reserve:${itemId}`,
       kind: "item",
@@ -284,17 +289,31 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
 
   const live = entries.filter((entry) => !entry.paused);
 
+  // Spec 2026-10-13 (reserves protect stock): while an item has an active reserve, every
+  // walk treats it as pinned EMPTY, drawing through its recipe rather than from its
+  // stock, so the stock the reserve banks stays banked. With no reserve set this is the
+  // identity, and nothing changes.
+  const reservedItems = new Set<ItemId>();
+  for (const entry of live) {
+    if (entry.id.startsWith("reserve:") && entry.itemId !== null && (entry.targetRate ?? 0) > 0) {
+      reservedItems.add(entry.itemId);
+    }
+  }
+  const withReserved = (pins: ReadonlySet<ItemId>): ReadonlySet<ItemId> =>
+    reservedItems.size === 0 ? pins : new Set([...pins, ...reservedItems]);
+
   // The requirement vectors for the REAL pin set, used for the candidate
   // pre-filter below (touchCount) and as this call's default when `runPasses`
   // is not probing an alternate pin set.
   const memo = new Map<ItemId, Map<RecipeId, number>>();
   const vectorOf = new Map<string, Map<RecipeId, number>>();
+  const walkPins = withReserved(pinnedEmpty);
   for (const entry of live) {
     vectorOf.set(
       entry.id,
       entry.itemId === null
         ? new Map<RecipeId, number>()
-        : requirementVector(content, vectors, activeRecipe, entry.itemId, pinnedEmpty, memo),
+        : requirementVector(content, vectors, activeRecipe, entry.itemId, walkPins, memo),
     );
   }
 
@@ -324,6 +343,7 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
         : (() => {
             const freshMemo = new Map<ItemId, Map<RecipeId, number>>();
             const built = new Map<string, Map<RecipeId, number>>();
+            const passPins = withReserved(pinnedEmptyForPass);
             for (const entry of live) {
               built.set(
                 entry.id,
@@ -334,7 +354,7 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
                       vectors,
                       activeRecipe,
                       entry.itemId,
-                      pinnedEmptyForPass,
+                      passPins,
                       freshMemo,
                     ),
               );
@@ -585,6 +605,11 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
     const candidates: { id: string; itemId: ItemId }[] = [];
     for (const entry of live) {
       if (entry.mode !== "guaranteed" || entry.itemId === null) continue;
+      // Spec 2026-10-13: while an item has an active reserve it is never an R32 candidate.
+      // Rule 2 already implies this, because R32's alternate re-run re-pins a reserved item
+      // so its net cannot go negative; the skip states it explicitly, keeps the item's
+      // entries on one verdict, and saves the re-run.
+      if (reservedItems.has(entry.itemId)) continue;
       if (!pinnedEmpty.has(entry.itemId)) continue;
       if ((content.consumersOf.get(entry.itemId) ?? []).length === 0) continue;
       const ownRecipe = activeRecipeOf(activeRecipe, entry.itemId);

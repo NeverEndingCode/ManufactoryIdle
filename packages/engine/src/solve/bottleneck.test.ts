@@ -13,7 +13,7 @@ import { liquidCap, quantumCap, storageCap } from "../economy/storage.js";
 import { levelCostRange, machineCostRange } from "../economy/curves.js";
 import { POWER_ITEM } from "../content/types.js";
 import { D } from "../numbers/decimal.js";
-import { computeBottleneck } from "./bottleneck.js";
+import { RESERVE_ADVICE_PERCENT, computeBottleneck } from "./bottleneck.js";
 import { solve } from "./solve.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
@@ -464,7 +464,12 @@ describe("the gridlock walk", () => {
       sol.power,
       w,
       new Map([["crude_oil", "FULL" as const]]),
-      new Map([["crude_oil", { production: 1, consumption: 1, net: 0 }]]),
+      new Map([
+        ["crude_oil", { production: 1, consumption: 1, net: 0 }],
+        // The machine's price is growing, so this test is not about a drained payer
+        // (spec 2026-10-13 would advise a reserve on it).
+        ["iron_plate", { production: 1, consumption: 0, net: 1 }],
+      ]),
     );
     expect(b).toEqual({
       kind: "recipe",
@@ -516,7 +521,12 @@ describe("the gridlock walk", () => {
       sol.power,
       w,
       new Map([["crude_oil", "FULL" as const]]),
-      new Map([["crude_oil", { production: 1, consumption: 1, net: 0 }]]),
+      new Map([
+        ["crude_oil", { production: 1, consumption: 1, net: 0 }],
+        // The machine's price is growing, so this test is not about a drained payer
+        // (spec 2026-10-13 would advise a reserve on it).
+        ["iron_plate", { production: 1, consumption: 0, net: 1 }],
+      ]),
     );
     expect(b).toEqual({
       kind: "recipe",
@@ -553,7 +563,12 @@ describe("the gridlock walk", () => {
       { demandMw: 200, fullDemandMw: 400, supplyMw: 200, ratio: 0.5, passes: 1 },
       w,
       new Map([["heavy_oil_residue", "FULL" as const]]),
-      new Map([["heavy_oil_residue", { production: 1, consumption: 1, net: 0 }]]),
+      new Map([
+        ["heavy_oil_residue", { production: 1, consumption: 1, net: 0 }],
+        // The machine's price is growing, so this test is not about a drained payer
+        // (spec 2026-10-13 would advise a reserve on it).
+        ["iron_plate", { production: 1, consumption: 0, net: 1 }],
+      ]),
     );
     expect(b).toEqual({
       kind: "recipe",
@@ -629,6 +644,17 @@ describe("payable advice", () => {
       limitingTarget: "item:plastic",
       upgrade: "storage",
     });
+  });
+
+  it("gives storage advice, not a reserve, when the price exceeds the payer's cap", () => {
+    // Spec 2026-10-13: the cap check runs before the drained-payer check. iron_plate is
+    // empty and not growing here, which would be a reserve if the level fit.
+    const c = variant({});
+    let w = withLevels(oilWorld(c), { plastic: 9 }, { oil: 3 });
+    w = atCap(w, "plastic");
+    const advice = solve(w, c, NO_FLOOR).bottleneck;
+    expect(advice).toMatchObject({ kind: "storage", itemId: "iron_plate" });
+    expect(advice?.kind).not.toBe("reserve");
   });
 
   it("counts bound stock the player already holds", () => {
@@ -779,6 +805,68 @@ describe("payable advice", () => {
       itemId: "plastic",
       limitingTarget: "item:plastic",
       upgrade: "storage",
+    });
+  });
+});
+
+// Spec 2026-10-13 (reserves protect stock): a purchase priced in an item whose stock is
+// short and not growing can never be paid while consumers take every unit made. The
+// advice becomes a reserve on that item.
+describe("computeBottleneck — a drained payer gets a reserve", () => {
+  const start = initialWorld(content, 1, 0);
+  const sol = solve(start, content, NO_FLOOR);
+  const advise = (state: WorldState, net: number, production = 1) => {
+    const rates = new Map(sol.itemRates);
+    for (const [itemId] of priceItems) rates.set(itemId, { production, consumption: production - net, net });
+    return computeBottleneck(content, sol.capacity, sol.entries, sol.power, state, sol.itemStates, rates);
+  };
+  // What the fresh fixture's advice costs: its machine's build cost items.
+  const firstAdvice = computeBottleneck(content, sol.capacity, sol.entries, sol.power, start, sol.itemStates, sol.itemRates);
+  const priceItems: [string, unknown][] = (() => {
+    if (firstAdvice?.kind !== "recipe") return [];
+    const recipe = content.recipes.get(firstAdvice.recipeId)!;
+    return [...machineCostRange(content, recipe.machineClass, 1, 0, 1)];
+  })();
+
+  it("names a reserve on the payer when it is short and not growing", () => {
+    // Preconditions: the fresh fixture advises a machine, priced in something it holds
+    // too little of.
+    expect(firstAdvice?.kind).toBe("recipe");
+    expect(priceItems.length).toBeGreaterThan(0);
+    expect(advise(start, 0)).toMatchObject({
+      kind: "reserve",
+      itemId: priceItems[0]![0],
+      percent: RESERVE_ADVICE_PERCENT,
+      limitingTarget: firstAdvice!.limitingTarget,
+    });
+  });
+
+  it("names no reserve on a payer nothing produces", () => {
+    // A reserve banks a share of production; with production 0 there is nothing to bank.
+    expect(advise(start, 0, 0)).toMatchObject({ kind: "recipe" });
+  });
+
+  it("leaves the advice alone when the payer is growing", () => {
+    expect(advise(start, 0.5)).toMatchObject({ kind: "recipe" });
+  });
+
+  it("does not advise a reserve again when the reserve is not helping", () => {
+    const reserved: WorldState = {
+      ...start,
+      reserve: Object.fromEntries(priceItems.map(([itemId]) => [itemId, 0.25])),
+    };
+    expect(advise(reserved, 0)).toMatchObject({ kind: "recipe" });
+  });
+
+  it("keeps advising the reserve while the payer is still short and growing", () => {
+    const reserved: WorldState = {
+      ...start,
+      reserve: Object.fromEntries(priceItems.map(([itemId]) => [itemId, 0.25])),
+    };
+    expect(advise(reserved, 0.5)).toMatchObject({
+      kind: "reserve",
+      itemId: priceItems[0]![0],
+      percent: RESERVE_ADVICE_PERCENT,
     });
   });
 });

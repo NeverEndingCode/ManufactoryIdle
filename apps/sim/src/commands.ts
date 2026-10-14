@@ -172,6 +172,11 @@ export function renderStatus(session: Session): string[] {
       `BOTTLENECK  power limiting ${bottleneck.limitingTarget} — ` +
         `${bottleneck.machinesToClear} more ${bottleneck.generatorRecipeId ?? "generator"} clears it`,
     );
+  } else if (bottleneck.kind === "reserve") {
+    lines.push(
+      `BOTTLENECK  reserve ${Math.round(bottleneck.percent * 100)}% of ${bottleneck.itemId} ` +
+        `so it can bank toward ${bottleneck.limitingTarget}`,
+    );
   } else if (bottleneck.upgrade === null) {
     // Curves maxed, or every level costs more than can be held. Naming no fix is the
     // honest answer; check 9 is what should keep a bundle from ever reaching this state.

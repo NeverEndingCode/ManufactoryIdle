@@ -244,6 +244,28 @@ alone, the policy reaches tier 10 at 26.75 collections after a 7d18h dead stretc
 a payable-advice gap: the payability check ignores the net drain of the cost item by its
 consumers. It is the open follow-up.
 
+**Updated 2026-10-13 (reserves protect stock, `specs/2026-10-13-reserves-protect-stock-design.md`):**
+the drained-payer stall is fixed by reserve advice: the reporter names a reserve on a drained
+payer, `bottleneck` sets it and clears it once the advice moves on, and the stall moved from
+~3.65 to a last purchase near 5.1 collections (still `reachesTier: 9`; tier 9 now at 2.5329).
+The new stall is the next follow-up: the advice is the 12th assembly rig for
+`make_heavy_modular_frame` (11 owned), priced at 409,600 `smart_plating` + 409,600
+`encased_industrial_beam`. Liquid (stored + quantum) figures: `smart_plating` 720,576 (FULL,
+net 0) covers its share; `encased_industrial_beam` 169,905 of a 450,360 liquid cap, growing
+at 2.94/s (production 15.63, consumption 12.69). So the price is payable and no payer is
+drained: the run waits about 22.6 hours for 239,695 more beams, past the gate's 2-collection
+dead-time cut-off. The next question is whether that wait is a pacing finding or wants
+more beam capacity.
+
+**Follow-ups from the reserves branch (2026-10-13):**
+- **Size a reserve against the remaining upstream.** A reserve's target (25% of the
+  unconstrained rate, ranked right after power) can take nearly all of a short shared
+  upstream and starve its consumers (`steel_pipe` reserved: consumption 4.386 to 0), so each
+  reserve lasts one interval. Cap the target by what is left of the upstream.
+- **Latent livelock.** The policy holds one reserve at a time, so two items both short in
+  the same price could alternate reserves without either reaching the price (not seen in
+  the gate). A fix would keep reserves for every short payer of the current price.
+
 History, kept below (the pre-capstone state, no longer current):
 
 **`bottleneck` finished all 10 tiers, at 5.58 collections against a target of 25 (was: the tier-7 stall).**
