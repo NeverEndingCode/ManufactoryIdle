@@ -70,5 +70,5 @@ milestones:
 
   - tier: 10
     name: Industrial Synthesis
-    requires: [{ item: smart_plating, amount: 4000 }, { item: encased_industrial_beam, amount: 3000 }]
+    requires: [{ item: heavy_modular_frame, amount: 30000 }]
     laneMultipliers: { iron: 1.3, coal: 1.3, copper: 1.3, oil: 1.3, power: 1.3 }

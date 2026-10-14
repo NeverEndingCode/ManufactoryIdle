@@ -42,21 +42,22 @@ the pre-retune bundle it exits 1 with `tier 1 at 0.4194 against target 0.5 (-16.
 The rules are a pure function over `RunReport`s, unit-tested in 0.3 s (21 tests), so the
 judgement is not hidden behind a full gate run.
 
-Current fit — **9 of 10 tiers within 5%** (was 7; tiers 1 and 5 fixed 2026-09-16):
+Current fit — **10 of 10 tiers within 5%** (2026-10-13: tier 10 got its capstone; see specs/2026-10-13-tier10-capstone-design.md):
 
 | tier | target | observed | miss | | tier | target | observed | miss |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 0.42 | 0.4178 | −0.5% | | 6 | 4.40 | 4.4227 | +0.5% |
-| 2 | 0.80 | 0.7980 | −0.2% | | 7 | 6.80 | 6.8473 | +0.7% |
-| 3 | 1.20 | 1.1927 | −0.6% | | 8 | 11.00 | 10.7566 | −2.2% |
-| 4 | 1.90 | 1.8366 | −3.3% | | 9 | 16.00 | 15.4904 | −3.2% |
-| 5 | 2.90 | 2.9649 | +2.2% | | 10 | 25.00 | 20.8722 | **−16.5%** |
+| 1 | 0.42 | 0.4220 | +0.5% | | 6 | 4.40 | 4.5009 | +2.3% |
+| 2 | 0.80 | 0.7605 | −4.9% | | 7 | 6.80 | 6.9341 | +2.0% |
+| 3 | 1.20 | 1.1552 | −3.7% | | 8 | 11.00 | 10.8558 | −1.3% |
+| 4 | 1.90 | 1.8714 | −1.5% | | 9 | 16.00 | 15.6099 | −2.4% |
+| 5 | 2.90 | 3.0350 | +4.7% | | 10 | 25.00 | 24.0583 | −3.8% |
 
-A plain `sim run` against the committed bundle reproduces `derived.yaml`'s tier times
-exactly, **all ten of them**. That was not true until 2026-09-17: tier 10's column said
-15.54 where the game did 20.87, because its amounts search short-circuited and reported
-one constant for every candidate. Fixed; see below. Tier 10's miss was −37.8% against a
-number nothing measured, and is −16.5% against the real one.
+History (superseded by the table above): until 2026-10-13 tier 10 was the one miss
+(20.8722, −16.5%). A plain `sim run` against the committed bundle reproduces
+`derived.yaml`'s tier times exactly. That was not true until 2026-09-17: tier 10's column
+said 15.54 where the game did 20.87, because its amounts search short-circuited and
+reported one constant for every candidate. Fixed; see below. Tier 10's miss was −37.8%
+against a number nothing measured, and was −16.5% against the real one.
 
 ---
 
@@ -233,7 +234,19 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. `bottleneck` now finishes all 10 tiers, but at 5.58 collections against a target of 25 (was: the tier-7 stall).**
+**1. `bottleneck` regressed 2026-10-13: it stalls at tier 9.**
+
+Under the gate's dead-time cut-off it now reports `reachesTier: 9`. From about 3.65
+collections its advice sticks on one constructor Mk.3 for `make_steel_pipe` (limiting
+target `item:heavy_modular_frame`), priced at about 36.6 `steel_pipe`. The assembly rigs
+drain `steel_pipe` to 0, so the advice is payable on paper and never in practice. Run
+alone, the policy reaches tier 10 at 26.75 collections after a 7d18h dead stretch. This is
+a payable-advice gap: the payability check ignores the net drain of the cost item by its
+consumers. It is the open follow-up.
+
+History, kept below (the pre-capstone state, no longer current):
+
+**`bottleneck` finished all 10 tiers, at 5.58 collections against a target of 25 (was: the tier-7 stall).**
 
 Current pins (re-measured 2026-10-10 after R32 asked jointly, unchanged since): tier 10 at
 5.5792, 500 purchases, dead time 0.225 collections. The 5.87 / 514 figures below are the
@@ -306,11 +319,12 @@ stale loudly when the underlying tier starts hitting its target, so they cannot 
 the problem. `sim gate --emit-pins` prints a paste-ready block from current measurements
 — re-pin with that after any calibration run rather than by hand.
 
-The gate pins greedy's tier 10 at 20.8722, which is now both what `derived.yaml` says and
-what the game does. Before the short-circuit fix those were different numbers and the
-column was the wrong one to assert against.
+History: the gate used to pin greedy's tier 10 at 20.8722, which was both what
+`derived.yaml` said and what the game did. It no longer pins it: tier 10 has been on target
+(24.06) since 2026-10-13.
 
-**3. Tier 10 — the only off-target tier, and now honestly measured.**
+**DONE 2026-10-13** — **3. Tier 10 — the only off-target tier, and now honestly measured.**
+Tier 10 is now a capstone (`heavy_modular_frame`, made on the steeply priced `assembly_rig`, authored `costRatio` 2.0): greedy observes 24.06 against a target of 25 (-3.8%), with a solved amount of 30,000.
 Tiers 1 and 5 are DONE (2026-09-16); the calibrator short-circuit is FIXED (2026-09-17).
 What is left is the content-design decision, and it now rests on a search that works:
 
@@ -415,6 +429,13 @@ rediscovered as new.**
   more wire machines" when the real answer is a storage level for `wire`. The old
   priority scan has the identical gap at its own level, so this is not a regression;
   it is recorded here so it is not mistaken for one.
+
+**9. Greedy's storage sweep depends on how many stock items exist.** `policies.ts` (about
+lines 254-261) offers storage for every `content.stockItemIds`, live or not; the machine
+offer was already fixed for the same reason. Adding `heavy_modular_frame` therefore added
+one 2-minute `BUY_STORAGE` to greedy's tier-0 sweep (greedy tier 1 0.4178 to 0.4220;
+casual tier 1 2.0065 to 3.0035, as those 2 minutes cross an offline-window boundary).
+Fixing it is a policy change that shifts every calibrated tier, so it is its own branch.
 
 ---
 

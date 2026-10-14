@@ -558,6 +558,13 @@ relative ordering the author chose between classes. Ten tier targets against fou
 independent per-class knobs would be underdetermined; one scale against the shape of the
 curve is not. §D3 records why the scan is a scan and not a bisection.
 
+**Amended 2026-10-13: a class outside the scale.** A class may author `costRatio`
+directly and no `rEff` when its cost growth is itself the pacing lever. The scan
+then leaves it alone (`withREffScale`, `deriveCostRatios`). The slice's `assembly_rig`
+does this, for tier 10's capstone: each rig costs twice the last, which is what makes
+tier-10 time grow with its requirement instead of with the requirement's logarithm.
+See `specs/2026-10-13-tier10-capstone-design.md`.
+
 **The calibration script is the simulator with a search wrapper.** It runs
 `sim run --policy greedy` and binary-searches the free parameters until the observed curve
 matches the target. There is therefore exactly one implementation of "how long does this
