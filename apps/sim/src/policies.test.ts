@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { D, apply, computeCapacity, solve, type WorldState } from "@manufactory/engine";
+import { D, apply, computeCapacity, indexContent, solve, type WorldState } from "@manufactory/engine";
 import { SLICE_BUNDLE_DIR, loadContent, newWorld } from "./bootstrap.js";
 import {
   POLICY_NAMES,
   affordableCandidates,
   idleReassignments,
+  milestoneFirstReorder,
   costScore,
   getPolicy,
   tierProgress,
@@ -409,4 +410,112 @@ describe("policies move idle machines before buying more", () => {
       ).toBe(true);
     });
   }
+});
+
+// Spec 2026-10-12 (milestone-first policies). The fixture's start priority is
+// iron_plate, iron_ingot, iron_ore, plastic, fuel, heavy_oil_residue, crude_oil, and
+// its tier-3 milestone needs iron_plate then plastic.
+describe("milestoneFirstReorder", () => {
+  const AUTHORED = [
+    "item:iron_plate",
+    "item:iron_ingot",
+    "item:iron_ore",
+    "item:plastic",
+    "item:fuel",
+    "item:heavy_oil_residue",
+    "item:crude_oil",
+  ];
+  const TIER3_FIRST = [
+    "item:iron_plate",
+    "item:plastic",
+    "item:iron_ingot",
+    "item:iron_ore",
+    "item:fuel",
+    "item:heavy_oil_residue",
+    "item:crude_oil",
+  ];
+  /** The fixture world's priority, reordered to `ids` (power wherever `powerAt` says). */
+  function ordered(ids: string[], powerAt = 0): WorldState["priority"] {
+    const base = newWorld(content, 1).priority;
+    const byId = new Map(base.map((e) => [e.id, e]));
+    const items = ids.map((id) => byId.get(id)!);
+    const power = base.find((e) => e.kind === "power")!;
+    return [...items.slice(0, powerAt), power, ...items.slice(powerAt)];
+  }
+  const idsOf = (actions: ReturnType<typeof milestoneFirstReorder>) =>
+    actions.length === 0 ? null : (actions[0] as { entries: string[] }).entries;
+
+  it("puts power first, then the next milestone's items, then the rest as authored", () => {
+    // Precondition: at tier 2 the list is still authored, and plastic sits fourth.
+    const ctx = context({ tier: 2 });
+    expect(ctx.state.priority.map((e) => e.id)).toEqual(["power", ...AUTHORED]);
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...TIER3_FIRST]);
+  });
+
+  it("keeps power first even where the player moved it", () => {
+    const ctx = context({ tier: 2, priority: ordered(TIER3_FIRST, 3) });
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...TIER3_FIRST]);
+  });
+
+  it("emits nothing when the list is already in that order", () => {
+    expect(milestoneFirstReorder(context({ tier: 2, priority: ordered(TIER3_FIRST) }))).toEqual([]);
+  });
+
+  it("puts an item back where it was authored once its milestone is no longer next", () => {
+    // Tier 1's next milestone (tier 2) needs only iron_plate, so plastic goes home.
+    const ctx = context({ tier: 1, priority: ordered(TIER3_FIRST) });
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...AUTHORED]);
+  });
+
+  it("reverts to the authored order when there is no next milestone", () => {
+    const ctx = context({ tier: 3, priority: ordered(TIER3_FIRST) });
+    expect(idsOf(milestoneFirstReorder(ctx))).toEqual(["power", ...AUTHORED]);
+  });
+
+  it("is used by greedy and optimal, never by casual or bottleneck", () => {
+    const base = rich();
+    const ctx: PolicyContext = { ...base, state: { ...base.state, tier: 2 } };
+    ctx.solution = solve(ctx.state, content);
+    for (const name of ["greedy", "optimal"] as const) {
+      const first = getPolicy(name).decide(ctx)[0]!;
+      expect(first.type).toBe("REORDER_PRIORITY");
+      // The engine accepts it: it is a permutation of the existing entries.
+      expect(apply(ctx.state, content, first, ctx.state.seed).rejected).toBe(false);
+    }
+    for (const name of ["casual", "bottleneck"] as const) {
+      expect(getPolicy(name).decide(ctx).some((a) => a.type === "REORDER_PRIORITY")).toBe(false);
+    }
+  });
+
+  it("dedupes a milestone that lists the same item twice, so the reorder stays a permutation", () => {
+    const bundle = content.bundle;
+    const milestones = bundle.milestones.map((m) =>
+      m.tier === 3 ? { ...m, requires: [...m.requires, ...m.requires] } : m,
+    );
+    const dup = indexContent({ ...bundle, milestones });
+    const state: WorldState = { ...newWorld(dup, 1), tier: 2 };
+    const ctx: PolicyContext = { content: dup, state, solution: solve(state, dup), nowMs: 0 };
+    const entries = idsOf(milestoneFirstReorder(ctx))!;
+    expect(new Set(entries).size).toBe(entries.length);
+    expect(entries).toHaveLength(state.priority.length);
+    expect(apply(state, dup, milestoneFirstReorder(ctx)[0]!, state.seed).rejected).toBe(false);
+  });
+
+  it("optimal's reorder moves its lookahead target to the milestone item", () => {
+    // decide's output alone cannot tell the two states apart on this fixture (the
+    // smelter binds either way), so the lookahead target is asserted directly.
+    const base = rich();
+    const handedPriority = ordered(
+      ["item:iron_ore", ...AUTHORED.filter((id) => id !== "item:iron_ore")],
+    );
+    const handedState: WorldState = { ...base.state, tier: 2, priority: handedPriority };
+    const ctx: PolicyContext = { ...base, state: handedState, solution: solve(handedState, content) };
+    const [reorder, ...rest] = getPolicy("optimal").decide(ctx);
+    const applied = apply(ctx.state, content, reorder!, ctx.state.seed);
+    if (applied.rejected) throw new Error(applied.reason);
+    const reordered: PolicyContext = { ...ctx, state: applied.state, solution: solve(applied.state, content) };
+    expect(topTargetItem(ctx)).toBe("iron_ore");
+    expect(topTargetItem(reordered)).toBe("iron_plate");
+    expect(rest).toEqual(getPolicy("optimal").decide(reordered));
+  });
 });

@@ -50,7 +50,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     knownRed: [
       {
         tier: 10,
-        observed: 20.8722,
+        observed: 20.868,
         why:
           "target 25, measured 20.87 (-16.5%), and this is now a MEASURED ceiling " +
           "rather than a fitting failure. The requirement cannot exceed what a player " +
@@ -59,7 +59,8 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "20.87, so no amount reaches 25. The item RATIO is ruled out too (measured): " +
           "both requirements share a ceiling, the beam binding lands further out at " +
           "20.656, and both together measure the same as smart_plating alone. Needs " +
-          "something structural -- recipe depth, or a power or throughput wall.",
+          "something structural -- recipe depth, or a power or throughput wall. " +
+          "Re-measured 2026-10-12 after greedy played milestone-first.",
       },
     ],
   },

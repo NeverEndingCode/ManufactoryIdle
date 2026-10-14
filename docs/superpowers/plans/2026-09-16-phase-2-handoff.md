@@ -378,11 +378,11 @@ explicitly never tuned, with the ceiling and capPerTier tests pointed at it. Kee
 cheap end-to-end test against the live slice so the calibrator still has a canary.
 
 **5. One decision open since the plan was written.**
-- **B.7's storage list.** `costGrowth` is now authored with measurements behind it, but
-  `capGrowth`, `baseCostAmount` and `maxLevel` are still placeholders, and
-  `pacing.storageBindingCadence: 12` is read by nothing. Solve against it or delete the
-  intent — an authored pacing knob nothing consumes is the `purchaseIntervalLateSeconds`
-  pattern for a third time.
+- **DONE 2026-10-12:** `storageBindingCadence` removed; the curves are recorded as
+  authored-with-measurements in §B.7. Was: B.7's storage list, where `costGrowth` was
+  authored with measurements behind it but `capGrowth`, `baseCostAmount` and `maxLevel`
+  were placeholders, and `pacing.storageBindingCadence: 12` was read by nothing. The
+  choice was to solve against it or delete the intent; it was deleted.
 
 (`SET_RESERVE` and `REORDER_PRIORITY` were the second decision here; promoted to item 2,
 since the `bottleneck` finding gives them a concrete reason to exist.)

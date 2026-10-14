@@ -480,7 +480,7 @@ without a separate late-game mechanism.
 
 **Storage `s` and `sc` are derived.** Original §3.3 says caps should grow "slightly slower
 than build costs" so capacity periodically blocks production. That is a *cadence*, so
-author the cadence and let the script solve: `storageBindingCadence: 12`.
+author the cadence and let the script solve: `storageBindingCadence: 12`. *(Superseded 2026-10-12: the knob was never consumed and is removed; see §B.7.)*
 
 ### B.5 The vertical slice
 
@@ -543,11 +543,13 @@ pacing:
   offlineCollectionsPerDay: 3
   purchaseIntervalEarly:    120s     # seconds between purchases at tier start
   purchaseIntervalLate:     1800s    # at tier end, before the staircase resets
-  storageBindingCadence:    12       # machines between storage binding
 ```
 
-Solves for: per-class `r_eff` (hence `r`), milestone delivery requirements, storage `s`
-and `sc`, QS `q` and its cost curve.
+Solves for: per-class `r_eff` (hence `r`), milestone delivery requirements, and storage's
+`capPerTier`. **Amended 2026-10-12:** the storage and Quantum Storage curves (`capGrowth`,
+`costGrowth`, `baseCostAmount`, `maxLevel`) are authored, with measurements behind them
+(§3.3's binding shape, check 12's climbable ladder, the 22/16 depth). The
+`storageBindingCadence` intent was read by nothing and is removed.
 
 `r_eff` is solved as a single scale on `r_eff − 1` across every class, not per class
 independently. `r_eff − 1` is the pacing quantity — the invariant above is `r_eff > 1 + ε`,
@@ -1047,10 +1049,17 @@ sim run --policy casual --seed 42
 
 | Policy | Behaviour |
 |---|---|
-| `optimal` | Perfect ordering. The upper bound |
-| `greedy` | Buy the cheapest available upgrade |
+| `optimal` | Perfect ordering; plays milestone-first. The upper bound |
+| `greedy` | Buy the cheapest available upgrade; plays milestone-first |
 | `casual` | Checks in 3×/day, never reorders priorities. The lower bound |
 | **`bottleneck`** | Always buys exactly what §4.5's bottleneck reporter recommends |
+
+**Amended 2026-10-12: milestone-first.** `greedy` and `optimal` keep the next milestone's
+required items at the top of the priority list and return them to the authored order
+once delivered (`milestoneFirstReorder`); `casual` and `bottleneck` never reorder. Measured
+before adopting it: a milestone-first `greedy` moves only tier 4, by −0.9%, so the
+calibration fitted to the old `greedy` holds for a milestone-first player and was not
+redone. See `specs/2026-10-12-milestone-first-policies-design.md`.
 
 The fourth policy answers the only question that matters about the game's advice
 mechanism: **is the advice actually good?** If `bottleneck` lands materially worse than

@@ -284,15 +284,57 @@ function cheapest(candidates: readonly Candidate[]): Candidate | null {
   return best;
 }
 
+/**
+ * Spec 2026-10-12 (milestone-first policies): the habit a competent player has. The
+ * desired list is the power entry (spec C.4 keeps it first), then the next milestone's
+ * required items in its `requires` order, then every other entry in the bundle's
+ * authored `start.priority` order -- so a delivered milestone's items go back where the
+ * author put them. Returns one REORDER_PRIORITY when the list differs, else nothing.
+ * Never touches paused flags, modes, target rates or reserves.
+ *
+ * Measured 2026-10-12: on the slice it moves `greedy` by -0.9% at tier 4 and nowhere
+ * else, because tier times are set by storage caps and purchase cadence, and consumers
+ * draw a milestone item from stock, which the priority order does not govern.
+ */
+export function milestoneFirstReorder(ctx: PolicyContext): Action[] {
+  const { content, state } = ctx;
+  const current = state.priority.map((entry) => entry.id);
+  const power = state.priority.filter((entry) => entry.kind === "power").map((entry) => entry.id);
+  const next = content.milestoneByTier.get(state.tier + 1);
+  // A milestone may list an item twice; a duplicate would make `desired` not a
+  // permutation and the engine would reject the reorder.
+  const lead = [...new Set((next?.requires ?? []).map((requirement) => `item:${requirement.item}`))].filter(
+    (id) => current.includes(id) && !power.includes(id),
+  );
+  // An entry outside start.priority goes last, in its current relative order. None
+  // exists today: reserve entries are injected by effectivePriority, never stored.
+  const authored = new Map(content.bundle.start.priority.map((itemId, index) => [`item:${itemId}`, index]));
+  const rank = (id: string): number => authored.get(id) ?? Number.MAX_SAFE_INTEGER;
+  const rest = current
+    .filter((id) => !power.includes(id) && !lead.includes(id))
+    .map((id, index) => ({ id, index }))
+    .sort((a, b) => rank(a.id) - rank(b.id) || a.index - b.index)
+    .map(({ id }) => id);
+  const desired = [...power, ...lead, ...rest];
+  if (desired.every((id, index) => id === current[index])) return [];
+  return [{ type: "REORDER_PRIORITY", entries: desired }];
+}
+
 const greedy: Policy = {
   name: "greedy",
   intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
+    const reorder = milestoneFirstReorder(ctx);
     // Reassignments first: they cost nothing, and putting a starved recipe on the map
     // before buying means the purchase's own auto-assignment sees the corrected state.
+    // The purchase choice does not read the priority list, so the reorder needs no
+    // re-solve here. idleReassignments does read the priority list and the solution,
+    // and here it reads them from BEFORE the reorder, so on a decision that reorders a
+    // reassignment can lag by one decision. The gate's pins were measured with this
+    // behaviour; changing it means re-gating.
     const moves = idleReassignments(ctx);
     const pick = cheapest(affordableCandidates(ctx));
-    return pick === null ? moves : [...moves, pick.action];
+    return pick === null ? [...reorder, ...moves] : [...reorder, ...moves, pick.action];
   },
 };
 
@@ -392,41 +434,52 @@ const bottleneck: Policy = {
 const optimal: Policy = {
   name: "optimal",
   intervalMs: purchaseIntervalMs,
-  decide: (ctx) => {
-    const moves = idleReassignments(ctx);
-    const target = topTargetItem(ctx);
-    const candidates = affordableCandidates(ctx);
-    if (candidates.length === 0) return moves;
-    if (target === null) {
-      const pick = cheapest(candidates);
-      return pick === null ? moves : [...moves, pick.action];
+  decide: (outer) => {
+    // Look ahead from the list as it will be after the milestone-first reorder:
+    // topTargetItem reads the priority list.
+    const reorder = milestoneFirstReorder(outer);
+    let ctx = outer;
+    if (reorder.length > 0) {
+      const applied = apply(outer.state, outer.content, reorder[0]!, outer.state.seed);
+      if (!applied.rejected) ctx = { ...outer, state: applied.state, solution: solve(applied.state, outer.content) };
     }
-
-    const before = ctx.solution.itemRates.get(target)?.production ?? 0;
-    let best: { action: Action; value: number; label: string } | null = null;
-
-    for (const candidate of candidates) {
-      const applied = apply(ctx.state, ctx.content, candidate.action, ctx.state.seed);
-      if (applied.rejected) continue;
-      const after = solve(applied.state, ctx.content).itemRates.get(target)?.production ?? 0;
-      const value = (after - before) / Math.max(1, candidate.score);
-      if (
-        best === null ||
-        value > best.value ||
-        (value === best.value && candidate.label < best.label)
-      ) {
-        best = { action: candidate.action, value, label: candidate.label };
+    const decided = ((): Action[] => {
+      const moves = idleReassignments(ctx);
+      const target = topTargetItem(ctx);
+      const candidates = affordableCandidates(ctx);
+      if (candidates.length === 0) return moves;
+      if (target === null) {
+        const pick = cheapest(candidates);
+        return pick === null ? moves : [...moves, pick.action];
       }
-    }
 
-    if (best === null) return moves;
-    // Nothing helped the top target, so fall back to the cheapest capacity there is:
-    // a purchase that does nothing today may unblock a tier tomorrow.
-    if (best.value <= 0) {
-      const pick = cheapest(candidates);
-      return pick === null ? moves : [...moves, pick.action];
-    }
-    return [...moves, best.action];
+      const before = ctx.solution.itemRates.get(target)?.production ?? 0;
+      let best: { action: Action; value: number; label: string } | null = null;
+
+      for (const candidate of candidates) {
+        const applied = apply(ctx.state, ctx.content, candidate.action, ctx.state.seed);
+        if (applied.rejected) continue;
+        const after = solve(applied.state, ctx.content).itemRates.get(target)?.production ?? 0;
+        const value = (after - before) / Math.max(1, candidate.score);
+        if (
+          best === null ||
+          value > best.value ||
+          (value === best.value && candidate.label < best.label)
+        ) {
+          best = { action: candidate.action, value, label: candidate.label };
+        }
+      }
+
+      if (best === null) return moves;
+      // Nothing helped the top target, so fall back to the cheapest capacity there is:
+      // a purchase that does nothing today may unblock a tier tomorrow.
+      if (best.value <= 0) {
+        const pick = cheapest(candidates);
+        return pick === null ? moves : [...moves, pick.action];
+      }
+      return [...moves, best.action];
+    })();
+    return [...reorder, ...decided];
   },
 };
 

@@ -21,7 +21,7 @@ const LANES = `version: test.v1\nlanes:\n  - { id: iron, name: Iron, order: 0, u
 const ITEMS = `items:\n  - { id: iron_ore, lane: iron, tier: 0, name: Iron Ore, baseStorageCap: 600, baseQuantumCap: 2400 }\n`;
 const MACHINES = `machineClasses:\n  - id: miner\n    name: Miner\n    ladder: { step: 1.5, interval: 10 }\n    marks:\n      - mark: 1\n        name: Miner Mk.1\n        rateMultiplier: 1\n        buildCostMultiplier: 1\n        powerDraw: 5\n        buildCost: [{ item: iron_ore, amount: 10 }]\n        unlockTier: 0\n`;
 const RECIPES = `recipes:\n  - id: mine_iron\n    name: Iron Ore\n    lane: iron\n    machineClass: miner\n    inputs: []\n    outputs: [{ item: iron_ore, rate: "60" }]\n    unlockTier: 0\n`;
-const PACING = `pacing:\n  targetCollectionsToTier: [2, 5]\n  activeHoursPerDay: 2.5\n  offlineCollectionsPerDay: 3\n  purchaseIntervalEarlySeconds: 120\n  purchaseIntervalLateSeconds: 1800\n  storageBindingCadence: 12\n`;
+const PACING = `pacing:\n  targetCollectionsToTier: [2, 5]\n  activeHoursPerDay: 2.5\n  offlineCollectionsPerDay: 3\n  purchaseIntervalEarlySeconds: 120\n  purchaseIntervalLateSeconds: 1800\n`;
 
 const ALL = { "a.yaml": LANES, "b.yaml": ITEMS, "c.yaml": MACHINES, "d.yaml": RECIPES, "e.yaml": PACING };
 

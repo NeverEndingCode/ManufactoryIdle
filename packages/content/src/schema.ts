@@ -139,7 +139,6 @@ export const PacingSchema = z
     offlineCollectionsPerDay: z.number().positive(),
     purchaseIntervalEarlySeconds: z.number().positive(),
     purchaseIntervalLateSeconds: z.number().positive(),
-    storageBindingCadence: z.number().int().positive(),
   })
   .strict();
 
@@ -271,7 +270,6 @@ export const CalibrationRunSchema = z
     seed: z.number().int(),
     targetCollectionsToTier: z.array(z.number().positive()),
     observedCollectionsToTier: z.array(z.number().nonnegative().nullable()),
-    observedStorageBindingCadence: z.number().nonnegative().nullable().optional(),
   })
   .strict();
 
