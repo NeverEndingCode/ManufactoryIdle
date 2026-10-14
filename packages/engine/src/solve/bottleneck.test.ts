@@ -646,6 +646,17 @@ describe("payable advice", () => {
     });
   });
 
+  it("gives storage advice, not a reserve, when the price exceeds the payer's cap", () => {
+    // Spec 2026-10-13: the cap check runs before the drained-payer check. iron_plate is
+    // empty and not growing here, which would be a reserve if the level fit.
+    const c = variant({});
+    let w = withLevels(oilWorld(c), { plastic: 9 }, { oil: 3 });
+    w = atCap(w, "plastic");
+    const advice = solve(w, c, NO_FLOOR).bottleneck;
+    expect(advice).toMatchObject({ kind: "storage", itemId: "iron_plate" });
+    expect(advice?.kind).not.toBe("reserve");
+  });
+
   it("counts bound stock the player already holds", () => {
     // Builds spend bound first, and bound is uncapped (dismantle and upgrade refunds),
     // so 1,500 liquid + 1,000 bound covers a level the liquid cap alone could not.
@@ -834,11 +845,23 @@ describe("computeBottleneck — a drained payer gets a reserve", () => {
     expect(advise(start, 0.5)).toMatchObject({ kind: "recipe" });
   });
 
-  it("does not advise a reserve twice for the same payer", () => {
+  it("does not advise a reserve again when the reserve is not helping", () => {
     const reserved: WorldState = {
       ...start,
       reserve: Object.fromEntries(priceItems.map(([itemId]) => [itemId, 0.25])),
     };
     expect(advise(reserved, 0)).toMatchObject({ kind: "recipe" });
+  });
+
+  it("keeps advising the reserve while the payer is still short and growing", () => {
+    const reserved: WorldState = {
+      ...start,
+      reserve: Object.fromEntries(priceItems.map(([itemId]) => [itemId, 0.25])),
+    };
+    expect(advise(reserved, 0.5)).toMatchObject({
+      kind: "reserve",
+      itemId: priceItems[0]![0],
+      percent: RESERVE_ADVICE_PERCENT,
+    });
   });
 });

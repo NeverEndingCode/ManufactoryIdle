@@ -423,19 +423,21 @@ function priceOf(walk: WalkContext, answer: NonNullable<Bottleneck>): Map<ItemId
 
 /**
  * Spec 2026-10-13: an item a purchase is priced in whose stock (plus bound) is short of
- * the price, whose net rate is not positive, and which has no reserve yet. Its consumers
- * take every unit made, so the purchase can never be paid until something banks it. An
- * item already reserved and still not growing is not named again: the reserve is not
- * helping, and naming it again would loop.
+ * the price. Its consumers take every unit made, so the purchase can never be paid until
+ * something banks it. With no reserve yet, it is named when its net rate is not positive.
+ * With a reserve already set, it is named again only while its net rate is positive: the
+ * reserve is working, so it is kept until the price is met. A reserved item still not
+ * growing is skipped -- the reserve is not helping, and naming it again would loop.
+ * An item missing from `itemRates` reads as net 0 (drained); `solve` lists every item.
  */
 function drainedPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemId | null {
   const { state, itemRates } = walk;
   for (const [itemId, amount] of costs) {
     const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
     if (liquid(state, itemId).plus(bound).gte(amount)) continue;
-    if ((Object.hasOwn(state.reserve, itemId) ? state.reserve[itemId]! : 0) > 0) continue;
-    if ((itemRates.get(itemId)?.net ?? 0) > FLOW_TOLERANCE) continue;
-    return itemId;
+    const reserved = (Object.hasOwn(state.reserve, itemId) ? state.reserve[itemId]! : 0) > 0;
+    const growing = (itemRates.get(itemId)?.net ?? 0) > FLOW_TOLERANCE;
+    if (reserved === growing) return itemId;
   }
   return null;
 }

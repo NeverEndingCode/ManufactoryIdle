@@ -250,9 +250,12 @@ payer, `bottleneck` sets it and clears it once the advice moves on, and the stal
 ~3.65 to a last purchase near 5.1 collections (still `reachesTier: 9`; tier 9 now at 2.5329).
 The new stall is the next follow-up: the advice is the 12th assembly rig for
 `make_heavy_modular_frame` (11 owned), priced at 409,600 `smart_plating` + 409,600
-`encased_industrial_beam`. `smart_plating` sits at about 144,115 and held at its cap;
-`encased_industrial_beam` holds about 90,072 and grows at ~2.9/s. The reporter neither
-advises storage for the first nor a reserve for either. Not yet diagnosed.
+`encased_industrial_beam`. Liquid (stored + quantum) figures: `smart_plating` 720,576 (FULL,
+net 0) covers its share; `encased_industrial_beam` 169,905 of a 450,360 liquid cap, growing
+at 2.94/s (production 15.63, consumption 12.69). So the price is payable and no payer is
+drained: the run waits about 22.6 hours for 239,695 more beams, past the gate's 2-collection
+dead-time cut-off. The next question is whether that wait is a pacing finding or wants
+more beam capacity.
 
 History, kept below (the pre-capstone state, no longer current):
 

@@ -77,8 +77,9 @@ A new `Bottleneck` kind:
 It is emitted by `payable`, the final step every answer passes through (§4.5, 2026-10-10),
 when the answer's price includes an item that is **drained**:
 - its liquid stock plus bound stock is below the price;
-- its net rate in the solution is ≤ 0;
-- and it has **no** reserve set (`state.reserve[item]` is 0 or absent).
+- and either it has **no** reserve set (`state.reserve[item]` is 0 or absent) and its net
+  rate in the solution is ≤ 0, or it **has** a reserve and its net rate is > 0 (the
+  reserve is working, so it is kept until the price is met).
 
 In that case the advice becomes `{ kind: "reserve", itemId: <that item>, percent: 0.25,
 limitingTarget: <unchanged> }`.
@@ -88,7 +89,8 @@ limitingTarget: <unchanged> }`.
   first, unchanged. A payer that cannot even hold the price is a storage problem, not a
   reserve one.
 - **An item already reserved and still not growing** means the reserve is not helping.
-  The advice stays as it would be today, which avoids an advice loop.
+  The advice stays as it would be today, which avoids an advice loop. A reserved item
+  that is growing keeps its reserve advice until its stock covers the price.
 
 `priceOf` returns `null` for a reserve answer: setting a reserve costs nothing.
 
@@ -177,8 +179,9 @@ Measured:
 To be added after the 2026-10-10 payable-advice amendment:
 
 > **Amended 2026-10-13: a drained payer gets a reserve.** If a purchase's price includes an
-> item whose stock (plus bound) is below the price, whose net rate is not positive, and
-> which has no reserve, the advice becomes `{ kind: "reserve", itemId, percent: 0.25 }`:
+> item whose stock (plus bound) is below the price and which either has no reserve and a
+> net rate that is not positive, or has a reserve and a positive net rate (the reserve is
+> working, so it is kept until the price is met), the advice becomes `{ kind: "reserve", itemId, percent: 0.25 }`:
 > reserve a share of that item so it can bank. That works because of the 2026-10-13
 > amendment to §C.3: a reserved item is exempt from R32, and while it is set, other entries
 > walk through the reserved item's recipe rather than drawing its stock. Measured cause:

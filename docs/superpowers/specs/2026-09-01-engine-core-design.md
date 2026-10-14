@@ -774,8 +774,9 @@ storage level, 90, made that 4,473 level payable (this is that probe, not a reco
 what the fixed run bought).
 
 **Amended 2026-10-13: a drained payer gets a reserve.** If a purchase's price includes an
-item whose stock (plus bound) is below the price, whose net rate is not positive, and
-which has no reserve, the advice becomes `{ kind: "reserve", itemId, percent: 0.25 }`:
+item whose stock (plus bound) is below the price and which either has no reserve and a
+net rate that is not positive, or has a reserve and a positive net rate (the reserve is
+working, so it is kept until the price is met), the advice becomes `{ kind: "reserve", itemId, percent: 0.25 }`:
 reserve a share of that item so it can bank. That works because of the 2026-10-13
 amendment to §C.3: a reserved item is exempt from R32, and while it is set, other entries
 walk through the reserved item's recipe rather than drawing its stock. Measured cause:

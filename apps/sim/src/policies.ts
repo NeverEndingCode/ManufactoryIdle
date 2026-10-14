@@ -375,7 +375,7 @@ const bottleneck: Policy = {
         clears.push({ type: "SET_RESERVE", itemId, percent: 0 });
       }
     }
-    // Every return below is `moves` first, then the clears.
+    // `moves` already ends with the clears, so every return below carries them.
     const moves: Action[] = [...idleReassignments(ctx), ...clears];
     if (report === null) return moves;
     if (report.kind === "reserve") {

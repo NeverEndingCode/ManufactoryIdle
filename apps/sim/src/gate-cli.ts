@@ -85,9 +85,11 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     // collections (was ~3.65 before the stall began, when it stuck on a constructor for
     // make_steel_pipe priced in a drained steel_pipe -- fixed by the reserve advice). The
     // binding constraint is now make_heavy_modular_frame: the advice is the 12th assembly rig
-    // (owned 11), priced at 409,600 smart_plating + 409,600 encased_industrial_beam, with
-    // smart_plating at 144,115 and held at its cap and encased_industrial_beam at 90,072
-    // growing at ~2.9/s -- the next follow-up.
+    // (owned 11), priced at 409,600 smart_plating + 409,600 encased_industrial_beam. The price is
+    // payable and neither payer is drained: smart_plating holds 720,576 liquid (stored +
+    // quantum; FULL, net 0) and encased_industrial_beam holds 169,905 of a 450,360 liquid cap,
+    // growing at 2.94/s. The run is waiting for the beams: 239,695 more is about 22.6 hours at
+    // that rate, longer than the dead-time cut-off (2 collections, 16 hours).
     reachesTier: 9,
     knownRed: [
       {
@@ -164,7 +166,8 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "heavy_modular_frame, the run then sits bound on make_heavy_modular_frame for over two " +
           "collections of dead time, and the gate stops it (reachesTier 9). " +
           "Its advice there is the 12th assembly rig, priced at 409,600 smart_plating plus 409,600 " +
-          "encased_industrial_beam. " +
+          "encased_industrial_beam; smart_plating holds 720,576 liquid, encased_industrial_beam " +
+          "169,905 (growing 2.94/s), so it is waiting about 22.6 hours for beams, not blocked. " +
           "Re-measured 2026-10-13 after reserves came to protect the stock they bank.",
       },
     ],
