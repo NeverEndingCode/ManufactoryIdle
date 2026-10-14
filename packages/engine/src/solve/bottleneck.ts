@@ -40,7 +40,14 @@ export type Bottleneck =
   // made. `itemId` may be a payer rather than the limiting item: compare it with
   // `limitingTarget`.
   | { kind: "storage"; itemId: ItemId; limitingTarget: string; upgrade: StorageUpgrade | null }
+  // Spec 2026-10-13 (reserves protect stock): a purchase priced in `itemId` fits its cap
+  // but can never be paid while consumers take every unit made. Set aside `percent` of
+  // its production so it can bank. Setting a reserve costs nothing.
+  | { kind: "reserve"; itemId: ItemId; percent: number; limitingTarget: string }
   | null;
+
+/** The share of production a reserve advice sets aside: measured on the slice, under the 50% maximum. */
+export const RESERVE_ADVICE_PERCENT = 0.25;
 
 export type StorageUpgrade = "storage" | "quantum";
 
@@ -409,7 +416,28 @@ function priceOf(walk: WalkContext, answer: NonNullable<Bottleneck>): Map<ItemId
       return machinePrice(content, state, answer.recipeId);
     case "power":
       return answer.generatorRecipeId === null ? null : machinePrice(content, state, answer.generatorRecipeId);
+    case "reserve":
+      return null;
   }
+}
+
+/**
+ * Spec 2026-10-13: an item a purchase is priced in whose stock (plus bound) is short of
+ * the price, whose net rate is not positive, and which has no reserve yet. Its consumers
+ * take every unit made, so the purchase can never be paid until something banks it. An
+ * item already reserved and still not growing is not named again: the reserve is not
+ * helping, and naming it again would loop.
+ */
+function drainedPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemId | null {
+  const { state, itemRates } = walk;
+  for (const [itemId, amount] of costs) {
+    const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
+    if (liquid(state, itemId).plus(bound).gte(amount)) continue;
+    if ((Object.hasOwn(state.reserve, itemId) ? state.reserve[itemId]! : 0) > 0) continue;
+    if ((itemRates.get(itemId)?.net ?? 0) > FLOW_TOLERANCE) continue;
+    return itemId;
+  }
+  return null;
 }
 
 /**
@@ -432,7 +460,14 @@ function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
     const costs = priceOf(walk, current);
     if (costs === null) return current;
     const payer = overflowingPayer(content, state, costs);
-    if (payer === null) return current;
+    if (payer === null) {
+      // The price fits the cap. Spec 2026-10-13: it may still never be payable, if a
+      // consumer drains the item it is priced in.
+      const drained = drainedPayer(walk, costs);
+      return drained === null
+        ? current
+        : { kind: "reserve", itemId: drained, percent: RESERVE_ADVICE_PERCENT, limitingTarget: answer.limitingTarget };
+    }
     if (visited.has(payer)) {
       return { kind: "storage", itemId: payer, limitingTarget: answer.limitingTarget, upgrade: null };
     }

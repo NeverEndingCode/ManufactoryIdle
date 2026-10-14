@@ -366,9 +366,22 @@ const bottleneck: Policy = {
   name: "bottleneck",
   intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
-    const moves = idleReassignments(ctx);
     const report = ctx.solution.bottleneck;
+    // Spec 2026-10-13: a reserve lasts only while the reporter asks for it. Clear every
+    // other reserve, including one a human set by hand if this policy is driving.
+    const clears: Action[] = [];
+    for (const [itemId, percent] of Object.entries(ctx.state.reserve)) {
+      if (percent > 0 && !(report?.kind === "reserve" && report.itemId === itemId)) {
+        clears.push({ type: "SET_RESERVE", itemId, percent: 0 });
+      }
+    }
+    // Every return below is `moves` first, then the clears.
+    const moves: Action[] = [...idleReassignments(ctx), ...clears];
     if (report === null) return moves;
+    if (report.kind === "reserve") {
+      const already = (Object.hasOwn(ctx.state.reserve, report.itemId) ? ctx.state.reserve[report.itemId]! : 0) === report.percent;
+      return already ? moves : [...moves, { type: "SET_RESERVE", itemId: report.itemId, percent: report.percent }];
+    }
 
     // A cap binds where no machine helps. Before the reporter could say so, this
     // policy bought constructors into a full warehouse and never reached tier 2.

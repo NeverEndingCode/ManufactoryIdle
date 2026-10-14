@@ -7,7 +7,7 @@
   advice kind;
 - spec E.2 (`bottleneck` follows it).
 
-**Status:** designed 2026-10-13; not implemented.
+**Status:** implemented 2026-10-13.
 **Depends on:** `2026-10-13-tier10-capstone-design.md` (PR #8), whose stall this addresses.
 
 ---
@@ -180,7 +180,7 @@ To be added after the 2026-10-10 payable-advice amendment:
 > item whose stock (plus bound) is below the price, whose net rate is not positive, and
 > which has no reserve, the advice becomes `{ kind: "reserve", itemId, percent: 0.25 }`:
 > reserve a share of that item so it can bank. That works because of the 2026-10-13
-> amendment to §C.3: a reserve is exempt from R32, and while it is set, other entries
+> amendment to §C.3: a reserved item is exempt from R32, and while it is set, other entries
 > walk through the reserved item's recipe rather than drawing its stock. Measured cause:
 > `bottleneck` stalled at tier 9 of the vertical slice told to buy a constructor priced
 > in `steel_pipe`, which the assembly rigs drain to zero.

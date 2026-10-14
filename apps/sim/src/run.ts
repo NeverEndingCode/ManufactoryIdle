@@ -155,7 +155,9 @@ export function runSimulation(options: RunOptions): RunReport {
           ? bottleneck.recipeId
           : bottleneck.kind === "storage"
             ? `storage:${bottleneck.itemId}`
-            : `power:${bottleneck.generatorRecipeId ?? "none"}`;
+            : bottleneck.kind === "reserve"
+              ? `reserve:${bottleneck.itemId}`
+              : `power:${bottleneck.generatorRecipeId ?? "none"}`;
       boundMsByRecipe.set(bound, (boundMsByRecipe.get(bound) ?? 0) + stepMs);
     }
 

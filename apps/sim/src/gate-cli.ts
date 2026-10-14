@@ -78,57 +78,59 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
   {
     policy: "bottleneck",
     untilTier: 10,
-    // Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone. `bottleneck`
-    // now STALLS at tier 9: the gate stops it once it has gone over the dead-time
-    // threshold (2.0037 collections) with nothing bought. The binding constraint there is
-    // make_steel_pipe: from ~3.65 collections its advice sticks on one constructor Mk.3 for
-    // make_steel_pipe (limiting target heavy_modular_frame), priced in steel_pipe, which the
-    // assembly rigs drain to 0 -- payable on paper, never in practice (a reporter/policy
-    // follow-up). Run alone with a long budget it does eventually reach tier 10, at
-    // 26.75 collections (8d 22h), after a 7d 18h dead stretch bound on make_steel_pipe.
+    // Re-measured 2026-10-13 after reserves came to protect the stock they bank (spec
+    // 2026-10-13-reserves-protect-stock): `bottleneck` follows reserve advice. It still
+    // STALLS at tier 9, now later: the gate stops it once it has gone over the dead-time
+    // threshold (2.0006 collections) with nothing bought. The last purchase is at ~5.1
+    // collections (was ~3.65 before the stall began, when it stuck on a constructor for
+    // make_steel_pipe priced in a drained steel_pipe -- fixed by the reserve advice). The
+    // binding constraint is now make_heavy_modular_frame: the advice is the 12th assembly rig
+    // (owned 11), priced at 409,600 smart_plating + 409,600 encased_industrial_beam, with
+    // smart_plating at 144,115 and held at its cap and encased_industrial_beam at 90,072
+    // growing at ~2.9/s -- the next follow-up.
     reachesTier: 9,
     knownRed: [
       {
         tier: 1,
-        observed: 0.0748,
+        observed: 0.0664,
         why:
-          "target 0.42, measured 0.075 (-82%): bottleneck clears the early tiers far " +
+          "target 0.42, measured 0.066 (-84%): bottleneck clears the early tiers far " +
           "faster than target because it buys almost nothing beyond what the reporter " +
           "names. Fast is not on-target -- both directions count as red.",
       },
       {
         tier: 2,
-        observed: 0.1404,
+        observed: 0.1321,
         why:
-          "target 0.8, measured 0.140 (-82%): the same minimal-buying overshoot as tier 1. " +
+          "target 0.8, measured 0.132 (-84%): the same minimal-buying overshoot as tier 1. " +
           "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 3,
-        observed: 0.3605,
+        observed: 0.3055,
         why:
-          "target 1.2, measured 0.361 (-70%): the same overshoot, narrowing tier over tier. " +
+          "target 1.2, measured 0.306 (-75%): the same overshoot, narrowing tier over tier. " +
           "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 4,
-        observed: 0.5555,
+        observed: 0.4986,
         why:
-          "target 1.9, measured 0.556 (-71%): the same overshoot. " +
+          "target 1.9, measured 0.499 (-74%): the same overshoot. " +
           "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 5,
-        observed: 0.6851,
+        observed: 0.6190,
         why:
-          "target 2.9, measured 0.685 (-76%): the same overshoot. " +
+          "target 2.9, measured 0.619 (-79%): the same overshoot. " +
           "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 6,
-        observed: 0.9437,
+        observed: 0.8877,
         why:
-          "target 4.4, measured 0.944 (-79%). Earlier than the 1.170 it was pinned at " +
+          "target 4.4, measured 0.888 (-80%). Earlier than the 1.170 it was pinned at " +
           "before 2026-10-09, because a starved generator now names its fuel supplier " +
           "instead of another generator -- the policy no longer sinks purchases into " +
           "biomass burners it cannot fuel. " +
@@ -136,9 +138,9 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 7,
-        observed: 1.3115,
+        observed: 1.3077,
         why:
-          "target 6.8, measured 1.312 (-81%). Unchanged by payable advice. This was " +
+          "target 6.8, measured 1.308 (-81%). Unchanged by payable advice. This was " +
           "where bottleneck used to stop: the reporter advised a 4,473 iron_plate " +
           "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
           "bought nothing. After payable advice the run passes tier 7; the advice it took there " +
@@ -147,22 +149,23 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 8,
-        observed: 1.6452,
+        observed: 1.6469,
         why:
-          "target 11, measured 1.645 (-85%): the same minimal-buying overshoot, now reached " +
+          "target 11, measured 1.647 (-85%): the same minimal-buying overshoot, now reached " +
           "because the run no longer stalls at tier 7. " +
           "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 9,
-        observed: 2.9873,
+        observed: 2.5329,
         why:
-          "target 16, measured 2.987 (-81%): the same overshoot, with the gap narrowing. " +
+          "target 16, measured 2.533 (-84%): the same overshoot, with the gap narrowing. " +
           "This is the last tier bottleneck reaches under the gate: tier 10 needs " +
-          "heavy_modular_frame, the run then sits bound on make_steel_pipe for over two " +
+          "heavy_modular_frame, the run then sits bound on make_heavy_modular_frame for over two " +
           "collections of dead time, and the gate stops it (reachesTier 9). " +
-          "Its advice there is one constructor for make_steel_pipe, priced in steel_pipe that the rigs drain to 0. " +
-          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
+          "Its advice there is the 12th assembly rig, priced at 409,600 smart_plating plus 409,600 " +
+          "encased_industrial_beam. " +
+          "Re-measured 2026-10-13 after reserves came to protect the stock they bank.",
       },
     ],
   },

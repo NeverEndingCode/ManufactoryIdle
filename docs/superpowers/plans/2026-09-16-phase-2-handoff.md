@@ -244,6 +244,16 @@ alone, the policy reaches tier 10 at 26.75 collections after a 7d18h dead stretc
 a payable-advice gap: the payability check ignores the net drain of the cost item by its
 consumers. It is the open follow-up.
 
+**Updated 2026-10-13 (reserves protect stock, `specs/2026-10-13-reserves-protect-stock-design.md`):**
+the drained-payer stall is fixed by reserve advice: the reporter names a reserve on a drained
+payer, `bottleneck` sets it and clears it once the advice moves on, and the stall moved from
+~3.65 to a last purchase near 5.1 collections (still `reachesTier: 9`; tier 9 now at 2.5329).
+The new stall is the next follow-up: the advice is the 12th assembly rig for
+`make_heavy_modular_frame` (11 owned), priced at 409,600 `smart_plating` + 409,600
+`encased_industrial_beam`. `smart_plating` sits at about 144,115 and held at its cap;
+`encased_industrial_beam` holds about 90,072 and grows at ~2.9/s. The reporter neither
+advises storage for the first nor a reserve for either. Not yet diagnosed.
+
 History, kept below (the pre-capstone state, no longer current):
 
 **`bottleneck` finished all 10 tiers, at 5.58 collections against a target of 25 (was: the tier-7 stall).**
