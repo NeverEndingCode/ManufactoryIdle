@@ -80,7 +80,10 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     // Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone. `bottleneck`
     // now STALLS at tier 9: the gate stops it once it has gone over the dead-time
     // threshold (2.0037 collections) with nothing bought. The binding constraint there is
-    // make_steel_pipe. Run alone with a long budget it does eventually reach tier 10, at
+    // make_steel_pipe: from ~3.65 collections its advice sticks on one constructor Mk.3 for
+    // make_steel_pipe (limiting target heavy_modular_frame), priced in steel_pipe, which the
+    // assembly rigs drain to 0 -- payable on paper, never in practice (a reporter/policy
+    // follow-up). Run alone with a long budget it does eventually reach tier 10, at
     // 26.75 collections (8d 22h), after a 7d 18h dead stretch bound on make_steel_pipe.
     reachesTier: 9,
     knownRed: [
@@ -157,6 +160,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "This is the last tier bottleneck reaches under the gate: tier 10 needs " +
           "heavy_modular_frame, the run then sits bound on make_steel_pipe for over two " +
           "collections of dead time, and the gate stops it (reachesTier 9). " +
+          "Its advice there is one constructor for make_steel_pipe, priced in steel_pipe that the rigs drain to 0. " +
           "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
     ],
