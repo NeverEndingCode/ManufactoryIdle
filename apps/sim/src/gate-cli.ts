@@ -35,12 +35,13 @@ import type { RunReport } from "./report.js";
  * to its measured value with a reason, so the gate still fails on drift and every pin
  * names the thing that has to change for it to go away.
  *
- * Measured 2026-09-16, seed 42, `slice.v1`; `bottleneck` re-measured 2026-10-10.
+ * Measured 2026-09-16, seed 42, `slice.v1`; `bottleneck` re-measured 2026-10-10;
+ * all three policies re-measured 2026-10-13 (tier 10 capstone).
  */
 const CASUAL =
   "spec E.5 asks every policy to hit the same targets; calibration fits one set of " +
-  "amounts against `greedy`. `casual` checks in once per offline window and lands 4x " +
-  "to 8x slower at every tier. Pinned rather than chased: the two cannot both be on " +
+  "amounts against `greedy`. `casual` checks in once per offline window and lands " +
+  "roughly 4x to 8x slower at every tier. Pinned rather than chased: the two cannot both be on " +
   "target unless the game is entirely idle-bound.";
 
 export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
@@ -55,7 +56,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     policy: "casual",
     untilTier: 10,
     knownRed: [
-      { tier: 1, observed: 3.0035, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
+      { tier: 1, observed: 3.0035, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone: one more stock item adds one 2-minute storage purchase to greedy-style tier-0 sweeps, crossing an offline-window boundary." },
       { tier: 2, observed: 4.0139, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
       { tier: 3, observed: 6.1115, why: CASUAL },
       { tier: 4, observed: 9.0434, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },

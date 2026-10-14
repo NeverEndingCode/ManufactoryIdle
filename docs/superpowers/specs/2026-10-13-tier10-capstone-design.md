@@ -98,6 +98,9 @@ Check 8 is only a floor (r_eff > 1 + ε). The rig's r_eff, 2.0 / 1.5^(1/10) ≈ 
 
 - **`derived.yaml`** is regenerated. Tiers 1–9 should reproduce within their bands, since
   nothing below tier 10 changed. Any tier that leaves its band is reported, not hidden.
+  Measured exception: tier 1 shifted (greedy 0.4178 to 0.4220), because the policy offers storage
+  for every stock item, so the new item adds one 2-minute storage purchase to the tier-0 sweep.
+  Tiers 1–9 were re-solved from seeds and all stay in band (tier 2 at −4.9%).
 - **Tier 10 for `greedy`** should land within ±5% of 25. Its known-red pin goes away,
   because the gate holds it to its target.
 - **`casual` and `bottleneck`** are re-pinned at whatever they now do at tier 10.
