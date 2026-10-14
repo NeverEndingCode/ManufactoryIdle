@@ -699,7 +699,7 @@ cycles (~5,000 events per 120 s resolve); see the Phase 2 handoff. That cycle is
 rather than gone (§C.7's 2026-10-12 amendment); removing it needs a stock-model change.
 
 **Amended 2026-10-13: a reserve protects the stock it banks.** While an item has an
-active reserve entry, that entry is never an R32 candidate. Every other entry's
+active reserve, none of its entries is an R32 candidate. Every other entry's
 requirement walk treats the item as pinned EMPTY, drawing through its recipe rather
 than from its stock. A reserve on a FULL item is not injected. Without the first rule,
 R32 gave a reserve on a drained item zero, which broke §4.1's promise that a reserve

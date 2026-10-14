@@ -605,8 +605,11 @@ export function runWaterfall(args: WaterfallArgs): WaterfallResult {
     const candidates: { id: string; itemId: ItemId }[] = [];
     for (const entry of live) {
       if (entry.mode !== "guaranteed" || entry.itemId === null) continue;
-      // Spec 2026-10-13: a reserve's whole job is to bank; R32 must never stop it.
-      if (entry.id.startsWith("reserve:")) continue;
+      // Spec 2026-10-13: while an item has an active reserve it is never an R32 candidate.
+      // Rule 2 already implies this, because R32's alternate re-run re-pins a reserved item
+      // so its net cannot go negative; the skip states it explicitly, keeps the item's
+      // entries on one verdict, and saves the re-run.
+      if (reservedItems.has(entry.itemId)) continue;
       if (!pinnedEmpty.has(entry.itemId)) continue;
       if ((content.consumersOf.get(entry.itemId) ?? []).length === 0) continue;
       const ownRecipe = activeRecipeOf(activeRecipe, entry.itemId);

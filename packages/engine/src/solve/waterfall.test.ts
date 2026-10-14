@@ -561,7 +561,9 @@ describe("runWaterfall — a reserve protects the stock it banks", () => {
   it("banks its share even when the item's consumers would drain it", () => {
     // iron_ingot pinned EMPTY; plate's walk would drain any ingot stock (0.5/s at one
     // constructor unit) faster than the reserve's 0.2/s refills it, so R32 used to
-    // disqualify the reserve.
+    // disqualify the reserve. This guards the reserve's allocation against R32 through
+    // rules 1 and 2 together: rule 2's re-pinning is what makes it pass; rule 1 states
+    // it explicitly.
     const state = base();
     const capacity = computeCapacity(content, state);
     const result = runWaterfall({

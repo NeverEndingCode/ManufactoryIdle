@@ -46,8 +46,9 @@ This spec fixes it narrowly, for reserves only.
 In `runWaterfall` (`packages/engine/src/solve/waterfall.ts`), while item X has an active
 reserve entry (`reserve:X` with `targetRate > 0`):
 
-1. **The reserve is exempt from R32.** `reserve:` entries are never R32 candidates, so a
-   reserve always banks its share.
+1. **The reserved item is exempt from R32:** while it has an active reserve, none of its
+   entries is an R32 candidate (rule 2 already implies this; see below), so a reserve
+   always banks its share.
 2. **Every other entry walks through X's recipe instead of drawing X's stock**, exactly
    as if X were pinned EMPTY. Let *reserved* be the set of items with an active reserve.
    Every requirement walk uses `pinnedEmpty ∪ reserved` (and `pinnedEmptyForPass ∪
@@ -190,7 +191,7 @@ To be added to `2026-09-01-engine-core-design.md` §C.3, after the 2026-10-12 §
 note's neighbours (with the other §C.3 amendments):
 
 > **Amended 2026-10-13: a reserve protects the stock it banks.** While an item has an
-> active reserve entry, that entry is never an R32 candidate. Every other entry's
+> active reserve, none of its entries is an R32 candidate. Every other entry's
 > requirement walk treats the item as pinned EMPTY, drawing through its recipe rather
 > than from its stock. A reserve on a FULL item is not injected. Without the first rule,
 > R32 gave a reserve on a drained item zero, which broke §4.1's promise that a reserve
