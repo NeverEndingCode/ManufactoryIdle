@@ -6,6 +6,7 @@ import { computeExpansion } from "../graph/expand.js";
 import { computeFlows } from "./fixpoint.js";
 import { indexContent } from "../graph/index-content.js";
 import { computeCapacity } from "../economy/capacity.js";
+import { liquidCap } from "../economy/storage.js";
 import { initialWorld, withInstalled, type PriorityEntry, type WorldState } from "../state/world.js";
 import {
   RESERVE_FLOOR,
@@ -539,5 +540,74 @@ describe("runWaterfall — R32 for coupled EMPTY items", () => {
     expect([...result.disqualified]).toEqual(["item:screw"]);
     expect(net("iron_plate")).toBeGreaterThan(1);
     expect(net("screw")).toBeCloseTo(0, 9);
+  });
+});
+
+// Spec 2026-10-13 (reserves protect stock). A reserve is "divert a share of this
+// target's output to storage rather than to consumers" (original 4.1). R32 used to give
+// a reserve on an item its consumers would drain 0, and consumers drew whatever it
+// banked straight back out of stock.
+describe("runWaterfall — a reserve protects the stock it banks", () => {
+  const reserve = (itemId: string, targetRate: number): PriorityEntry => ({
+    id: `reserve:${itemId}`,
+    kind: "item",
+    itemId,
+    mode: "guaranteed",
+    share: 1,
+    targetRate,
+    paused: false,
+  });
+
+  it("banks its share even when the item's consumers would drain it", () => {
+    // iron_ingot pinned EMPTY; plate's walk would drain any ingot stock (0.5/s at one
+    // constructor unit) faster than the reserve's 0.2/s refills it, so R32 used to
+    // disqualify the reserve.
+    const state = base();
+    const capacity = computeCapacity(content, state);
+    const result = runWaterfall({
+      content,
+      vectors: vectorsFor(state),
+      activeRecipe: state.activeRecipe,
+      capacityUnits: capacity.unitsByRecipe,
+      entries: [reserve("iron_ingot", 0.2), entry("iron_plate")],
+      pinnedEmpty: ALL_EMPTY,
+      reserveFloor: 0,
+    });
+    expect(result.entries.find((e) => e.entryId === "reserve:iron_ingot")!.allocated).toBeCloseTo(0.2, 9);
+  });
+
+  it("makes other entries walk through a reserved item's recipe, not its stock", () => {
+    // iron_ingot has stock, so it is NOT pinned EMPTY: without a reserve, plate's walk
+    // draws ingot from stock and never touches smelt_iron.
+    const state = base();
+    const capacity = computeCapacity(content, state);
+    const run = (entries: PriorityEntry[]) =>
+      runWaterfall({
+        content,
+        vectors: vectorsFor(state),
+        activeRecipe: state.activeRecipe,
+        capacityUnits: capacity.unitsByRecipe,
+        entries,
+        pinnedEmpty: new Set(["iron_ore"]),
+        reserveFloor: 0,
+      });
+    // Precondition: without a reserve, plate does not use the smelters.
+    expect(run([entry("iron_plate")]).allocations.get("smelt_iron")?.get("item:iron_plate") ?? 0).toBe(0);
+    // With a reserve on iron_ingot, plate must make its ingot through smelt_iron.
+    const reserved = run([reserve("iron_ingot", 0.2), entry("iron_plate")]);
+    expect(reserved.allocations.get("smelt_iron")?.get("item:iron_plate") ?? 0).toBeGreaterThan(0);
+  });
+
+  it("injects no reserve for an item that is FULL", () => {
+    const start = base();
+    const capacity = computeCapacity(content, start);
+    const withReserve: WorldState = { ...start, reserve: { ...start.reserve, iron_ingot: 0.25 } };
+    // Precondition: not FULL, the reserve is injected.
+    expect(effectivePriority(content, withReserve, capacity, 0).some((e) => e.id === "reserve:iron_ingot")).toBe(true);
+    const full: WorldState = {
+      ...withReserve,
+      quantum: { ...withReserve.quantum, iron_ingot: liquidCap(content, withReserve, "iron_ingot") },
+    };
+    expect(effectivePriority(content, full, capacity, 0).some((e) => e.id === "reserve:iron_ingot")).toBe(false);
   });
 });

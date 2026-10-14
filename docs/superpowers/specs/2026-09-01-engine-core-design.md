@@ -698,6 +698,16 @@ takes 85). Not yet covered: once `reinforced_iron_plate` is FULL, `screw` alone 
 cycles (~5,000 events per 120 s resolve); see the Phase 2 handoff. That cycle is now cheap
 rather than gone (§C.7's 2026-10-12 amendment); removing it needs a stock-model change.
 
+**Amended 2026-10-13: a reserve protects the stock it banks.** While an item has an
+active reserve entry, that entry is never an R32 candidate. Every other entry's
+requirement walk treats the item as pinned EMPTY, drawing through its recipe rather
+than from its stock. A reserve on a FULL item is not injected. Without the first rule,
+R32 gave a reserve on a drained item zero, which broke §4.1's promise that a reserve
+diverts output to storage. Without the second, consumers drew the banked stock straight
+back out. Without the third, a reserve claiming a FULL item's recipe deadlocked its
+consumers. None of this applies when no reserve is set: the pacing gate's pins are
+unchanged.
+
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
 grid is binding.
