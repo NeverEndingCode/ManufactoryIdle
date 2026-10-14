@@ -310,7 +310,8 @@ The gate pins greedy's tier 10 at 20.8722, which is now both what `derived.yaml`
 what the game does. Before the short-circuit fix those were different numbers and the
 column was the wrong one to assert against.
 
-**3. Tier 10 — the only off-target tier, and now honestly measured.**
+**DONE 2026-10-13** — **3. Tier 10 — the only off-target tier, and now honestly measured.**
+Tier 10 is now a capstone (`heavy_modular_frame`, made on the steeply priced `assembly_rig`, authored `costRatio` 2.0): greedy observes 24.06 against a target of 25 (-3.8%), with a solved amount of 30,000.
 Tiers 1 and 5 are DONE (2026-09-16); the calibrator short-circuit is FIXED (2026-09-17).
 What is left is the content-design decision, and it now rests on a search that works:
 

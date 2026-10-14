@@ -2,7 +2,7 @@
 
 **Amends:** the vertical slice's content (items, recipes, machines, milestones); spec B.7
 (calibration inputs: a class authored outside the `r_eff` scale).
-**Status:** designed 2026-10-13; not implemented.
+**Status:** implemented 2026-10-13.
 **Depends on:** `2026-10-12-milestone-first-policies-design.md` (PR #7). Tier 10 is
 calibrated against the milestone-first `greedy`.
 

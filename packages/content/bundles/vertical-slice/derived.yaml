@@ -12,7 +12,7 @@
 # observed column has drifted from its target column is visibly stale.
 derived:
   run:
-    calibratedAt: 2026-09-17T22:09:13.043Z
+    calibratedAt: 2026-10-13T23:49:40.805Z
     policy: greedy
     seed: 42
     targetCollectionsToTier:
@@ -27,16 +27,16 @@ derived:
       - 16
       - 25
     observedCollectionsToTier:
-      - 0.41782407407407407
-      - 0.7980235042735043
-      - 1.192738146388852
-      - 1.8366377322251524
-      - 2.964915181423969
-      - 4.4227138656561955
-      - 6.847262087487087
-      - 10.75656894406987
-      - 15.49043979743122
-      - 20.872241060868333
+      - 0.4219907407407408
+      - 0.7605235042735043
+      - 1.155238146388853
+      - 1.8713568046215816
+      - 3.035014803641235
+      - 4.500943277746206
+      - 6.934113454177561
+      - 10.855791098016185
+      - 15.609887246551741
+      - 24.058280758524404
   machineClasses:
     - id: assembler
       costRatio: 1.070689897576949
@@ -88,9 +88,9 @@ derived:
     - tier: 2
       requires:
         - item: reinforced_iron_plate
-          amount: 200
+          amount: 50
         - item: iron_rod
-          amount: 1200
+          amount: 300
     - tier: 3
       requires:
         - item: cable
@@ -100,9 +100,9 @@ derived:
     - tier: 4
       requires:
         - item: concrete
-          amount: 1600
+          amount: 2800
         - item: rotor
-          amount: 400
+          amount: 700
     - tier: 5
       requires:
         - item: steel_ingot
@@ -133,6 +133,10 @@ derived:
           amount: 512000
         - item: polymer_resin
           amount: 2048000
+    - tier: 10
+      requires:
+        - item: heavy_modular_frame
+          amount: 30000
   storage:
     capPerTier: 1
   quantumStorage:

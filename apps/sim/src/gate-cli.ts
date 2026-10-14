@@ -47,47 +47,42 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
   {
     policy: "greedy",
     untilTier: 10,
-    knownRed: [
-      {
-        tier: 10,
-        observed: 20.868,
-        why:
-          "target 25, measured 20.87 (-16.5%), and this is now a MEASURED ceiling " +
-          "rather than a fitting failure. The requirement cannot exceed what a player " +
-          "can ever hold -- maxAttainableCap(smart_plating, tier 9) is 7,665,440 -- and " +
-          "the solved 7,663,000 is 99.97% of it. Even at the ceiling the tier lands at " +
-          "20.87, so no amount reaches 25. The item RATIO is ruled out too (measured): " +
-          "both requirements share a ceiling, the beam binding lands further out at " +
-          "20.656, and both together measure the same as smart_plating alone. Needs " +
-          "something structural -- recipe depth, or a power or throughput wall. " +
-          "Re-measured 2026-10-12 after greedy played milestone-first.",
-      },
-    ],
+    // Tier 10 is the assembly-rig capstone (2026-10-13) and lands at 24.06 against a
+    // target of 25 (-3.8%), inside tolerance, so the gate holds it to target.
+    knownRed: [],
   },
   {
     policy: "casual",
     untilTier: 10,
     knownRed: [
-      { tier: 1, observed: 2.0065, why: CASUAL },
-      { tier: 2, observed: 4.0556, why: CASUAL },
+      { tier: 1, observed: 3.0035, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
+      { tier: 2, observed: 4.0139, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
       { tier: 3, observed: 6.1115, why: CASUAL },
-      { tier: 4, observed: 9.0331, why: CASUAL },
+      { tier: 4, observed: 9.0434, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
       { tier: 5, observed: 18.0034, why: CASUAL },
       { tier: 6, observed: 28.0021, why: CASUAL },
       { tier: 7, observed: 42.0167, why: CASUAL },
       { tier: 8, observed: 62.0021, why: CASUAL },
-      { tier: 9, observed: 89.0014, why: CASUAL },
-      { tier: 10, observed: 205.0120, why: CASUAL + " Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items)." },
+      { tier: 9, observed: 90.0014, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
+      {
+        tier: 10,
+        observed: 98.0222,
+        why:
+          CASUAL +
+          " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone " +
+          "(was 205.0120 on the old smart_plating requirement).",
+      },
     ],
   },
   {
     policy: "bottleneck",
     untilTier: 10,
-    // Measured 2026-10-10 after payable advice: the reporter now prices its advice, so
-    // the tier-7 stall (a 4,473 iron_plate storage level against a 4,000 cap) no longer
-    // happens and the run goes on. `bottleneck` now FINISHES all 10
-    // tiers (dead time 0.225 collections), so there is no `reachesTier`; every tier
-    // still lands far earlier than target.
+    // Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone. `bottleneck`
+    // now STALLS at tier 9: the gate stops it once it has gone over the dead-time
+    // threshold (2.0037 collections) with nothing bought. The binding constraint there is
+    // make_steel_pipe. Run alone with a long budget it does eventually reach tier 10, at
+    // 26.75 collections (8d 22h), after a 7d 18h dead stretch bound on make_steel_pipe.
+    reachesTier: 9,
     knownRed: [
       {
         tier: 1,
@@ -99,65 +94,70 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 2,
-        observed: 0.1706,
-        why: "target 0.8, measured 0.171 (-79%): the same minimal-buying overshoot as tier 1.",
+        observed: 0.1404,
+        why:
+          "target 0.8, measured 0.140 (-82%): the same minimal-buying overshoot as tier 1. " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 3,
-        observed: 0.4133,
-        why: "target 1.2, measured 0.413 (-66%): the same overshoot, narrowing tier over tier.",
+        observed: 0.3605,
+        why:
+          "target 1.2, measured 0.361 (-70%): the same overshoot, narrowing tier over tier. " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 4,
-        observed: 0.5953,
-        why: "target 1.9, measured 0.595 (-69%): the same overshoot.",
+        observed: 0.5555,
+        why:
+          "target 1.9, measured 0.556 (-71%): the same overshoot. " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 5,
-        observed: 0.6995,
-        why: "target 2.9, measured 0.700 (-76%): the same overshoot.",
+        observed: 0.6851,
+        why:
+          "target 2.9, measured 0.685 (-76%): the same overshoot. " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 6,
-        observed: 0.9337,
+        observed: 0.9437,
         why:
-          "target 4.4, measured 0.934 (-79%). Earlier than the 1.170 it was pinned at " +
+          "target 4.4, measured 0.944 (-79%). Earlier than the 1.170 it was pinned at " +
           "before 2026-10-09, because a starved generator now names its fuel supplier " +
           "instead of another generator -- the policy no longer sinks purchases into " +
-          "biomass burners it cannot fuel.",
+          "biomass burners it cannot fuel. " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 7,
-        observed: 1.2871,
+        observed: 1.3115,
         why:
-          "target 6.8, measured 1.287 (-81%). Unchanged by payable advice. This was " +
+          "target 6.8, measured 1.312 (-81%). Unchanged by payable advice. This was " +
           "where bottleneck used to stop: the reporter advised a 4,473 iron_plate " +
           "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
           "bought nothing. After payable advice the run passes tier 7; the advice it took there " +
-          "was not captured (the probe started from a pre-payable checkpoint).",
+          "was not captured (the probe started from a pre-payable checkpoint). " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 8,
-        observed: 1.6678,
+        observed: 1.6452,
         why:
-          "target 11, measured 1.668 (-85%): the same minimal-buying overshoot, now reached " +
-          "because the run no longer stalls at tier 7. Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items).",
+          "target 11, measured 1.645 (-85%): the same minimal-buying overshoot, now reached " +
+          "because the run no longer stalls at tier 7. " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
       {
         tier: 9,
-        observed: 3.0791,
+        observed: 2.9873,
         why:
-          "target 16, measured 3.079 (-81%): the same overshoot, with the gap narrowing. " +
-          "Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items).",
-      },
-      {
-        tier: 10,
-        observed: 5.5792,
-        why:
-          "target 25, measured 5.579 (-78%): bottleneck now finishes all 10 tiers, but " +
-          "at under a quarter of the target time (500 purchases, dead time 0.225 " +
-          "collections). `greedy` reaches tier 10 at 20.87 and `casual` at 205.01. " +
-          "Re-measured 2026-10-10 after R32 was asked jointly (coupled EMPTY items).",
+          "target 16, measured 2.987 (-81%): the same overshoot, with the gap narrowing. " +
+          "This is the last tier bottleneck reaches under the gate: tier 10 needs " +
+          "heavy_modular_frame, the run then sits bound on make_steel_pipe for over two " +
+          "collections of dead time, and the gate stops it (reachesTier 9). " +
+          "Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone.",
       },
     ],
   },
