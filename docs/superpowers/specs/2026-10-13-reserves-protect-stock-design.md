@@ -8,6 +8,8 @@
 - spec E.2 (`bottleneck` follows it).
 
 **Status:** implemented 2026-10-13.
+
+**Superseded in part 2026-10-14:** `bottleneck`'s remaining tier-9 stall is fixed by `2026-10-14-slow-payer-advice-design.md`; it now finishes tier 10 at 12.43 collections.
 **Depends on:** `2026-10-13-tier10-capstone-design.md` (PR #8), whose stall this addresses.
 
 ---

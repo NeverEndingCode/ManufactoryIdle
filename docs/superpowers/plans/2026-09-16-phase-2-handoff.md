@@ -234,7 +234,7 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. `bottleneck` regressed 2026-10-13: it stalls at tier 9.**
+**1. `bottleneck`'s tier-9 stall — FIXED 2026-10-14 (slow-payer advice); history below.**
 
 Under the gate's dead-time cut-off it now reports `reachesTier: 9`. From about 3.65
 collections its advice sticks on one constructor Mk.3 for `make_steel_pipe` (limiting
@@ -247,7 +247,7 @@ consumers. It is the open follow-up.
 **Updated 2026-10-13 (reserves protect stock, `specs/2026-10-13-reserves-protect-stock-design.md`):**
 the drained-payer stall is fixed by reserve advice: the reporter names a reserve on a drained
 payer, `bottleneck` sets it and clears it once the advice moves on, and the stall moved from
-~3.65 to a last purchase near 5.1 collections (still `reachesTier: 9`; tier 9 now at 2.5329).
+~3.65 to a last purchase near 5.1 collections (at the time: still `reachesTier: 9`; tier 9 now at 2.5329).
 The new stall is the next follow-up: the advice is the 12th assembly rig for
 `make_heavy_modular_frame` (11 owned), priced at 409,600 `smart_plating` + 409,600
 `encased_industrial_beam`. Liquid (stored + quantum) figures: `smart_plating` 720,576 (FULL,
