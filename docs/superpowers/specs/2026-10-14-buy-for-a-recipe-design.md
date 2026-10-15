@@ -1,7 +1,7 @@
 # A purchase that names its recipe
 
-**Amends:** engine spec §D.1 (the action set). It also touches the R5 auto-assignment rule
-in `actions/machines.ts`.
+**Amends:** engine spec §D.1 (the action set) and §4.5 (the bottleneck reporter's final
+`payable` step). It also touches the R5 auto-assignment rule in `actions/machines.ts`.
 **Status:** approved design, 2026-10-14.
 **Follows:** `2026-10-14-slow-payer-advice-design.md` (PR #10), whose final review found
 this.
@@ -76,6 +76,89 @@ compatible: every existing log replays unchanged.
 - The reporter. The 16 purchases advised to a recipe already below nameplate are a
   reporter question. They are recorded as a follow-up, not fixed here.
 
+## Part 2: a payer blocked by its own output (added 2026-10-15)
+
+### The problem, measured
+
+With Part 1 in place, `bottleneck` stalled at tier 7: dead 2.0035 collections, 148
+purchases. Tiers 3–7 were all faster than `main`. The state at the stall:
+
+- **The advice:** one packager for `package_fuel`, priced at 20 `steel_beam` (2,000
+  held) + 20 `rubber` (15.46 held). The policy could never afford it.
+- **Why rubber never grew:** the oil chain had jammed. `fuel` was FULL, and nothing
+  consumed it, because its consumer is the packager being advised. So
+  `refine_residual_fuel` stopped, `heavy_oil_residue` backed up to FULL, and both
+  refineries (`refine_rubber`, `refine_plastic`) stopped too, because their residue
+  byproduct had nowhere to go. Every oil recipe was at clock 0, and rubber's production
+  was exactly 0.
+- **Why `payable` said nothing:**
+  - the drained-payer check names only an item that is made ("a reserve cannot bank
+    what no machine makes");
+  - the slow-payer check names only an item that is growing.
+
+  A payer whose production is 0 because its own recipe is backed up fell between the
+  two.
+
+On `main` the run avoided this by chance: machines advised for rubber landed on plastic
+and took a different path. The gap was already there, and a player could reach the same
+jam.
+
+### The rule
+
+A fourth check in `payable` runs after the drained-payer check and before the slow-payer
+check. For each cost item of the price, in price order, the item is a **blocked payer**
+when:
+- it is **short:** liquid + bound is below the price;
+- it is **not made:** production ≤ `FLOW_TOLERANCE`;
+- its **active recipe is live;**
+- one of that recipe's **outputs is FULL,** byproducts included, checked in the recipe's
+  output order, and that output is not yet in `visited`.
+
+The advice then becomes storage for that FULL output:
+
+```ts
+{ kind: "storage", itemId: <the FULL output>, limitingTarget: <unchanged>, upgrade: cheaperUpgrade(...) }
+```
+
+The output joins `visited`, and the storage answer goes back around `payable`'s loop
+like any other redirect, so its own price meets every check. The first blocked payer
+found wins.
+
+**Why storage for the backed-up output.** Any room in the output lets its recipe run
+again. The payer only needs its shortfall (4.54 rubber here), so one level is enough to
+afford the purchase. The purchase then usually adds the missing consumer, which here is
+the packager that burns the fuel.
+
+**What it does not do.** It does not walk further down the jam (for example to `fuel`,
+the root of the residue backup). Clearing the payer's own recipe is enough to pay, and
+the reporter re-solves after each purchase.
+
+### Measured (prototype, the gate's settings)
+
+| | reaches | t7 | t8 | t9 | t10 | dead | purchases |
+|---|---|---|---|---|---|---|---|
+| `main` (`06324be`) | 10 | 1.3033 | 1.6826 | 2.5167 | 10.6168 | 0.547 | — |
+| Part 1 alone | 7, stalled | 1.0315 | — | — | — | 2.004 | 148 |
+| Part 1 + Part 2 | 10 | 1.0315 | 1.4204 | 2.2693 | 10.5551 | 0.609 | 461 |
+
+Tiers 1–2 are unchanged throughout. With both parts:
+- tiers 3–10 are all at least as fast as `main`;
+- the longest dead stretch is slightly longer (0.61 against 0.55);
+- `greedy`, `casual` and `optimal` don't read the reporter, so they cannot move.
+
+### The §4.5 amendment
+
+To be added after the 2026-10-14 slow-payer amendment:
+
+> **Amended 2026-10-15: a payer blocked by its own output gets storage advice.** If a
+> payer is short of the price and not made at all, because its live active recipe has
+> a FULL output (byproducts included), the advice becomes storage for that output, and
+> passes through this final step again. Measured cause: once purchases landed on the
+> advised recipe, `bottleneck` stalled at tier 7 of the vertical slice. It was told to
+> buy a packager it could not afford, because rubber had stopped: the oil chain had
+> backed up through `heavy_oil_residue` to an unconsumed `fuel`. With this rule it
+> finishes tier 10 at 10.56 collections.
+
 ## The §D.1 amendment
 
 To be added under §D.1's action list:
@@ -105,6 +188,15 @@ carries the advised `recipeId`.
 **Command test** (`commands.test.ts`): `buy <class> --recipe <id>` dispatches
 `BUY_MACHINE` with that `recipeId`. An unknown recipe is refused.
 
+**Reporter tests** (`bottleneck.test.ts`, Part 2):
+4. A short payer with production 0 whose active recipe has a FULL output gets storage
+   advice for that output.
+5. The same payer with that output not FULL leaves the advice as it was.
+6. A short payer that is made (production > 0) is not a blocked payer: the existing
+   drained- and slow-payer behaviour is unchanged.
+7. A blocked-payer redirect whose storage price overflows continues through the loop,
+   as the other redirects do.
+
 **Measured:**
 - **The suite:** the full suite, lint, typecheck and `content:check` pass.
 - **The probe:** re-run, it reports 0 advised purchases landing elsewhere (105 today).
@@ -112,6 +204,6 @@ carries the advised `recipeId`.
   - `greedy` and `casual` pins are byte-identical.
   - `bottleneck` is re-pinned, with its `why` texts recording the cause.
   - If `bottleneck` no longer reaches tier 10, stop and report rather than re-pin to a
-    stall.
+    stall. (Part 1 alone did stall, at tier 7; Part 2 is the fix.)
 - **The handoff:** the follow-up is recorded as fixed, and the below-nameplate case is
   added as a new follow-up.
