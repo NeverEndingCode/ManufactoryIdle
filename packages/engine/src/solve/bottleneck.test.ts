@@ -973,9 +973,9 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
   const sol = solve(start, blockable, NO_FLOOR);
   const firstAdvice = computeBottleneck(blockable, sol.capacity, sol.entries, sol.power, start, sol.itemStates, sol.itemRates);
   // `production` is the payer's production; `residue` is the byproduct's tag.
-  const advise = (production: number, residue: "EMPTY" | "FLOWING" | "FULL", c = blockable, s = sol) => {
+  const advise = (production: number, residue: "EMPTY" | "FLOWING" | "FULL", c = blockable, s = sol, net = 0) => {
     const rates = new Map(s.itemRates);
-    rates.set("iron_ingot", { production, consumption: production, net: 0 });
+    rates.set("iron_ingot", { production, consumption: production - net, net });
     const states = new Map(s.itemStates);
     states.set("heavy_oil_residue", residue);
     return computeBottleneck(c, s.capacity, s.entries, s.power, start, states, rates);
@@ -995,8 +995,12 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
     expect(advise(0, "FLOWING")).toMatchObject({ kind: "recipe", recipeId: "make_plate" });
   });
 
-  it("does not treat a payer that is made as blocked", () => {
-    // Made and not growing is drainedPayer's case: reserve advice, as before.
+  it("does not treat a payer that is made as blocked, even when its output is FULL", () => {
+    // Made and growing slowly (not drained): the slow-payer path, a recipe answer.
+    const slow = advise(5, "FULL", blockable, sol, 1e-6);
+    expect(slow).not.toMatchObject({ kind: "storage", itemId: "heavy_oil_residue" });
+    expect(slow).toMatchObject({ kind: "recipe" });
+    // Made and not growing is drainedPayer's case: reserve advice. Pins the check order.
     expect(advise(5, "FULL")).toMatchObject({ kind: "reserve", itemId: "iron_ingot" });
   });
 
