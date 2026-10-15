@@ -266,16 +266,30 @@ longer carries `reachesTier: 9`.
 
 **Amended 2026-10-14 (final review):** the redirect now walks on to the recipe that limits a
 starved input, since it had named starved recipes (beam 318 advised, 98 bought with `steel_beam`
-EMPTY; cable 12 of 12 with `wire` EMPTY). Current pins: tier 10 at 10.6168, dead time 0.5473,
+EMPTY; cable 12 of 12 with `wire` EMPTY). Then-current pins (superseded by the 2026-10-15 bullet below): tier 10 at 10.6168, dead time 0.5473,
 tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
 
 **Follow-ups from the slow-payer branch (2026-10-14):**
-- **Recipe advice is acted on by buying a lane/class machine, and auto-assignment can place
-  it on a different recipe.** Measured: `refine_rubber` advice, 31 of 31 bought machines went
-  to `refine_plastic`; `make_modular_frame`, 28 of 36 went to `make_reinforced_iron_plate`.
-  That weakens the advice measurement, and the policy may want to assign the machine it bought.
+- **Fixed 2026-10-15: recipe advice is bought as a lane/class machine and auto-assignment can place
+  it elsewhere.** `BUY_MACHINE` now names its recipe and `bottleneck` passes the advised one. Misplaced
+  purchases on advice: 105 -> 0 (probe: 272 purchases made on advice, 0 misplaced). Spec
+  `2026-10-14-buy-for-a-recipe-design`. Part 1 alone stalled `bottleneck` at tier 7 on an oil-chain
+  jam; the new blocked-payer rule (Part 2: storage for a FULL output that stops a short payer's
+  recipe) fixed it. Pins moved (2026-10-15): bottleneck t3 0.3055 -> 0.2965, t4 0.4986 -> 0.4496,
+  t5 0.6190 -> 0.5172, t6 0.8877 -> 0.7622, t7 1.3033 -> 1.0315, t8 1.6826 -> 1.4204,
+  t9 2.5167 -> 2.2693, t10 10.6168 -> 10.5551; dead 0.5473 -> 0.6089.
+- **The reporter can advise a recipe already running below nameplate.** 16 of 339 purchases (measured on `main` before this branch),
+  mostly `mine_coal`, buy a machine for a recipe that is live but limited by something else, so the
+  machine adds little.
 - **Edge case (not observed):** if the slow payer's recipe is the advised recipe itself, the
   redirect resets `machinesToClear` to 1.
+- **The blocked-payer rule does not check that the FULL output is why the payer is not made.**
+  Candidate guards: the payer's recipe has machines (`capacity.unitsByRecipe.get(recipeId) > 0`),
+  and no EMPTY input. Neither was observed, and they could move pins.
+- **No rejection test in an unaffordable world** for `BUY_MACHINE.recipeId`; validation order is
+  correct by reading.
+- **The maxed-storage `upgrade: null` wall for a blocked output is untested.**
+- **The gate-cli `why` texts repeat a long re-measure sentence;** a shared constant would be tidier.
 
 **Follow-ups from the reserves branch (2026-10-13):**
 - **Size a reserve against the remaining upstream.** A reserve's target (25% of the

@@ -251,8 +251,18 @@ describe("getPolicy", () => {
       machinesToClear: 1,
     });
     expect(getPolicy("bottleneck").decide(ctx)).toEqual([
-      { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 },
+      { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1, recipeId: "make_plate" },
     ]);
+  });
+
+  it("bottleneck buys for the advised recipe only while that recipe is live (spec 2026-10-14)", () => {
+    // A not-live recipe would make the purchase reject and abort the decision's batch,
+    // so the policy omits the recipe and lets auto-assignment place the machine.
+    const ctx = funded();
+    const { iron_plate: _dropped, ...activeRecipe } = ctx.state.activeRecipe;
+    const stale: PolicyContext = { ...ctx, state: { ...ctx.state, activeRecipe } };
+    const buys = getPolicy("bottleneck").decide(stale).filter((a) => a.type === "BUY_MACHINE");
+    expect(buys).toEqual([{ type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1 }]);
   });
 
   it("bottleneck buys storage when a cap is what binds, not another machine", () => {

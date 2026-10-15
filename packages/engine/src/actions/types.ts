@@ -10,7 +10,7 @@ import type { PriorityMode, WorldState } from "../state/world.js";
 export const MAX_ACTION_COUNT = 1000;
 
 export type Action =
-  | { type: "BUY_MACHINE"; lane: LaneId; machineClass: MachineClassId; mark: number; count: number }
+  | { type: "BUY_MACHINE"; lane: LaneId; machineClass: MachineClassId; mark: number; count: number; recipeId?: RecipeId }
   | { type: "DISMANTLE"; lane: LaneId; machineClass: MachineClassId; mark: number; count: number }
   | { type: "UPGRADE_MARK"; lane: LaneId; machineClass: MachineClassId; fromMark: number }
   | { type: "ASSIGN_MACHINES"; recipeId: RecipeId; count: number }

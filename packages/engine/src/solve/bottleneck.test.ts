@@ -955,3 +955,94 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
     expect(advise(start, 1e-6, pricey, s)).toMatchObject({ kind: "storage" });
   });
 });
+
+// Spec 2026-10-15 (buy for a recipe, Part 2): a payer short of the price and not made at
+// all, because its own recipe has a FULL output, gets storage advice for that output.
+// Measured cause: bottleneck stalled at tier 7 told to buy a packager priced in rubber
+// while every oil refinery sat at clock 0 behind a FULL heavy_oil_residue.
+describe("computeBottleneck — a payer blocked by its own output gets storage", () => {
+  // smelt_iron also emits heavy_oil_residue, so the ingot recipe can back up on it.
+  const bundle = content.bundle;
+  const blockable = indexContent({
+    ...bundle,
+    recipes: bundle.recipes.map((r) =>
+      r.id !== "smelt_iron" ? r : { ...r, outputs: [...r.outputs, { item: "heavy_oil_residue", rate: "10", byproduct: true }] },
+    ),
+  } as never);
+  const start = initialWorld(blockable, 1, 0);
+  const sol = solve(start, blockable, NO_FLOOR);
+  const firstAdvice = computeBottleneck(blockable, sol.capacity, sol.entries, sol.power, start, sol.itemStates, sol.itemRates);
+  // `production` is the payer's production; `residue` is the byproduct's tag.
+  const advise = (production: number, residue: "EMPTY" | "FLOWING" | "FULL", c = blockable, s = sol, net = 0) => {
+    const rates = new Map(s.itemRates);
+    rates.set("iron_ingot", { production, consumption: production - net, net });
+    const states = new Map(s.itemStates);
+    states.set("heavy_oil_residue", residue);
+    return computeBottleneck(c, s.capacity, s.entries, s.power, start, states, rates);
+  };
+
+  it("advises storage for the FULL output that stops the payer's recipe", () => {
+    // Preconditions: the variant advises make_plate, priced in iron_ingot, which is short.
+    expect(firstAdvice).toMatchObject({ kind: "recipe", recipeId: "make_plate", limitingTarget: "item:iron_plate" });
+    expect(advise(0, "FULL")).toMatchObject({
+      kind: "storage",
+      itemId: "heavy_oil_residue",
+      limitingTarget: "item:iron_plate",
+    });
+  });
+
+  it("leaves the advice alone when the output is not FULL", () => {
+    expect(advise(0, "FLOWING")).toMatchObject({ kind: "recipe", recipeId: "make_plate" });
+  });
+
+  it("does not treat a payer that is made as blocked, even when its output is FULL", () => {
+    // Made and growing slowly (not drained): the slow-payer path, a recipe answer.
+    const slow = advise(5, "FULL", blockable, sol, 1e-6);
+    expect(slow).not.toMatchObject({ kind: "storage", itemId: "heavy_oil_residue" });
+    expect(slow).toMatchObject({ kind: "recipe" });
+    // Made and not growing is drainedPayer's case: reserve advice. Pins the check order.
+    expect(advise(5, "FULL")).toMatchObject({ kind: "reserve", itemId: "iron_ingot" });
+  });
+
+  it("prices the storage it advises through the same loop", () => {
+    // A variant whose storage levels cost far more than anything can hold: the residue
+    // storage overflows its own payer and steps on to storage for that payer instead.
+    const pricey = indexContent({
+      ...blockable.bundle,
+      storage: { ...blockable.bundle.storage, baseCostAmount: 1e12 },
+      quantumStorage: { ...blockable.bundle.quantumStorage, baseCostAmount: 1e12 },
+    } as never);
+    const s = solve(start, pricey, NO_FLOOR);
+    const advice = advise(0, "FULL", pricey, s);
+    expect(advice).toMatchObject({ kind: "storage" });
+    expect(advice).not.toMatchObject({ itemId: "heavy_oil_residue" });
+    expect(advice).toMatchObject({ kind: "storage", itemId: "iron_plate" });
+  });
+
+  // The loop's only bound: blockedPayerOutput skips outputs already in `visited`. Here both
+  // smelt_iron and make_plate emit residue, so the storage advised for it is itself priced
+  // in an item the same FULL residue blocks. Without the filter the walk would cycle.
+  it("terminates when the storage it advises is paid in an item the same output blocks", { timeout: 5000 }, () => {
+    const both = indexContent({
+      ...bundle,
+      recipes: bundle.recipes.map((r) =>
+        r.id === "smelt_iron" || r.id === "make_plate"
+          ? { ...r, outputs: [...r.outputs, { item: "heavy_oil_residue", rate: "10", byproduct: true }] }
+          : r,
+      ),
+    } as never);
+    const w = initialWorld(both, 1, 0);
+    const s = solve(w, both, NO_FLOOR);
+    const rates = new Map(s.itemRates);
+    rates.set("iron_ingot", { production: 0, consumption: 0, net: 0 });
+    rates.set("iron_plate", { production: 0, consumption: 0, net: 0 });
+    const states = new Map(s.itemStates);
+    states.set("heavy_oil_residue", "FULL");
+    expect(computeBottleneck(both, s.capacity, s.entries, s.power, w, states, rates)).toEqual({
+      kind: "storage",
+      itemId: "heavy_oil_residue",
+      limitingTarget: "item:iron_plate",
+      upgrade: "storage",
+    });
+  });
+});

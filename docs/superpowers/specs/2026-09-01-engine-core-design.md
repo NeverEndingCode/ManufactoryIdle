@@ -793,6 +793,15 @@ slice, told to buy an assembly rig while its 409,600 encased beams were ~22.6 ho
 production away. With this rule it finishes tier 10 at 10.62 collections, with no dead
 stretch over 0.55.
 
+**Amended 2026-10-15: a payer blocked by its own output gets storage advice.** If a
+payer is short of the price and not made at all, because its live active recipe has
+a FULL output (byproducts included), the advice becomes storage for that output, and
+passes through this final step again. Measured cause: once purchases landed on the
+advised recipe, `bottleneck` stalled at tier 7 of the vertical slice. It was told to
+buy a packager it could not afford, because rubber had stopped: the oil chain had
+backed up through `heavy_oil_residue` to an unconsumed `fuel`. With this rule it
+finishes tier 10 at 10.56 collections.
+
 ### C.4 Power
 
 Grid per §6.1: `powerRatio = min(1, capacity / demand)`, demand scales with clock, clock
@@ -882,7 +891,7 @@ anything new it reads that can change during a resolve must join the key.
 ### D.1 The action set
 
 ```
-BUY_MACHINE       { lane, machineClass, mark, count }
+BUY_MACHINE       { lane, machineClass, mark, count, recipeId? }
 DISMANTLE         { lane, machineClass, mark, count }
 UPGRADE_MARK      { lane, machineClass, fromMark }      ← atomic dismantle + rebuild
 ASSIGN_MACHINES   { recipeId, count }
@@ -894,6 +903,14 @@ BUY_STORAGE       { itemId, levels }
 BUY_QS            { lane, levels }
 TAP               { count, clientElapsedMs }
 ```
+
+**Amended 2026-10-14: a purchase may name its recipe.** `BUY_MACHINE` takes an
+optional `recipeId`. When it is given, the new machines are assigned to that recipe
+instead of by R5's auto-assignment. The recipe must be live, and must run on that
+lane and machine class, or the action is rejected. Measured cause: 105 of 339
+`bottleneck` purchases made on recipe advice went to a different recipe, because a
+purchase could not say which recipe it was for. A player acting on the reporter's
+advice had the same problem.
 
 `UPGRADE_MARK` is the one-tap payoff for C.0 — it dismantles every Mk*n* of a class in a
 lane and rebuilds the mark-equivalent count at Mk*n+1*, paying the difference. Without it,
@@ -1092,6 +1109,8 @@ sim run --policy casual --seed 42
 | **`bottleneck`** | Always buys exactly what §4.5's bottleneck reporter recommends |
 
 **Amended 2026-10-13:** bottleneck also follows reserve advice (SET_RESERVE), and clears a reserve once the advice no longer names it; no other policy reserves.
+
+**Amended 2026-10-15:** bottleneck now buys for the advised recipe (`BUY_MACHINE.recipeId`, while the recipe is live). See `specs/2026-10-14-buy-for-a-recipe-design.md`.
 
 **Amended 2026-10-12: milestone-first.** `greedy` and `optimal` keep the next milestone's
 required items at the top of the priority list and return them to the authored order

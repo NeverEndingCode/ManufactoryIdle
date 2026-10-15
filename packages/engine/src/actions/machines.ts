@@ -3,7 +3,8 @@
 // Ruling R5 pools machines per (lane, machineClass), so a purchase adds to the pool
 // and an assignment distributes it. Making the player assign after every purchase
 // would be exactly the management surface pillar 3 rules out, so BUY_MACHINE
-// auto-assigns by the player's priority list (see autoAssignTarget) and DISMANTLE
+// auto-assigns by the player's priority list (see autoAssignTarget), unless the
+// action names its recipe (spec 2026-10-14), and DISMANTLE
 // clamps back down from the largest assignment first.
 //
 // Spec D4 makes refunds LIFO: dismantling the nth machine returns cost(n), so
@@ -223,7 +224,7 @@ export function applyBuyMachine(
   content: IndexedContent,
   action: Extract<Action, { type: "BUY_MACHINE" }>,
 ): ApplyResult {
-  const { lane, machineClass, mark, count } = action;
+  const { lane, machineClass, mark, count, recipeId } = action;
   if (!content.lanes.has(lane)) return reject(`unknown lane "${lane}"`);
   if (!content.machineClasses.has(machineClass)) {
     return reject(`unknown machine class "${machineClass}"`);
@@ -235,6 +236,19 @@ export function applyBuyMachine(
   }
   if (!validCount(count)) return reject(`count must be an integer in 1..${MAX_ACTION_COUNT}`);
 
+  // Spec 2026-10-14: a purchase may name the recipe its machines are for, so acting on
+  // the reporter's recipe advice puts the machine where the advice said.
+  if (recipeId !== undefined) {
+    const recipe = content.recipes.get(recipeId);
+    if (!recipe) return reject(`unknown recipe "${recipeId}"`);
+    if (recipe.lane !== lane || recipe.machineClass !== machineClass) {
+      return reject(`recipe "${recipeId}" does not run on ${machineClass} in ${lane}`);
+    }
+    if (!isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) {
+      return reject(`recipe "${recipeId}" is not live`);
+    }
+  }
+
   const owned = installedAt(state, lane, machineClass, mark);
   const costs = machineCostRange(content, machineClass, mark, owned, count);
   const paid = spendForBuild(content, state, costs);
@@ -242,7 +256,7 @@ export function applyBuyMachine(
 
   let next = withInstalled(paid, lane, machineClass, mark, owned + count);
 
-  const target = autoAssignTarget(content, next, lane, machineClass);
+  const target = recipeId ?? autoAssignTarget(content, next, lane, machineClass);
   const effects = [
     costEffect("spent", costs),
     { kind: "installed" as const, lane, machineClass, mark, count },
