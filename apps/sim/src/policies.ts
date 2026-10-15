@@ -430,6 +430,10 @@ const bottleneck: Policy = {
             machineClass: recipe.machineClass,
             mark,
             count,
+            // Spec 2026-10-14: buy for the advised recipe, so the machine lands where
+            // the advice said rather than wherever auto-assignment ranks first. Only
+            // while it is live: a rejected purchase would abort the whole batch.
+            ...(isLiveRecipe(ctx.content, recipeId, ctx.state.tier, ctx.state.activeRecipe) ? { recipeId } : {}),
           },
         ];
       }

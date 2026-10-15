@@ -141,6 +141,27 @@ describe("status and lane views", () => {
 });
 
 describe("action commands route through the engine reducers (spec A.2)", () => {
+  it("buys for a named recipe, taking the lane from it (spec 2026-10-14)", () => {
+    let s = rich();
+    s = run(s, "tier 3");
+    s = run(s, "buy refinery 1 --recipe residual_fuel");
+    expect(s.actionLog.at(-1)).toEqual({
+      type: "BUY_MACHINE",
+      lane: "oil",
+      machineClass: "refinery",
+      mark: 1,
+      count: 1,
+      recipeId: "residual_fuel",
+    });
+    expect(s.state.assignment.residual_fuel).toBe(1);
+  });
+
+  it("refuses an unknown recipe", () => {
+    const result = runCommand(rich(), "buy constructor 1 --recipe no_such_recipe");
+    expect(result.output.join("\n")).toMatch(/unknown recipe "no_such_recipe"/);
+    expect(result.session.actionLog).toHaveLength(0);
+  });
+
   it("buys, dismantles, and records the action log", () => {
     let s = rich();
     s = run(s, "buy constructor 2");

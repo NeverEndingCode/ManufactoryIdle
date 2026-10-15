@@ -65,7 +65,7 @@ export const HELP: readonly string[] = [
   "priority move <entry> <pos>     1-based position",
   "priority mode <entry> guaranteed|share [weight]",
   "priority pause <entry> on|off",
-  "buy <class> [count] [--lane L] [--mark M]",
+  "buy <class> [count] [--lane L] [--mark M] [--recipe R]",
   "dismantle <class> [count] [--lane L] [--mark M]",
   "upgrade <class> [--lane L] [--mark M]     atomic dismantle and rebuild",
   "assign <recipe> <count>         distribute the lane-class pool",
@@ -477,17 +477,24 @@ export function runCommand(session: Session, line: string): CommandResult {
       const machineClass = rest[0];
       if (machineClass === undefined) return none([`usage: ${verb} <class> [count]`]);
       const count = rest[1] === undefined ? 1 : Number(rest[1]);
-      const lane = laneOf(session, machineClass, flags);
+      const recipeFlag = verb === "buy" ? flags.recipe : undefined;
+      const recipe = recipeFlag === undefined ? undefined : session.content.recipes.get(recipeFlag);
+      if (recipeFlag !== undefined && !recipe) return none([`unknown recipe "${recipeFlag}"`]);
+      const lane = flags.lane === undefined && recipe ? recipe.lane : laneOf(session, machineClass, flags);
       const mark = markOf(session, machineClass, flags);
       if (lane === null) return none([`no lane for "${machineClass}"`]);
       if (mark === null) return none([`no unlocked mark for "${machineClass}"`]);
-      return dispatch(session, {
-        type: verb === "buy" ? "BUY_MACHINE" : "DISMANTLE",
-        lane,
-        machineClass,
-        mark,
-        count,
-      });
+      if (verb === "buy") {
+        return dispatch(session, {
+          type: "BUY_MACHINE",
+          lane,
+          machineClass,
+          mark,
+          count,
+          ...(recipeFlag === undefined ? {} : { recipeId: recipeFlag }),
+        });
+      }
+      return dispatch(session, { type: "DISMANTLE", lane, machineClass, mark, count });
     }
 
     case "upgrade": {
