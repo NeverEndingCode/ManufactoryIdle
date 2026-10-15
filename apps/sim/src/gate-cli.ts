@@ -3,7 +3,7 @@
 // The rules live in `gate.ts` and are unit-tested there in milliseconds. This file only
 // does the expensive half: run the policies, hand the reports over, print, exit.
 //
-// Two depths, because the full gate takes minutes (2m18s locally as of 2026-10-12; it
+// Two depths, because the full gate takes minutes (2m15s locally as of 2026-10-14; it
 // has been as slow as 135) and a per-commit hook that costs that gets switched off:
 //
 //   sim gate --smoke   greedy to tier 4, twice (determinism). Seconds. Per commit.
@@ -82,7 +82,8 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     // tier 9, waiting about 22.6 hours for encased_industrial_beam to afford the 12th assembly
     // rig, past the dead-time cut-off. The reporter now advises one more machine for a payer
     // too slow to afford the purchase soon, so the run keeps building and finishes tier 10.
-    // Its dead time is now 0.6095 collections.
+    // Its dead time is now 0.5473 collections. The redirect walks on past a recipe starved of an
+    // input to the recipe that limits it (final review, same day), which moved tiers 7 to 10.
     knownRed: [
       {
         tier: 1,
@@ -133,9 +134,9 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 7,
-        observed: 1.3573,
+        observed: 1.3033,
         why:
-          "target 6.8, measured 1.357 (-80%). Unchanged by payable advice. This was " +
+          "target 6.8, measured 1.303 (-81%). This was " +
           "where bottleneck used to stop: the reporter advised a 4,473 iron_plate " +
           "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
           "bought nothing. After payable advice the run passes tier 7. " +
@@ -143,23 +144,23 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 8,
-        observed: 1.7369,
+        observed: 1.6826,
         why:
-          "target 11, measured 1.737 (-84%): the same minimal-buying overshoot. " +
+          "target 11, measured 1.683 (-85%): the same minimal-buying overshoot. " +
           "Re-measured 2026-10-14 after the reporter advised production for slow payers.",
       },
       {
         tier: 9,
-        observed: 2.4785,
+        observed: 2.5167,
         why:
-          "target 16, measured 2.479 (-85%): the same overshoot, with the gap narrowing. " +
+          "target 16, measured 2.517 (-84%): the same overshoot. " +
           "Re-measured 2026-10-14 after the reporter advised production for slow payers.",
       },
       {
         tier: 10,
-        observed: 12.4274,
+        observed: 10.6168,
         why:
-          "target 25, measured 12.427 (-50%): the overshoot is at its narrowest. " +
+          "target 25, measured 10.617 (-58%): the overshoot is at its narrowest. " +
           "bottleneck now finishes tier 10 because of slow-payer advice: it used to stall at " +
           "tier 9 waiting about 22.6 hours for encased_industrial_beam to afford the 12th " +
           "assembly rig, and now builds more beam production instead. " +

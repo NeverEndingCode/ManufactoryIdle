@@ -478,6 +478,28 @@ function slowPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemId |
   return slowest;
 }
 
+/** True when any input of the recipe is EMPTY. */
+function hasEmptyInput(walk: WalkContext, recipeId: RecipeId): boolean {
+  return walk.content.recipes.get(recipeId)!.def.inputs.some((input) => walk.itemStates.get(input.item) === "EMPTY");
+}
+
+/**
+ * The recipe one step toward what starves `recipeId`: the active recipe of its first
+ * EMPTY input (recipe order) that is live and not in `visited`, which gains that input.
+ * Null when there is none.
+ */
+function starvedStep(walk: WalkContext, recipeId: RecipeId, visited: Set<ItemId>): RecipeId | null {
+  const { content, state } = walk;
+  for (const input of content.recipes.get(recipeId)!.def.inputs) {
+    if (walk.itemStates.get(input.item) !== "EMPTY" || visited.has(input.item)) continue;
+    const next = activeRecipeOf(state.activeRecipe, input.item);
+    if (next === undefined || !isLiveRecipe(content, next, state.tier, state.activeRecipe)) continue;
+    visited.add(input.item);
+    return next;
+  }
+  return null;
+}
+
 /**
  * The final step every answer passes through (spec §4.5, amended 2026-10-10). A
  * purchase that costs more of some item than that item can be held can never be made,
@@ -486,7 +508,8 @@ function slowPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemId |
  * of the vertical slice told to buy a 4,473 iron_plate Quantum Storage level while
  * iron_plate could hold 4,000; one iron_plate storage level, 90, was the way out.
  * Spec 2026-10-14: a payer too slow to afford the price within half an offline window
- * becomes one more machine for its active recipe, priced through this same loop.
+ * becomes one more machine for its active recipe -- walked on to the recipe limiting it
+ * while that recipe has an EMPTY input -- priced through this same loop.
  * `visited` bounds the steps at one per payer; reaching one twice, or a payer with both
  * curves maxed, ends at `upgrade: null` -- the honest wall, which check 12 makes
  * unreachable at the deepest tier but not before it.
@@ -515,7 +538,16 @@ function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
       const recipeId = activeRecipeOf(state.activeRecipe, slow);
       if (recipeId === undefined || !isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) return current;
       visited.add(slow);
-      current = { kind: "recipe", recipeId, limitingTarget: answer.limitingTarget, machinesToClear: 1 };
+      // A recipe starved of an input makes nothing however many machines it has, so walk
+      // to what limits it: the first EMPTY input (recipe order) with a live active
+      // recipe not yet visited. Bounded by `visited`. If the deepest recipe still has an
+      // EMPTY input it cannot walk to, no machine for it helps: keep the advice as it was.
+      let target = recipeId;
+      for (let next: RecipeId | null = starvedStep(walk, target, visited); next !== null; next = starvedStep(walk, target, visited)) {
+        target = next;
+      }
+      if (hasEmptyInput(walk, target)) return current;
+      current = { kind: "recipe", recipeId: target, limitingTarget: answer.limitingTarget, machinesToClear: 1 };
       continue;
     }
     if (visited.has(payer)) {

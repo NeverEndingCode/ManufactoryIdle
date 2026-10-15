@@ -83,10 +83,28 @@ The "off" row reproduces today's pins exactly.
   offline window away is not the next thing a player should save for.
 
 A full gate on the prototype (0.5 horizon) exits 0. The `greedy` and `casual` pins are
-**identical** to `main`'s. `bottleneck` reaches tier 10, with dead time 0.6095:
+**identical** to `main`'s. `bottleneck` reaches tier 10, with dead time 0.6095. (The table above
+and this paragraph are the prototype's. The shipped rule also walks the redirect on to the
+recipe that limits a starved input, see "Amended after final review" below; its numbers are
+there.)
 - **tiers 1–6:** unchanged;
 - **tiers 7–9:** 1.3573, 1.7369, 2.4785, against `main`'s 1.3077, 1.6469, 2.5329;
 - **tier 10:** 12.4274.
+
+### Amended after final review (2026-10-14): walk to what limits it
+
+Measured on the shipped rule: the redirect named a recipe starved of an input.
+`make_encased_industrial_beam` was advised 318 times and bought 98 times while its input
+`steel_beam` was EMPTY, and `make_cable` 12 of 12 while `wire` was EMPTY. Another machine for
+a starved recipe produces nothing. So after choosing the slow payer's live active recipe R,
+while R has an EMPTY input (recipe order) whose active recipe is live and whose item is not in
+`visited`, that item joins `visited` and R becomes that recipe. The final R is advised. If the
+deepest R still has an EMPTY input it cannot walk to, the redirect is dropped and the advice
+stays as it was. Bounded by `visited`; deterministic.
+
+Full gate, 2026-10-14: exit 0, `greedy` and `casual` pins identical. `bottleneck` reaches tier
+10 at 10.6168 (was 12.4274), dead time 0.5473 (was 0.6095). Tiers 7 to 9 move to 1.3033,
+1.6826, 2.5167 (were 1.3573, 1.7369, 2.4785); tiers 1 to 6 are unchanged.
 
 The horizon is a named constant, `SLOW_PAYER_HORIZON_COLLECTIONS = 0.5`, multiplied by
 `content.offlineCapMs`.
@@ -104,7 +122,7 @@ The horizon is a named constant, `SLOW_PAYER_HORIZON_COLLECTIONS = 0.5`, multipl
   The caller re-solves after each purchase.
 - Reserve sizing and the one-reserve livelock (follow-ups from PR #9).
 - Whether the 409,600-beam rig is good pacing. With this rule, `bottleneck` finishes
-  tier 10 at 12.43 collections. That is faster than `greedy` (24.06), and is
+  tier 10 at 10.62 collections. That is faster than `greedy` (24.06), and is
   `bottleneck`'s known "buys the minimum, overshoots every target" pattern.
 
 ## Acceptance
@@ -135,5 +153,5 @@ To be added after the 2026-10-13 drained-payer amendment:
 > becomes one more machine for that payer's active recipe (if live), and passes through
 > this final step again. Measured cause: `bottleneck` stopped at tier 9 of the vertical
 > slice, told to buy an assembly rig while its 409,600 encased beams were ~22.6 hours of
-> production away. With this rule it finishes tier 10 at 12.43 collections, with no dead
-> stretch over 0.61.
+> production away. With this rule it finishes tier 10 at 10.62 collections, with no dead
+> stretch over 0.55.

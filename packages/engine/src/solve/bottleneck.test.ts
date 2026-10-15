@@ -884,11 +884,18 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
     const recipe = content.recipes.get(firstAdvice.recipeId)!;
     return [...machineCostRange(content, recipe.machineClass, 1, 0, 1)][0]?.[0];
   })();
+  // The one-step redirect assumes the payer's recipe is not starved. The fresh fixture
+  // has iron_ore EMPTY (the walk test below uses it so), so these tests mark it FLOWING.
+  const fed = (states: ReadonlyMap<string, "EMPTY" | "FLOWING" | "FULL">) => {
+    const copy = new Map(states);
+    copy.set("iron_ore", "FLOWING");
+    return copy;
+  };
   // The payer grows at `net`/s and is otherwise as the fresh fixture has it.
-  const advise = (state: WorldState, net: number, c = content, s = sol) => {
+  const advise = (state: WorldState, net: number, c = content, s = sol, itemStates = fed(s.itemStates)) => {
     const rates = new Map(s.itemRates);
     rates.set(payer!, { production: net + 1, consumption: 1, net });
-    return computeBottleneck(c, s.capacity, s.entries, s.power, state, s.itemStates, rates);
+    return computeBottleneck(c, s.capacity, s.entries, s.power, state, itemStates, rates);
   };
 
   it("redirects to the slow payer's recipe", () => {
@@ -902,6 +909,18 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
       limitingTarget: firstAdvice!.limitingTarget,
       machinesToClear: 1,
     });
+  });
+
+  it("walks the redirect on to the recipe that limits an EMPTY input", () => {
+    // Precondition: the fixture itself marks iron_ore (smelt_iron's input) EMPTY.
+    expect(sol.itemStates.get("iron_ore")).toBe("EMPTY");
+    expect(advise(start, 1e-6, content, sol, sol.itemStates)).toEqual({
+      kind: "recipe",
+      recipeId: start.activeRecipe.iron_ore,
+      limitingTarget: firstAdvice!.limitingTarget,
+      machinesToClear: 1,
+    });
+    expect(start.activeRecipe.iron_ore).toBe("mine_iron");
   });
 
   it("leaves the advice alone when the payer affords it within the horizon", () => {
