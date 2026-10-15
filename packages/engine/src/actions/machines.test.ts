@@ -263,13 +263,11 @@ describe("BUY_MACHINE", () => {
       ],
     ];
     for (const [name, prepare, recipeId, reason] of rejects) {
-      it(`rejects ${name} and spends nothing`, () => {
+      it(`rejects ${name}`, () => {
         const w = prepare(oilWorld());
         const result = applyBuyMachine(w, content, buy(recipeId));
         expect(result.rejected).toBe(true);
         expect(result.rejected ? result.reason : "").toMatch(reason);
-        // Rejected means the caller keeps its own state; nothing was paid.
-        expect(result.rejected ? undefined : result.state).toBeUndefined();
       });
     }
   });

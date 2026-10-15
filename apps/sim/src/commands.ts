@@ -477,7 +477,8 @@ export function runCommand(session: Session, line: string): CommandResult {
       const machineClass = rest[0];
       if (machineClass === undefined) return none([`usage: ${verb} <class> [count]`]);
       const count = rest[1] === undefined ? 1 : Number(rest[1]);
-      const recipeFlag = verb === "buy" ? flags.recipe : undefined;
+      if (verb === "dismantle" && flags.recipe !== undefined) return none(["--recipe applies only to buy"]);
+      const recipeFlag = flags.recipe;
       const recipe = recipeFlag === undefined ? undefined : session.content.recipes.get(recipeFlag);
       if (recipeFlag !== undefined && !recipe) return none([`unknown recipe "${recipeFlag}"`]);
       const lane = flags.lane === undefined && recipe ? recipe.lane : laneOf(session, machineClass, flags);

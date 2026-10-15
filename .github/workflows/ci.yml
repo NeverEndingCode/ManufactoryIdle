@@ -98,7 +98,7 @@ jobs:
     #
     # 2026-10-15 (buy for the recipe): the gate takes 1m19s locally (bottleneck 78s), about 3.2
     # minutes at the 2.43x runner factor, down from 2m15s because bottleneck no longer builds
-    # machines on the wrong recipe. The 20-minute cap is ~6x the run.
+    # machines on the wrong recipe, and blocked-payer storage advice. The 20-minute cap is ~6x the run.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

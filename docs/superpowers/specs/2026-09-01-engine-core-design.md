@@ -1110,6 +1110,8 @@ sim run --policy casual --seed 42
 
 **Amended 2026-10-13:** bottleneck also follows reserve advice (SET_RESERVE), and clears a reserve once the advice no longer names it; no other policy reserves.
 
+**Amended 2026-10-15:** bottleneck now buys for the advised recipe (`BUY_MACHINE.recipeId`, while the recipe is live). See `specs/2026-10-14-buy-for-a-recipe-design.md`.
+
 **Amended 2026-10-12: milestone-first.** `greedy` and `optimal` keep the next milestone's
 required items at the top of the priority list and return them to the authored order
 once delivered (`milestoneFirstReorder`); `casual` and `bottleneck` never reorder. Measured

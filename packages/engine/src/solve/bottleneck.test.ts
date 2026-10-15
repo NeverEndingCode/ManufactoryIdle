@@ -1016,5 +1016,33 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
     const advice = advise(0, "FULL", pricey, s);
     expect(advice).toMatchObject({ kind: "storage" });
     expect(advice).not.toMatchObject({ itemId: "heavy_oil_residue" });
+    expect(advice).toMatchObject({ kind: "storage", itemId: "iron_plate" });
+  });
+
+  // The loop's only bound: blockedPayerOutput skips outputs already in `visited`. Here both
+  // smelt_iron and make_plate emit residue, so the storage advised for it is itself priced
+  // in an item the same FULL residue blocks. Without the filter the walk would cycle.
+  it("terminates when the storage it advises is paid in an item the same output blocks", { timeout: 5000 }, () => {
+    const both = indexContent({
+      ...bundle,
+      recipes: bundle.recipes.map((r) =>
+        r.id === "smelt_iron" || r.id === "make_plate"
+          ? { ...r, outputs: [...r.outputs, { item: "heavy_oil_residue", rate: "10", byproduct: true }] }
+          : r,
+      ),
+    } as never);
+    const w = initialWorld(both, 1, 0);
+    const s = solve(w, both, NO_FLOOR);
+    const rates = new Map(s.itemRates);
+    rates.set("iron_ingot", { production: 0, consumption: 0, net: 0 });
+    rates.set("iron_plate", { production: 0, consumption: 0, net: 0 });
+    const states = new Map(s.itemStates);
+    states.set("heavy_oil_residue", "FULL");
+    expect(computeBottleneck(both, s.capacity, s.entries, s.power, w, states, rates)).toEqual({
+      kind: "storage",
+      itemId: "heavy_oil_residue",
+      limitingTarget: "item:iron_plate",
+      upgrade: "storage",
+    });
   });
 });

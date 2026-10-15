@@ -196,6 +196,12 @@ describe("action commands route through the engine reducers (spec A.2)", () => {
     expect(result.session.actionLog).toHaveLength(0);
   });
 
+  it("refuses --recipe on dismantle", () => {
+    const result = runCommand(rich(), "dismantle constructor 1 --recipe residual_fuel");
+    expect(result.output).toEqual(["--recipe applies only to buy"]);
+    expect(result.session.actionLog).toHaveLength(0);
+  });
+
   it("buys, dismantles, and records the action log", () => {
     let s = rich();
     s = run(s, "buy constructor 2");

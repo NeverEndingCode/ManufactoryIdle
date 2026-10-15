@@ -458,7 +458,8 @@ function drainedPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemI
  * made at all, because its live active recipe has a FULL output (byproducts included)
  * -- returns that output, the first in recipe order not yet visited; else null. It sits
  * between drainedPayer (which names only a made item) and slowPayer (which names only a
- * growing one): a payer whose own recipe is backed up is neither.
+ * growing one): a payer whose own recipe is backed up is neither. The `visited` filter
+ * is what bounds the caller's loop (see the test that removes it).
  */
 function blockedPayerOutput(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>, visited: ReadonlySet<ItemId>): ItemId | null {
   const { content, state, itemRates, itemStates } = walk;
@@ -558,6 +559,9 @@ function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
       // waits on room for that output. Advise storage for it, priced through this loop.
       const blocked = blockedPayerOutput(walk, costs, visited);
       if (blocked !== null) {
+        // Adding it to `visited` is what bounds this loop: blockedPayerOutput skips visited
+        // outputs, so when the advised storage is itself paid in an item the same output
+        // blocks, the next pass finds nothing new and falls through instead of cycling.
         visited.add(blocked);
         current = { kind: "storage", itemId: blocked, limitingTarget: answer.limitingTarget, upgrade: cheaperUpgrade(content, state, blocked) };
         continue;
