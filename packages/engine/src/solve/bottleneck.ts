@@ -537,14 +537,18 @@ function starvedStep(walk: WalkContext, recipeId: RecipeId, visited: Set<ItemId>
  * output becomes storage for that output, priced through this same loop.
  * `visited` bounds the steps at one per payer; reaching one twice, or a payer with both
  * curves maxed, ends at `upgrade: null` -- the honest wall, which check 12 makes
- * unreachable at the deepest tier but not before it.
+ * unreachable at the deepest tier but not before it. The loop is also hard-capped: more
+ * passes than items allow can only mean a lost `visited` guard, and it throws rather than hang.
  */
 function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
   if (answer === null) return null;
   const { content, state } = walk;
   const visited = new Set<ItemId>();
   let current: NonNullable<Bottleneck> = answer;
-  for (;;) {
+  // Every redirect adds one new item to `visited`, so a correct loop makes at most one pass
+  // per item plus a final one. Allow one more as a spare: past that a guard has been lost.
+  const maxPasses = content.items.size + 2;
+  for (let pass = 0; pass < maxPasses; pass++) {
     const costs = priceOf(walk, current);
     if (costs === null) return current;
     const payer = overflowingPayer(content, state, costs);
@@ -597,6 +601,7 @@ function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
       upgrade: cheaperUpgrade(content, state, payer),
     };
   }
+  throw new Error(`payable: no answer after ${maxPasses} redirects (visited: ${[...visited].join(", ")})`);
 }
 
 function adviseBottleneck(

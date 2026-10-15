@@ -954,6 +954,32 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
     });
     expect(advise(start, 1e-6, pricey, s)).toMatchObject({ kind: "storage" });
   });
+
+  it("stops after one redirect when the payer's own machine is priced in the payer", () => {
+    // A variant where smelt_iron's smelter is itself priced in iron_ingot, the slow payer:
+    // the redirect's own price names the payer again, and `visited` is what stops it.
+    const bundle = content.bundle;
+    const selfPriced = indexContent({
+      ...bundle,
+      machineClasses: bundle.machineClasses.map((cls) =>
+        cls.id !== "smelter"
+          ? cls
+          : { ...cls, marks: cls.marks.map((m, i) => (i === 0 ? { ...m, buildCost: [{ item: "iron_ingot", amount: 20 }] } : m)) },
+      ),
+    } as never);
+    const s = solve(start, selfPriced, NO_FLOOR);
+    // Precondition: the variant still advises the same first purchase.
+    expect(computeBottleneck(selfPriced, s.capacity, s.entries, s.power, start, s.itemStates, s.itemRates)).toMatchObject({
+      kind: "recipe",
+      recipeId: "make_plate",
+    });
+    expect(advise(start, 1e-6, selfPriced, s)).toEqual({
+      kind: "recipe",
+      recipeId: "smelt_iron",
+      limitingTarget: "item:iron_plate",
+      machinesToClear: 1,
+    });
+  });
 });
 
 // Spec 2026-10-15 (buy for a recipe, Part 2): a payer short of the price and not made at
