@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { D, installedAt, type WorldState } from "@manufactory/engine";
+import { D, indexContent, installedAt, type WorldState } from "@manufactory/engine";
 import { loadContent } from "./bootstrap.js";
 import {
   evaluateAssert,
@@ -154,6 +154,40 @@ describe("action commands route through the engine reducers (spec A.2)", () => {
       recipeId: "residual_fuel",
     });
     expect(s.state.assignment.residual_fuel).toBe(1);
+  });
+
+  it("takes the lane from the named recipe, not from the class's first lane (spec 2026-10-14)", () => {
+    // In the shipped content every class lives in one lane, so laneOf and recipe.lane agree.
+    // Give refinery a recipe on iron, authored before oil, so they differ.
+    const bundle = content.bundle;
+    const oilRecipe = bundle.recipes.find((r) => r.id === "residual_fuel")!;
+    const variant = indexContent({
+      ...bundle,
+      recipes: [...bundle.recipes, { ...oilRecipe, id: "iron_refining", lane: "iron" }],
+    });
+    expect([...variant.lanes.keys()].indexOf("iron")).toBeLessThan([...variant.lanes.keys()].indexOf("oil"));
+    const base = newSession(variant, 42);
+    const stocked = refresh({
+      ...base,
+      state: {
+        ...base.state,
+        stored: { ...base.state.stored, iron_ingot: D(100_000), iron_plate: D(100_000) },
+      },
+    });
+    let s = run(stocked, "tier 3");
+    s = run(s, "buy refinery 1 --recipe residual_fuel");
+    expect(s.actionLog.at(-1)).toMatchObject({ lane: "oil", recipeId: "residual_fuel" });
+
+    // An explicit --lane still wins, and the engine then refuses the mismatch.
+    const refused = runCommand(run(stocked, "tier 3"), "buy refinery 1 --lane iron --recipe residual_fuel");
+    expect(refused.output.join("\n")).toMatch(/does not run on/);
+    expect(refused.session.actionLog).toHaveLength(0);
+  });
+
+  it("surfaces the engine's rejection for a recipe the class does not run", () => {
+    const result = runCommand(rich(), "buy constructor 1 --recipe residual_fuel");
+    expect(result.output.join("\n")).toMatch(/does not run on/);
+    expect(result.session.actionLog).toHaveLength(0);
   });
 
   it("refuses an unknown recipe", () => {
