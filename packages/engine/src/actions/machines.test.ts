@@ -208,6 +208,72 @@ describe("BUY_MACHINE", () => {
     });
   });
 
+  // Spec 2026-10-14 (buy for a recipe): a purchase may name the recipe its machines
+  // are for. Measured cause: 105 of 339 bottleneck purchases made on recipe advice
+  // went to a sibling recipe ranked higher in the priority list.
+  describe("a purchase that names its recipe", () => {
+    function oilWorld(): WorldState {
+      const w = { ...rich(), tier: 3 };
+      return { ...w, installed: { ...w.installed }, assignment: { ...w.assignment } };
+    }
+    const buy = (recipeId?: string) => ({
+      type: "BUY_MACHINE" as const,
+      lane: "oil",
+      machineClass: "refinery",
+      mark: 1,
+      count: 2,
+      ...(recipeId === undefined ? {} : { recipeId }),
+    });
+
+    it("lands on the named recipe even when a sibling ranks higher", () => {
+      // Without a recipe the same purchase goes to plastic, the higher-ranked sibling.
+      const unnamed = expectAccepted(applyBuyMachine(oilWorld(), content, buy()));
+      expect(unnamed.assignment.refine_plastic).toBe(2);
+      expect(unnamed.assignment.residual_fuel ?? 0).toBe(0);
+
+      const result = applyBuyMachine(oilWorld(), content, buy("residual_fuel"));
+      const named = expectAccepted(result);
+      expect(named.assignment.residual_fuel).toBe(2);
+      expect(named.assignment.refine_plastic ?? 0).toBe(0);
+      expect(result.rejected ? [] : result.effects).toContainEqual({ kind: "assigned", recipeId: "residual_fuel", count: 2 });
+    });
+
+    it("adds to the named recipe's existing assignment", () => {
+      const base = oilWorld();
+      const w: WorldState = {
+        ...base,
+        installed: { ...base.installed, oil: { ...base.installed.oil, refinery: [3] } },
+        assignment: { ...base.assignment, residual_fuel: 3 },
+      };
+      const next = expectAccepted(applyBuyMachine(w, content, buy("residual_fuel")));
+      expect(next.assignment.residual_fuel).toBe(5);
+    });
+
+    const rejects: [string, (w: WorldState) => WorldState, string, RegExp][] = [
+      ["an unknown recipe", (w) => w, "no_such_recipe", /^unknown recipe "no_such_recipe"$/],
+      ["a recipe on another lane or class", (w) => w, "make_plate", /^recipe "make_plate" does not run on refinery in oil$/],
+      [
+        "a recipe that is not live",
+        (w) => {
+          const { fuel: _dropped, ...activeRecipe } = w.activeRecipe;
+          return { ...w, activeRecipe };
+        },
+        "residual_fuel",
+        /^recipe "residual_fuel" is not live$/,
+      ],
+    ];
+    for (const [name, prepare, recipeId, reason] of rejects) {
+      it(`rejects ${name} and spends nothing`, () => {
+        const w = prepare(oilWorld());
+        const result = applyBuyMachine(w, content, buy(recipeId));
+        expect(result.rejected).toBe(true);
+        expect(result.rejected ? result.reason : "").toMatch(reason);
+        // Rejected means the caller keeps its own state; nothing was paid.
+        expect(result.rejected ? undefined : result.state).toBeUndefined();
+      });
+    }
+  });
+
   it("auto-assigns the new machines to the busiest recipe in the lane-class (R5)", () => {
     const next = expectAccepted(
       applyBuyMachine(rich(), content, {
