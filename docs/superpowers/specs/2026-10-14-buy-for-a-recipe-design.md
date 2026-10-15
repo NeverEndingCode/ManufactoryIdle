@@ -2,7 +2,7 @@
 
 **Amends:** engine spec §D.1 (the action set) and §4.5 (the bottleneck reporter's final
 `payable` step). It also touches the R5 auto-assignment rule in `actions/machines.ts`.
-**Status:** approved design, 2026-10-14.
+**Status:** implemented 2026-10-15.
 **Follows:** `2026-10-14-slow-payer-advice-design.md` (PR #10), whose final review found
 this.
 
