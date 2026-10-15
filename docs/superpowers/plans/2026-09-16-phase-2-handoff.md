@@ -286,6 +286,9 @@ tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
 - **The blocked-payer rule does not check that the FULL output is why the payer is not made.**
   Candidate guards: the payer's recipe has machines (`capacity.unitsByRecipe.get(recipeId) > 0`),
   and no EMPTY input. Neither was observed, and they could move pins.
+- **Done 2026-10-15: `payable`'s loop has a hard cap that throws.** It allows `items.size + 2`
+  passes and then throws, so a lost `visited` guard fails fast in tests instead of hanging the
+  game (the reporter runs on every resolve).
 - **No rejection test in an unaffordable world** for `BUY_MACHINE.recipeId`; validation order is
   correct by reading.
 - **The maxed-storage `upgrade: null` wall for a blocked output is untested.**
