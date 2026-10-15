@@ -64,6 +64,10 @@ That is, buy one more machine for the item the purchase is waiting on. It is an 
   so the machine's own price meets the storage-cap, drained-payer and slow-payer checks
   in turn. Its price is in other items, and those may themselves need storage or a
   reserve.
+- **Walk to what limits it** (added after final review, see below). If the slow payer's
+  recipe has an EMPTY input, the advice walks on to that input's live active recipe,
+  and so on. If the recipe it ends on still has an EMPTY input it cannot walk to, the
+  advice stays as it was.
 
 ### Why half an offline window
 
@@ -135,6 +139,9 @@ Unit tests (`bottleneck.test.ts`):
 3. A slow payer whose recipe is not live leaves the answer as it was.
 4. A slow-payer redirect whose own price overflows a payer's cap continues to storage
    advice.
+5. A slow payer whose recipe has an EMPTY input is redirected to that input's active
+   recipe instead (the fixture: `iron_ore` EMPTY, so `mine_iron`). Tests 1 and 4 run
+   with that input fed.
 
 Measured: the full suite, lint, typecheck and `content:check` pass. A full `sim gate`:
 - `greedy` and `casual` pins are byte-identical.
@@ -150,7 +157,8 @@ To be added after the 2026-10-13 drained-payer amendment:
 > **Amended 2026-10-14: a slow payer gets production advice.** If no payer of a
 > purchase overflows its cap or is drained, but one is short of the price and would take
 > longer than half an offline window to afford it at its current net rate, the advice
-> becomes one more machine for that payer's active recipe (if live), and passes through
+> becomes one more machine for that payer's active recipe (if live; walked on to the
+> recipe that limits it while that recipe has an EMPTY input), and passes through
 > this final step again. Measured cause: `bottleneck` stopped at tier 9 of the vertical
 > slice, told to buy an assembly rig while its 409,600 encased beams were ~22.6 hours of
 > production away. With this rule it finishes tier 10 at 10.62 collections, with no dead
