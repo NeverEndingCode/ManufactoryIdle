@@ -28,12 +28,13 @@ the runs), in two depths:
 | | what it runs | cost | where |
 |---|---|---|---|
 | `pnpm --filter @manufactory/sim gate:smoke` | greedy to tier 4, twice | **2.6 s** | every commit, in `check` |
-| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **2m18s** local, **5m15s** in CI | `pacing` job, PRs + nightly |
+| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **2m15s** local (2026-10-14), **5m15s** in CI (2026-10-12) | `pacing` job, PRs + nightly |
 
 Both currently PASS. The full gate's cost history: 15m54s (2026-09-16), ~49 min once
 `bottleneck` made progress, 13 min after the stall cut-off and parallel workers, 135 min
 once `bottleneck` finished all ten tiers, 85 min after R32 asked jointly, and 2m18s since
-`resolve` solves each item-state configuration once (2026-10-12). `timeout-minutes` on
+`resolve` solves each item-state configuration once (2026-10-12), 2m15s at 2026-10-14 with
+`bottleneck` finishing tier 10. `timeout-minutes` on
 the `pacing` job is 20. It fails the build on a tier time outside tolerance, a known-red
 pin that has drifted *or gone stale*, dead time over threshold, an observed `r_eff` at
 the runaway floor, or a determinism divergence. Verified to actually fail: pointed at
@@ -234,20 +235,20 @@ observed `r_eff` 1.023285 against the 1 + 1e-3 floor.
 
 ## What is left
 
-**1. `bottleneck` regressed 2026-10-13: it stalls at tier 9.**
+**1. `bottleneck`'s tier-9 stall — FIXED 2026-10-14 (slow-payer advice); history below.**
 
-Under the gate's dead-time cut-off it now reports `reachesTier: 9`. From about 3.65
-collections its advice sticks on one constructor Mk.3 for `make_steel_pipe` (limiting
+Originally (2026-10-13): under the gate's dead-time cut-off it reported `reachesTier: 9`. From about 3.65
+collections its advice stuck on one constructor Mk.3 for `make_steel_pipe` (limiting
 target `item:heavy_modular_frame`), priced at about 36.6 `steel_pipe`. The assembly rigs
-drain `steel_pipe` to 0, so the advice is payable on paper and never in practice. Run
-alone, the policy reaches tier 10 at 26.75 collections after a 7d18h dead stretch. This is
-a payable-advice gap: the payability check ignores the net drain of the cost item by its
-consumers. It is the open follow-up.
+drained `steel_pipe` to 0, so the advice was payable on paper and never in practice. Run
+alone, the policy reached tier 10 at 26.75 collections after a 7d18h dead stretch. This was
+a payable-advice gap: the payability check ignored the net drain of the cost item by its
+consumers. It was then the open follow-up.
 
 **Updated 2026-10-13 (reserves protect stock, `specs/2026-10-13-reserves-protect-stock-design.md`):**
 the drained-payer stall is fixed by reserve advice: the reporter names a reserve on a drained
 payer, `bottleneck` sets it and clears it once the advice moves on, and the stall moved from
-~3.65 to a last purchase near 5.1 collections (still `reachesTier: 9`; tier 9 now at 2.5329).
+~3.65 to a last purchase near 5.1 collections (at the time: still `reachesTier: 9`; tier 9 then at 2.5329).
 The new stall is the next follow-up: the advice is the 12th assembly rig for
 `make_heavy_modular_frame` (11 owned), priced at 409,600 `smart_plating` + 409,600
 `encased_industrial_beam`. Liquid (stored + quantum) figures: `smart_plating` 720,576 (FULL,
@@ -256,6 +257,25 @@ at 2.94/s (production 15.63, consumption 12.69). So the price is payable and no 
 drained: the run waits about 22.6 hours for 239,695 more beams, past the gate's 2-collection
 dead-time cut-off. The next question is whether that wait is a pacing finding or wants
 more beam capacity.
+
+**Fixed 2026-10-14 (slow-payer advice, `specs/2026-10-14-slow-payer-advice-design.md`):** the
+12th-rig beam wait is gone. The reporter now advises one more machine for a payer too slow
+to afford the purchase soon, so `bottleneck` keeps building and finishes all ten tiers under
+the gate: tier 10 at 12.4274 collections, dead time 0.61 (tier 9 at 2.4785). The pin no
+longer carries `reachesTier: 9`.
+
+**Amended 2026-10-14 (final review):** the redirect now walks on to the recipe that limits a
+starved input, since it had named starved recipes (beam 318 advised, 98 bought with `steel_beam`
+EMPTY; cable 12 of 12 with `wire` EMPTY). Current pins: tier 10 at 10.6168, dead time 0.5473,
+tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
+
+**Follow-ups from the slow-payer branch (2026-10-14):**
+- **Recipe advice is acted on by buying a lane/class machine, and auto-assignment can place
+  it on a different recipe.** Measured: `refine_rubber` advice, 31 of 31 bought machines went
+  to `refine_plastic`; `make_modular_frame`, 28 of 36 went to `make_reinforced_iron_plate`.
+  That weakens the advice measurement, and the policy may want to assign the machine it bought.
+- **Edge case (not observed):** if the slow payer's recipe is the advised recipe itself, the
+  redirect resets `machinesToClear` to 1.
 
 **Follow-ups from the reserves branch (2026-10-13):**
 - **Size a reserve against the remaining upstream.** A reserve's target (25% of the

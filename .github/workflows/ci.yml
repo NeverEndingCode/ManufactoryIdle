@@ -91,6 +91,10 @@ jobs:
     # remains (it is cheap now, not gone). Measured in CI on 6b8a2d7: 5m15s for the whole
     # job. `timeout-minutes` lowered 90 -> 20 (2026-10-12): ~4x the measured run, so a hung
     # or regressed gate fails in 20 minutes instead of 90.
+    #
+    # 2026-10-14 (slow-payer advice): bottleneck now finishes tier 10, and the gate takes 2m15s
+    # locally (bottleneck ~134s), ~5.5 minutes at the 2.43x runner factor. The 20-minute cap is
+    # ~3.6x the run. (A first measurement of 3m48s was taken on a loaded machine.)
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

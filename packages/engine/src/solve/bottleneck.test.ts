@@ -13,7 +13,7 @@ import { liquidCap, quantumCap, storageCap } from "../economy/storage.js";
 import { levelCostRange, machineCostRange } from "../economy/curves.js";
 import { POWER_ITEM } from "../content/types.js";
 import { D } from "../numbers/decimal.js";
-import { RESERVE_ADVICE_PERCENT, computeBottleneck } from "./bottleneck.js";
+import { RESERVE_ADVICE_PERCENT, SLOW_PAYER_HORIZON_COLLECTIONS, computeBottleneck } from "./bottleneck.js";
 import { solve } from "./solve.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
@@ -868,5 +868,90 @@ describe("computeBottleneck — a drained payer gets a reserve", () => {
       itemId: priceItems[0]![0],
       percent: RESERVE_ADVICE_PERCENT,
     });
+  });
+});
+
+// Spec 2026-10-14 (slow-payer advice): a purchase whose payer would take longer than
+// half an offline window to afford becomes one more machine for that payer's recipe.
+// Measured cause: bottleneck stopped at tier 9 told to buy a rig ~22.6 h of beam
+// production away.
+describe("computeBottleneck — a slow payer gets production advice", () => {
+  const start = initialWorld(content, 1, 0);
+  const sol = solve(start, content, NO_FLOOR);
+  const firstAdvice = computeBottleneck(content, sol.capacity, sol.entries, sol.power, start, sol.itemStates, sol.itemRates);
+  const payer = (() => {
+    if (firstAdvice?.kind !== "recipe") return undefined;
+    const recipe = content.recipes.get(firstAdvice.recipeId)!;
+    return [...machineCostRange(content, recipe.machineClass, 1, 0, 1)][0]?.[0];
+  })();
+  // The one-step redirect assumes the payer's recipe is not starved. The fresh fixture
+  // has iron_ore EMPTY (the walk test below uses it so), so these tests mark it FLOWING.
+  const fed = (states: ReadonlyMap<string, "EMPTY" | "FLOWING" | "FULL">) => {
+    const copy = new Map(states);
+    copy.set("iron_ore", "FLOWING");
+    return copy;
+  };
+  // The payer grows at `net`/s and is otherwise as the fresh fixture has it.
+  const advise = (state: WorldState, net: number, c = content, s = sol, itemStates = fed(s.itemStates)) => {
+    const rates = new Map(s.itemRates);
+    rates.set(payer!, { production: net + 1, consumption: 1, net });
+    return computeBottleneck(c, s.capacity, s.entries, s.power, state, itemStates, rates);
+  };
+
+  it("redirects to the slow payer's recipe", () => {
+    // Preconditions: the fresh fixture advises a machine priced in an item it is short of.
+    expect(firstAdvice).toMatchObject({ kind: "recipe", recipeId: "make_plate", limitingTarget: "item:iron_plate" });
+    expect(payer).toBe("iron_ingot");
+    // 1e-6/s is far slower than half an offline window allows.
+    expect(advise(start, 1e-6)).toEqual({
+      kind: "recipe",
+      recipeId: start.activeRecipe[payer!],
+      limitingTarget: firstAdvice!.limitingTarget,
+      machinesToClear: 1,
+    });
+  });
+
+  it("walks the redirect on to the recipe that limits an EMPTY input", () => {
+    // Precondition: the fixture itself marks iron_ore (smelt_iron's input) EMPTY.
+    expect(sol.itemStates.get("iron_ore")).toBe("EMPTY");
+    expect(advise(start, 1e-6, content, sol, sol.itemStates)).toEqual({
+      kind: "recipe",
+      recipeId: start.activeRecipe.iron_ore,
+      limitingTarget: firstAdvice!.limitingTarget,
+      machinesToClear: 1,
+    });
+    expect(start.activeRecipe.iron_ore).toBe("mine_iron");
+  });
+
+  it("leaves the advice alone when the payer affords it within the horizon", () => {
+    expect(SLOW_PAYER_HORIZON_COLLECTIONS).toBe(0.5);
+    expect(advise(start, 1e9)).toMatchObject({ kind: "recipe", recipeId: "make_plate", limitingTarget: "item:iron_plate" });
+  });
+
+  it("leaves the advice alone when the slow payer has no active recipe", () => {
+    const { [payer!]: _dropped, ...activeRecipe } = start.activeRecipe;
+    expect(advise({ ...start, activeRecipe }, 1e-6)).toMatchObject({ kind: "recipe", recipeId: "make_plate", limitingTarget: "item:iron_plate" });
+  });
+
+  it("sends a redirect whose own price overflows on to storage advice", () => {
+    // A variant where the payer's producing machine costs far more than anything can hold.
+    const recipeId = start.activeRecipe[payer!]!;
+    const machineClass = content.recipes.get(recipeId)!.machineClass;
+    const bundle = content.bundle;
+    const pricey = indexContent({
+      ...bundle,
+      machineClasses: bundle.machineClasses.map((cls) =>
+        cls.id !== machineClass
+          ? cls
+          : { ...cls, marks: cls.marks.map((m) => ({ ...m, buildCost: m.buildCost.map((b) => ({ ...b, amount: 1e12 })) })) },
+      ),
+    } as never);
+    const s = solve(start, pricey, NO_FLOOR);
+    // Precondition: the variant still advises the same first purchase.
+    expect(computeBottleneck(pricey, s.capacity, s.entries, s.power, start, s.itemStates, s.itemRates)).toMatchObject({
+      kind: "recipe",
+      recipeId: (firstAdvice as { recipeId: string }).recipeId,
+    });
+    expect(advise(start, 1e-6, pricey, s)).toMatchObject({ kind: "storage" });
   });
 });
