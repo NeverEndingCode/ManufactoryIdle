@@ -78,19 +78,11 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
   {
     policy: "bottleneck",
     untilTier: 10,
-    // Re-measured 2026-10-13 after reserves came to protect the stock they bank (spec
-    // 2026-10-13-reserves-protect-stock): `bottleneck` follows reserve advice. It still
-    // STALLS at tier 9, now later: the gate stops it once it has gone over the dead-time
-    // threshold (2.0006 collections) with nothing bought. The last purchase is at ~5.1
-    // collections (was ~3.65 before the stall began, when it stuck on a constructor for
-    // make_steel_pipe priced in a drained steel_pipe -- fixed by the reserve advice). The
-    // binding constraint is now make_heavy_modular_frame: the advice is the 12th assembly rig
-    // (owned 11), priced at 409,600 smart_plating + 409,600 encased_industrial_beam. The price is
-    // payable and neither payer is drained: smart_plating holds 720,576 liquid (stored +
-    // quantum; FULL, net 0) and encased_industrial_beam holds 169,905 of a 450,360 liquid cap,
-    // growing at 2.94/s. The run is waiting for the beams: 239,695 more is about 22.6 hours at
-    // that rate, longer than the dead-time cut-off (2 collections, 16 hours).
-    reachesTier: 9,
+    // Fixed 2026-10-14 (spec 2026-10-14-slow-payer-advice): `bottleneck` used to STALL at
+    // tier 9, waiting about 22.6 hours for encased_industrial_beam to afford the 12th assembly
+    // rig, past the dead-time cut-off. The reporter now advises one more machine for a payer
+    // too slow to afford the purchase soon, so the run keeps building and finishes tier 10.
+    // Its dead time is now 0.6095 collections.
     knownRed: [
       {
         tier: 1,
@@ -141,35 +133,37 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 7,
-        observed: 1.3077,
+        observed: 1.3573,
         why:
-          "target 6.8, measured 1.308 (-81%). Unchanged by payable advice. This was " +
+          "target 6.8, measured 1.357 (-80%). Unchanged by payable advice. This was " +
           "where bottleneck used to stop: the reporter advised a 4,473 iron_plate " +
           "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
-          "bought nothing. After payable advice the run passes tier 7; the advice it took there " +
-          "was not captured (the probe started from a pre-payable checkpoint). " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
+          "bought nothing. After payable advice the run passes tier 7. " +
+          "Re-measured 2026-10-14 after the reporter advised production for slow payers.",
       },
       {
         tier: 8,
-        observed: 1.6469,
+        observed: 1.7369,
         why:
-          "target 11, measured 1.647 (-85%): the same minimal-buying overshoot, now reached " +
-          "because the run no longer stalls at tier 7. " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
+          "target 11, measured 1.737 (-84%): the same minimal-buying overshoot. " +
+          "Re-measured 2026-10-14 after the reporter advised production for slow payers.",
       },
       {
         tier: 9,
-        observed: 2.5329,
+        observed: 2.4785,
         why:
-          "target 16, measured 2.533 (-84%): the same overshoot, with the gap narrowing. " +
-          "This is the last tier bottleneck reaches under the gate: tier 10 needs " +
-          "heavy_modular_frame, the run then sits bound on make_heavy_modular_frame for over two " +
-          "collections of dead time, and the gate stops it (reachesTier 9). " +
-          "Its advice there is the 12th assembly rig, priced at 409,600 smart_plating plus 409,600 " +
-          "encased_industrial_beam; smart_plating holds 720,576 liquid, encased_industrial_beam " +
-          "169,905 (growing 2.94/s), so it is waiting about 22.6 hours for beams, not blocked. " +
-          "Re-measured 2026-10-13 after reserves came to protect the stock they bank.",
+          "target 16, measured 2.479 (-85%): the same overshoot, with the gap narrowing. " +
+          "Re-measured 2026-10-14 after the reporter advised production for slow payers.",
+      },
+      {
+        tier: 10,
+        observed: 12.4274,
+        why:
+          "target 25, measured 12.427 (-50%): the overshoot is at its narrowest. " +
+          "bottleneck now finishes tier 10 because of slow-payer advice: it used to stall at " +
+          "tier 9 waiting about 22.6 hours for encased_industrial_beam to afford the 12th " +
+          "assembly rig, and now builds more beam production instead. " +
+          "Re-measured 2026-10-14 after the reporter advised production for slow payers.",
       },
     ],
   },

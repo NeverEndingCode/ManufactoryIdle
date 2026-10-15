@@ -2,7 +2,7 @@
 
 **Amends:** engine spec §4.5 (the bottleneck reporter; its 2026-10-10 "payable" and
 2026-10-13 "drained payer" amendments).
-**Status:** designed 2026-10-14; not implemented.
+**Status:** implemented 2026-10-14.
 **Follows:** `2026-10-13-reserves-protect-stock-design.md` (PR #9), whose measured stall
 this addresses.
 

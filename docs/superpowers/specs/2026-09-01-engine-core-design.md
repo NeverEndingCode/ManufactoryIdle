@@ -783,6 +783,15 @@ walk through the reserved item's recipe rather than drawing its stock. Measured 
 `bottleneck` stalled at tier 9 of the vertical slice told to buy a constructor priced
 in `steel_pipe`, which the assembly rigs drain to zero.
 
+**Amended 2026-10-14: a slow payer gets production advice.** If no payer of a
+purchase overflows its cap or is drained, but one is short of the price and would take
+longer than half an offline window to afford it at its current net rate, the advice
+becomes one more machine for that payer's active recipe (if live), and passes through
+this final step again. Measured cause: `bottleneck` stopped at tier 9 of the vertical
+slice, told to buy an assembly rig while its 409,600 encased beams were ~22.6 hours of
+production away. With this rule it finishes tier 10 at 12.43 collections, with no dead
+stretch over 0.61.
+
 ### C.4 Power
 
 Grid per §6.1: `powerRatio = min(1, capacity / demand)`, demand scales with clock, clock

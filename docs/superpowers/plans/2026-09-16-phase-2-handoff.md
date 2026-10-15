@@ -257,6 +257,12 @@ drained: the run waits about 22.6 hours for 239,695 more beams, past the gate's 
 dead-time cut-off. The next question is whether that wait is a pacing finding or wants
 more beam capacity.
 
+**Fixed 2026-10-14 (slow-payer advice, `specs/2026-10-14-slow-payer-advice-design.md`):** the
+12th-rig beam wait is gone. The reporter now advises one more machine for a payer too slow
+to afford the purchase soon, so `bottleneck` keeps building and finishes all ten tiers under
+the gate: tier 10 at 12.4274 collections, dead time 0.61 (tier 9 now at 2.4785). The pin no
+longer carries `reachesTier: 9`.
+
 **Follow-ups from the reserves branch (2026-10-13):**
 - **Size a reserve against the remaining upstream.** A reserve's target (25% of the
   unconstrained rate, ranked right after power) can take nearly all of a short shared
