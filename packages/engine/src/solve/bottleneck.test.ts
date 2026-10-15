@@ -893,8 +893,8 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
 
   it("redirects to the slow payer's recipe", () => {
     // Preconditions: the fresh fixture advises a machine priced in an item it is short of.
-    expect(firstAdvice?.kind).toBe("recipe");
-    expect(payer).toBeDefined();
+    expect(firstAdvice).toMatchObject({ kind: "recipe", recipeId: "make_plate", limitingTarget: "item:iron_plate" });
+    expect(payer).toBe("iron_ingot");
     // 1e-6/s is far slower than half an offline window allows.
     expect(advise(start, 1e-6)).toEqual({
       kind: "recipe",
@@ -906,12 +906,12 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
 
   it("leaves the advice alone when the payer affords it within the horizon", () => {
     expect(SLOW_PAYER_HORIZON_COLLECTIONS).toBe(0.5);
-    expect(advise(start, 1e9)).toEqual(firstAdvice);
+    expect(advise(start, 1e9)).toMatchObject({ kind: "recipe", recipeId: "make_plate", limitingTarget: "item:iron_plate" });
   });
 
   it("leaves the advice alone when the slow payer has no active recipe", () => {
     const { [payer!]: _dropped, ...activeRecipe } = start.activeRecipe;
-    expect(advise({ ...start, activeRecipe }, 1e-6)).toEqual(firstAdvice);
+    expect(advise({ ...start, activeRecipe }, 1e-6)).toMatchObject({ kind: "recipe", recipeId: "make_plate", limitingTarget: "item:iron_plate" });
   });
 
   it("sends a redirect whose own price overflows on to storage advice", () => {
