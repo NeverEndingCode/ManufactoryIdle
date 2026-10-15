@@ -568,7 +568,7 @@ Re-run the gate without `--emit-pins`, and confirm exit 0 with no findings. If t
 - **§D.1:** in `docs/superpowers/specs/2026-09-01-engine-core-design.md`, change the action-list line to `BUY_MACHINE       { lane, machineClass, mark, count, recipeId? }`. Under the list, insert the spec's "The §D.1 amendment" text without the `> ` prefixes.
 - **§4.5:** in the same file, after the 2026-10-14 slow-payer amendment, insert the spec's Part 2 "The §4.5 amendment" text without the `> ` prefixes.
 - **The handoff:** in `docs/superpowers/plans/2026-09-16-phase-2-handoff.md`, mark the follow-up "recipe advice is bought as a lane/class machine and auto-assignment can place it elsewhere" as fixed (2026-10-14), with the measured misplaced count (105 → the probe's number). Add a new follow-up: the reporter can advise a recipe already running below nameplate (16 of 339 purchases, mostly `mine_coal`). Give its moved pins in one line.
-- **The spec's Status:** `**Status:** implemented 2026-10-14.`
+- **The spec's Status:** `**Status:** implemented 2026-10-15.`
 
 - [ ] **Step 6: Lint, typecheck, commit**
 
