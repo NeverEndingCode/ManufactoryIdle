@@ -49,6 +49,14 @@ export type Bottleneck =
 /** The share of production a reserve advice sets aside: measured on the slice, under the 50% maximum. */
 export const RESERVE_ADVICE_PERCENT = 0.25;
 
+/**
+ * Spec 2026-10-14: a payer that would take longer than this many offline windows to
+ * afford the advised purchase gets production advice instead. Measured on the slice:
+ * 0.5 finishes tier 10 soonest with the shortest dead stretches (1 is slower, 0.25
+ * buys 66 more machines for a later finish).
+ */
+export const SLOW_PAYER_HORIZON_COLLECTIONS = 0.5;
+
 export type StorageUpgrade = "storage" | "quantum";
 
 /**
@@ -446,12 +454,39 @@ function drainedPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemI
 }
 
 /**
+ * Spec 2026-10-14: the cost item that would take longest to afford at its current net
+ * rate, if that is longer than SLOW_PAYER_HORIZON_COLLECTIONS offline windows; else
+ * null. Only short, growing items count -- a short item that is not growing is
+ * drainedPayer's case, and one that already covers its share is not waiting on anything.
+ */
+function slowPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemId | null {
+  const { content, state, itemRates } = walk;
+  let slowest: ItemId | null = null;
+  let worstMs = SLOW_PAYER_HORIZON_COLLECTIONS * content.offlineCapMs;
+  for (const [itemId, amount] of costs) {
+    const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
+    const shortfall = amount.minus(liquid(state, itemId).plus(bound)).toNumber();
+    if (!(shortfall > 0)) continue;
+    const net = itemRates.get(itemId)?.net ?? 0;
+    if (!(net > FLOW_TOLERANCE)) continue;
+    const ms = (shortfall / net) * 1000;
+    if (ms > worstMs) {
+      worstMs = ms;
+      slowest = itemId;
+    }
+  }
+  return slowest;
+}
+
+/**
  * The final step every answer passes through (spec §4.5, amended 2026-10-10). A
  * purchase that costs more of some item than that item can be held can never be made,
  * so the advice becomes storage for that payer -- priced the same way, so a payer whose
  * own upgrade overflows steps back again. Measured cause: `bottleneck` stalled at tier 7
  * of the vertical slice told to buy a 4,473 iron_plate Quantum Storage level while
  * iron_plate could hold 4,000; one iron_plate storage level, 90, was the way out.
+ * Spec 2026-10-14: a payer too slow to afford the price within half an offline window
+ * becomes one more machine for its active recipe, priced through this same loop.
  * `visited` bounds the steps at one per payer; reaching one twice, or a payer with both
  * curves maxed, ends at `upgrade: null` -- the honest wall, which check 12 makes
  * unreachable at the deepest tier but not before it.
@@ -469,9 +504,19 @@ function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
       // The price fits the cap. Spec 2026-10-13: it may still never be payable, if a
       // consumer drains the item it is priced in.
       const drained = drainedPayer(walk, costs);
-      return drained === null
-        ? current
-        : { kind: "reserve", itemId: drained, percent: RESERVE_ADVICE_PERCENT, limitingTarget: answer.limitingTarget };
+      if (drained !== null) {
+        return { kind: "reserve", itemId: drained, percent: RESERVE_ADVICE_PERCENT, limitingTarget: answer.limitingTarget };
+      }
+      // Spec 2026-10-14: payable, but a payer is too slow to get there soon. Advise one
+      // more machine for it, and price that through this same loop. One redirect per
+      // payer (`visited`), and none when its recipe is not live.
+      const slow = slowPayer(walk, costs);
+      if (slow === null || visited.has(slow)) return current;
+      const recipeId = activeRecipeOf(state.activeRecipe, slow);
+      if (recipeId === undefined || !isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) return current;
+      visited.add(slow);
+      current = { kind: "recipe", recipeId, limitingTarget: answer.limitingTarget, machinesToClear: 1 };
+      continue;
     }
     if (visited.has(payer)) {
       return { kind: "storage", itemId: payer, limitingTarget: answer.limitingTarget, upgrade: null };
