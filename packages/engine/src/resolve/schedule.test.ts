@@ -26,11 +26,15 @@ describe("schedule", () => {
     }
   });
 
-  it("at a fresh world the next boundary is the internal unpin step", () => {
-    // iron_ore and iron_ingot start EMPTY-pinned, so the first discontinuity is the
-    // EPSILON unpin, which resolve() takes but never reports in `events`.
+  it("on a fresh world skips the internal unpin and matches the first reported event", () => {
+    // iron_ore and iron_ingot start EMPTY-pinned, so resolve's first internal step is
+    // the EPSILON unpin. It is not a visible rate change, so schedule must not report it.
     const state = initialWorld(content, 1, 0);
-    expect(schedule(state, content).nextBoundaryAtMs).toBe(EPSILON_MS);
+    const s = schedule(state, content);
+    const { events } = resolve(state, content, BIG);
+    expect(s.nextBoundaryAtMs).not.toBeNull();
+    expect(s.nextBoundaryAtMs!).toBeGreaterThan(EPSILON_MS * 1000);
+    expect(s.nextBoundaryAtMs!).toBeCloseTo(events[0]!.atMs, 6);
   });
 
   it("matches the first event resolve fires once nothing is pinned", () => {
