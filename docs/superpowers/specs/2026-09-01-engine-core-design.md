@@ -708,6 +708,13 @@ back out. Without the third, a reserve claiming a FULL item's recipe deadlocked 
 consumers. None of this applies when no reserve is set: the pacing gate's pins are
 unchanged.
 
+**Amended 2026-10-16: a reserve is sized against what its item really makes.** A
+reserve's target is `percent × the item's production in the same state with no
+reserves, at full power`, so R8's "never more than half of an item's own production"
+holds against what the chain makes, and a brownout doesn't shrink a reserve. It was `percent × the unconstrained rate`, which, when the upstream was
+short, let a 25% reserve take everything and starve the item's consumers. Measured: every
+`bottleneck` reserve lasted exactly one decision.
+
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
 grid is binding.
@@ -813,6 +820,12 @@ Each answer passes through this final step again. Measured cause: in a `bottlene
 run on the vertical slice, 33 decisions kept advising a purchase that
 `encased_industrial_beam` could not pay, while the beam recipe was starved. The
 reporter now names what limits it.
+
+**Amended 2026-10-16: `bottleneck` keeps a reserve that is working.** A reserve is
+cleared when its item is FULL or no longer growing, unless the reporter is advising it.
+It is no longer cleared just because the advice moved. Two short payers of one price
+can then both bank instead of alternating; measured, they alternated four times on the
+vertical slice.
 
 ### C.4 Power
 

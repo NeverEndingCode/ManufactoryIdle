@@ -3,7 +3,7 @@
 **Amends:** ruling R8 (reserve entries, `solve/waterfall.ts`). Also amends
 `2026-10-13-reserves-protect-stock-design.md`'s rule that a `bottleneck` reserve lasts
 only while the reporter asks for it.
-**Status:** approved design, 2026-10-16.
+**Status:** implemented 2026-10-16.
 **Closes:** the two follow-ups from the reserves branch (2026-10-13) recorded in the
 phase-2 handoff, plus three small test and doc gaps.
 

@@ -313,19 +313,15 @@ tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
 - **Done 2026-10-15: `payable`'s loop has a hard cap that throws.** It allows `items.size + 2`
   passes and then throws, so a lost `visited` guard fails fast in tests instead of hanging the
   game (the reporter runs on every resolve).
-- **No rejection test in an unaffordable world** for `BUY_MACHINE.recipeId`; validation order is
+- **Done 2026-10-16: no rejection test in an unaffordable world** for `BUY_MACHINE.recipeId`; validation order is
   correct by reading.
-- **The maxed-storage `upgrade: null` wall for a blocked output is untested.**
-- **The gate-cli `why` texts repeat a long re-measure sentence;** a shared constant would be tidier.
+- **Done 2026-10-16: the maxed-storage `upgrade: null` wall for a blocked output is untested.**
+- **Done 2026-10-16: the gate-cli `why` texts repeat a long re-measure sentence;** a shared `remeasured(date, cause)` helper now builds them.
 
 **Follow-ups from the reserves branch (2026-10-13):**
-- **Size a reserve against the remaining upstream.** A reserve's target (25% of the
-  unconstrained rate, ranked right after power) can take nearly all of a short shared
-  upstream and starve its consumers (`steel_pipe` reserved: consumption 4.386 to 0), so each
-  reserve lasts one interval. Cap the target by what is left of the upstream.
-- **Latent livelock.** The policy holds one reserve at a time, so two items both short in
-  the same price could alternate reserves without either reaching the price (not seen in
-  the gate). A fix would keep reserves for every short payer of the current price.
+- **Done 2026-10-16: size a reserve against the remaining upstream.** A reserve is now sized as `percent` of the item's production in a full-power, reserve-free item pass, so it cannot take a short upstream and starve its consumers. Measured: `bottleneck` t10 10.5329 -> 10.0576, dead 0.6379 -> 0.7753 collections.
+- **Done 2026-10-16: latent livelock.** `bottleneck` keeps a reserve while its item is growing and not FULL, so two short payers of one price can both bank. The probe's A-B-A alternations fell from 4 to 3 (it counts advice runs, not held reserves).
+- **No unit test distinguishes full-power reserve sizing from full-solve sizing** (needs a brownout fixture state); the gate covers it (full solve measured dead 1.34).
 
 History, kept below (the pre-capstone state, no longer current):
 
