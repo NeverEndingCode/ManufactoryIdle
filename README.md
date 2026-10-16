@@ -9,10 +9,9 @@ for years.
 
 ## Status
 
-**Phases 0 and 1 complete; Phase 2 (calibrated content) in progress.** The monorepo, four
-packages (`rational`, `content`, `engine`, `sim`), CI, and local infra (Postgres +
-SuperTokens via Docker Compose) are in place, with the test suite, lint, typecheck and
-`pnpm content:check` all green.
+**Phases 0, 1 and 2 complete; Phase 3 (server) in progress: 3a, guest play over HTTP.** The
+monorepo, its packages (`rational`, `content`, `engine`, `sim`) and the `apps/api` server, CI,
+and local infra (Postgres + SuperTokens via Docker Compose) are in place, with the test suite, lint, typecheck and `pnpm content:check` all green.
 
 There is deliberately no test count here. It was wrong three times before it was removed —
 run `pnpm test` for the number, which is the only place it cannot go stale.
@@ -38,8 +37,8 @@ The original spec is decomposed into four, of which the engine core is the first
 |---|---|---|
 | 0 | Monorepo, Postgres, SuperTokens, engine skeleton, content validator, CI | Green pipeline — **done** |
 | 1 | Engine + simulator | A playable game in the terminal |
-| 2 | Calibrated content | A game that is *paced* |
-| 3 | Server + authority | A game with a backend |
+| 2 | Calibrated content | A game that is *paced* — **done** |
+| 3 | Server + authority | A game with a backend — **in progress** (3a: guest play over HTTP) |
 | 4 | Web client | A game other people can play |
 
 ## Design pillars
