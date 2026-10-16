@@ -72,6 +72,8 @@ export function solve(
       ...state,
       reserve: Object.fromEntries(Object.keys(state.reserve).map((id) => [id, 0])),
     };
+    // The pass uses power target 0, so production that exists only to feed generator fuel
+    // is not counted (a fuel item's reserve may be under-sized).
     const fullPower = solveItems({
       content,
       vectors,

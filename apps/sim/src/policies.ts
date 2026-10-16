@@ -376,7 +376,9 @@ const bottleneck: Policy = {
       if (percent <= 0) continue;
       if (report?.kind === "reserve" && report.itemId === itemId) continue;
       // Dropping a reserve the moment the advice moved made every reserve last one
-      // decision and let two payers alternate.
+      // decision and let two payers alternate. `net` comes from the solution that
+      // includes the reserve, so the reserve's own banking counts as growth: in practice
+      // this keeps a reserve until its item is FULL or the reserve gets nothing.
       const growing = (ctx.solution.itemRates.get(itemId)?.net ?? 0) > FLOW_TOLERANCE;
       const full = ctx.solution.itemStates.get(itemId) === "FULL";
       if (growing && !full) continue;

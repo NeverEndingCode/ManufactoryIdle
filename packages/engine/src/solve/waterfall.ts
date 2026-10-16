@@ -128,9 +128,10 @@ export function requirementVector(
  * to at most 50% so a reserve can never starve the rest of the list.
  *
  * Spec 2026-10-16: a reserve's target is `percent x productionOf(item)`, the item's
- * production in a reserve-free solve of the same state, so it takes at most half of
- * what is really made. When `productionOf` is omitted (callers outside `solve`, such
- * as tests) the old `percent x unconstrainedRate` sizing is kept.
+ * production in a full-power reserve-free item pass of the same state, with `percent`
+ * clamped to 50%. That caps the target against the counterfactual; it is not a bound on
+ * the reserve's share of what is actually made. When `productionOf` is omitted (direct
+ * callers such as tests) the legacy `percent x unconstrainedRate` sizing is kept.
  */
 export function effectivePriority(
   content: IndexedContent,

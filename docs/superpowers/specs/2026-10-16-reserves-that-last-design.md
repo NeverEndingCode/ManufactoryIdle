@@ -46,8 +46,12 @@ targetRate = percent × productionWithoutReserves(itemId)
 ```
 
 This replaces `percent × unconstrainedRate(...)`. `RESERVE_MAX_PERCENT` (0.5) still
-clamps `percent`, so a reserve can take at most half of what its item really makes, as
-R8 says. With no reserve set, nothing changes and no extra solve runs. A reserved item
+clamps `percent`, so the target is capped at `percent × full-power reserve-free
+production` (at most 50% of that counterfactual). This makes reserves smaller than the
+unconstrained sizing, but it is not a bound on the reserve's share of what is actually
+made, and consumers can still be cut off while their item is reserved, because walks treat
+a reserved item as pinned EMPTY (measured: 30 decisions; see "Measured after
+implementation"). With no reserve set, nothing changes and no extra solve runs. A reserved item
 whose production without reserves is 0 gets target 0, so the reserve has no effect.
 This matches today's drained-payer rule, which never names an unmade item.
 
@@ -68,8 +72,10 @@ reserve-free pass is a function of that same state, so the cache stays sound.
 
 The `bottleneck` policy clears a reserve only when:
 - the item is FULL (there's nowhere left to bank), or
-- the item is not growing: its net rate is ≤ `FLOW_TOLERANCE`, so the reserve isn't
-  helping.
+- the item is not growing: its net rate is ≤ `FLOW_TOLERANCE`. In practice this means the
+  rule keeps a reserve until its item is FULL (or the reserve receives nothing), because
+  `net` comes from the solution that includes the reserve, so the reserve's own banking
+  counts as growth. Measured: 13/13 holds ended at FULL, at most 2 held at once.
 
 In either case it clears only if the reporter isn't currently advising that same reserve.
 Otherwise it keeps the reserve, even after the advice has moved on. Several reserves can
@@ -115,22 +121,39 @@ bank only surplus, was slower on every tier and was dropped.
 The prototype's Part 1 used the full-power item pass this design now specifies (see "Why
 full power" above), so the table's Parts 1 + 2 row is what the gate should reproduce.
 
+## Measured after implementation (final review)
+
+One `bottleneck` run, seed 42. 13 reserve holds in 908 decisions; at most 2 held at once;
+every hold ended at FULL (13/13), none because the item stopped growing. Holds lasted
+0.1-0.9 h except `encased_industrial_beam` at t9 (4.05 h, 1.57 h). On 30 decisions with a
+reserve held, the item's consumers got 0 despite surplus (for example `steel_pipe` at t9:
+reserve about 20% of production, consumption 0 against 9-20/s reserve-free). The cause is
+the 2026-10-13 rule that walks treat a reserved item as pinned EMPTY (`waterfall.ts`),
+interacting with R32, not the reserve's size. On 7 decisions the reserve took more than 50%
+of actual production (up to 100%) at power 1.0, because the 50% cap is against the
+full-power reserve-free counterfactual, not the solved production with the reserve in
+place. The measured gate gains above are real; only the explanations were wrong.
+
 ## Amendments
 
 **To ruling R8**, in the engine spec, where reserve entries are described:
 
-> **Amended 2026-10-16: a reserve is sized against what its item really makes.** A
+> **Amended 2026-10-16: a reserve is sized against what its item makes at full power.** A
 > reserve's target is `percent × the item's production in the same state with no
-> reserves, at full power`, so R8's "never more than half of an item's own production"
-> holds against what the chain makes, and a brownout doesn't shrink a reserve. It was `percent × the unconstrained rate`, which, when the upstream was
-> short, let a 25% reserve take everything and starve the item's consumers. Measured: every
-> `bottleneck` reserve lasted exactly one decision.
+> reserves, at full power`, with `percent` clamped to 50%, so the target is at most half of
+> that full-power reserve-free counterfactual, and a brownout doesn't shrink a reserve. This
+> is not a bound on the reserve's share of what is actually made. It was `percent × the
+> unconstrained rate`, which, when the upstream was short, let a 25% reserve exceed what
+> the chain makes. Consumers of a reserved item can still be cut off while it is reserved
+> (walks treat it as pinned EMPTY). Measured: every `bottleneck` reserve lasted exactly one
+> decision.
 
 **To §4.5 / the reserves spec's policy rule:**
 
-> **Amended 2026-10-16: `bottleneck` keeps a reserve that is working.** A reserve is
-> cleared when its item is FULL or no longer growing, unless the reporter is advising it.
-> It is no longer cleared just because the advice moved. Two short payers of one price
+> **Amended 2026-10-16: `bottleneck` keeps a reserve until its item is FULL.** A reserve is
+> kept until its item is FULL (or the reserve receives nothing), unless the reporter is
+> advising it; the reserve's own banking counts as growth. It is no longer cleared just
+> because the advice moved. Two short payers of one price
 > can then both bank instead of alternating; measured, they alternated four times on the
 > vertical slice.
 
@@ -139,7 +162,8 @@ full power" above), so the table's Parts 1 + 2 row is what the gate should repro
 **Engine tests:**
 1. With a reserve set on an item whose upstream is short, the reserve's target equals
    `percent × that item's production with no reserves`, not
-   `percent × unconstrainedRate`. The item's consumers keep a nonzero share.
+   `percent × unconstrainedRate`. (The item's consumers keep a nonzero share in the fixture
+   test; this does not hold generally on the slice, see "Measured after implementation".)
 2. With no reserve set, `solve` makes no reserve-free pass and its result is
    byte-identical to before.
 3. A reserved item whose production without reserves is 0 gets no reserve effect.
