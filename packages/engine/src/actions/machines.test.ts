@@ -5,6 +5,7 @@ import { D } from "../numbers/decimal.js";
 import { indexContent } from "../graph/index-content.js";
 import { ladderInput, machineCostRange } from "../economy/curves.js";
 import { liquid } from "../economy/storage.js";
+import { solve } from "../solve/solve.js";
 import { initialWorld, installedAt, withInstalled, type WorldState } from "../state/world.js";
 import {
   applyAssignMachines,
@@ -113,6 +114,42 @@ describe("BUY_MACHINE", () => {
       );
       expect(next.assignment.residual_fuel).toBe(1);
       expect(next.assignment.refine_plastic).toBe(3);
+    });
+
+    // Measured on the vertical slice: 30 recipes in one bottleneck run reported a clock
+    // of exactly 0.980. That is the waterfall's 2% reserve floor (spec 4.2) taxing a
+    // contested recipe that is in fact running flat out, not a recipe starved of
+    // input. Read as "below nameplate" it hid the higher-ranked recipe from
+    // auto-assignment. Here one extractor feeds exactly four plastic refineries (120
+    // crude/s against 4 x 30), so the extractor is taxed and plastic runs at 0.98.
+    it("treats a recipe running at the reserve floor as running at nameplate", () => {
+      const base = refineryWorld();
+      const w = withInstalled(
+        withInstalled(base, "oil", "extractor", 1, 1),
+        "oil",
+        "refinery",
+        1,
+        4,
+      );
+      const staffed: WorldState = {
+        ...w,
+        assignment: { ...w.assignment, extract_oil: 1, refine_plastic: 4, residual_fuel: 0 },
+      };
+      // Pin the premise against the real solver: plastic is floor-taxed, not at 1.
+      const plastic = solve(staffed, content).clocks.get("refine_plastic") ?? 0;
+      expect(plastic).toBeGreaterThanOrEqual(0.98);
+      expect(plastic).toBeLessThan(1 - 1e-9);
+      const next = expectAccepted(
+        applyBuyMachine(staffed, content, {
+          type: "BUY_MACHINE",
+          lane: "oil",
+          machineClass: "refinery",
+          mark: 1,
+          count: 1,
+        }),
+      );
+      expect(next.assignment.refine_plastic).toBe(5);
+      expect(next.assignment.residual_fuel ?? 0).toBe(0);
     });
 
     // Phase 2, Task 8. Priority rank alone is winner-take-all: the top-ranked
