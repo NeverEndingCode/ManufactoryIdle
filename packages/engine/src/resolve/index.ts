@@ -198,6 +198,7 @@ function nextDiscontinuity(
   state: WorldState,
   solution: StepAnswer,
   cursorMs: number,
+  options: { skipUnpin?: boolean } = {},
 ): NextEvent {
   let best: NextEvent = { dtMs: Number.POSITIVE_INFINITY, kind: null };
   const consider = (dtMs: number, kind: InternalEventKind, itemId?: ItemId): void => {
@@ -212,7 +213,8 @@ function nextDiscontinuity(
       if (have.lte(0)) {
         // Leaves EMPTY at essentially this instant: re-solve before integrating any
         // further so the next segment sees the correct (unpinned) rate.
-        consider(EPSILON_MS, "unpin", itemId);
+        // schedule() skips it: it is not a rate change a client can see.
+        if (!options.skipUnpin) consider(EPSILON_MS, "unpin", itemId);
         continue;
       }
       const room = liquidCap(content, state, itemId).minus(have);
@@ -252,7 +254,7 @@ export interface Schedule {
   atMs: number;
   /** Per stock item: liquid stock now (canonical decimal string) and net rate per second. */
   items: Record<ItemId, { stock: string; netPerSecond: number }>;
-  /** World time of the next rate change (fill, drain, unpin, timer, milestone), or null if none. */
+  /** World time of the next rate change (fill, drain, timer, milestone; never the internal unpin), or null if none. */
   nextBoundaryAtMs: number | null;
 }
 
@@ -268,7 +270,9 @@ export function schedule(state: WorldState, content: IndexedContent): Schedule {
       },
     ]),
   );
-  const next = nextDiscontinuity(content, state, solution, state.lastResolvedAt);
+  const next = nextDiscontinuity(content, state, solution, state.lastResolvedAt, {
+    skipUnpin: true,
+  });
   return {
     atMs: state.lastResolvedAt,
     items,
