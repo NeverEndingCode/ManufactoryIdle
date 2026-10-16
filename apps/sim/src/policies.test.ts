@@ -96,6 +96,49 @@ describe("affordableCandidates", () => {
     expect([...lanes].sort()).toEqual(["iron", "power"]);
   });
 
+  // Measured on main b1e0d26 (seed 42): greedy bought 98 and casual 108 storage
+  // levels (about 18-20% of their storage purchases) for items no live recipe
+  // produces. Same shape as the machine guard above.
+  describe("storage offers", () => {
+    const slice = loadContent(SLICE_BUNDLE_DIR);
+    function richSlice(tier: number): PolicyContext {
+      const base = newWorld(slice, 1);
+      const state: WorldState = {
+        ...base,
+        tier,
+        stored: Object.fromEntries(slice.stockItemIds.map((id) => [id, D(100_000)])),
+      };
+      return { content: slice, state, solution: solve(state, slice), nowMs: 0 };
+    }
+    const storageItems = (ctx: PolicyContext): Set<string> =>
+      new Set(
+        affordableCandidates(ctx)
+          .filter((c) => c.action.type === "BUY_STORAGE")
+          .map((c) => (c.action as { itemId: string }).itemId),
+      );
+
+    it("offers no storage for an item only a not-yet-live recipe produces", () => {
+      const items = storageItems(richSlice(0));
+      // Precondition: a live-produced item is offered, so storage was affordable.
+      expect(items.has("iron_ore")).toBe(true);
+      // copper_ore is mined only by mine_copper_ore, unlockTier 2.
+      expect(slice.stockItemIds).toContain("copper_ore");
+      expect(items.has("copper_ore")).toBe(false);
+    });
+
+    it("offers storage for an item produced only as a live recipe's byproduct", () => {
+      const ctx = richSlice(6);
+      expect(ctx.state.activeRecipe["plastic"]).toBe("refine_plastic");
+      // No live recipe has heavy_oil_residue as its primary output.
+      expect(
+        [...slice.recipes.values()].some((r) => r.primaryOutput === "heavy_oil_residue"),
+      ).toBe(false);
+      expect(storageItems(ctx).has("heavy_oil_residue")).toBe(true);
+      // Before refine_plastic unlocks, nothing live produces it.
+      expect(storageItems(richSlice(5)).has("heavy_oil_residue")).toBe(false);
+    });
+  });
+
   it("every candidate it returns is actually applicable", () => {
     const ctx = rich();
     for (const candidate of affordableCandidates(ctx)) {

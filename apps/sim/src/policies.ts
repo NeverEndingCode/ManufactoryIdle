@@ -252,7 +252,18 @@ export function affordableCandidates(ctx: PolicyContext): Candidate[] {
     );
   }
 
+  // Storage obeys the same rule as machines: offering it for an item nothing live
+  // produces buys capacity for stock that cannot fill. Measured on main b1e0d26
+  // (seed 42): greedy bought 98 and casual 108 such levels, about 18-20% of their
+  // storage purchases. A byproduct counts as produced.
+  const produced = new Set<ItemId>();
+  for (const [recipeId, recipe] of content.recipes) {
+    if (!isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) continue;
+    for (const output of recipe.def.outputs) produced.add(output.item);
+  }
+
   for (const itemId of content.stockItemIds) {
+    if (!produced.has(itemId)) continue;
     const level = state.storageLevel[itemId] ?? 0;
     if (level >= content.bundle.storage.maxLevel) continue;
     offer(
