@@ -246,6 +246,36 @@ function nextDiscontinuity(
   return best;
 }
 
+/** What the client needs to draw stock as straight lines until the next rate change (D.2). */
+export interface Schedule {
+  /** World time (ms) the schedule describes: state.lastResolvedAt. */
+  atMs: number;
+  /** Per stock item: liquid stock now (canonical decimal string) and net rate per second. */
+  items: Record<ItemId, { stock: string; netPerSecond: number }>;
+  /** World time of the next rate change (fill, drain, unpin, timer, milestone), or null if none. */
+  nextBoundaryAtMs: number | null;
+}
+
+/** Pure: solves once and reuses resolve's own boundary search, so the two cannot disagree. */
+export function schedule(state: WorldState, content: IndexedContent): Schedule {
+  const solution = solve(state, content);
+  const items: Record<ItemId, { stock: string; netPerSecond: number }> = Object.fromEntries(
+    content.stockItemIds.map((itemId) => [
+      itemId,
+      {
+        stock: toCanonical(liquid(state, itemId)),
+        netPerSecond: solution.itemRates.get(itemId)?.net ?? 0,
+      },
+    ]),
+  );
+  const next = nextDiscontinuity(content, state, solution, state.lastResolvedAt);
+  return {
+    atMs: state.lastResolvedAt,
+    items,
+    nextBoundaryAtMs: Number.isFinite(next.dtMs) ? state.lastResolvedAt + next.dtMs : null,
+  };
+}
+
 function integrate(
   content: IndexedContent,
   state: WorldState,
