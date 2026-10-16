@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile, copyFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pgliteDb } from "./pglite.js";
 import { migrate } from "./migrate.js";
@@ -69,6 +72,31 @@ describe("migrate", () => {
       );
     await ins();
     await expect(ins()).rejects.toThrow();
+  });
+});
+
+describe("failing migration", () => {
+  it("records nothing and leaves no effects", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mig-"));
+    try {
+      await copyFile(
+        new URL("../../migrations/001-initial.sql", import.meta.url),
+        join(dir, "001-initial.sql"),
+      );
+      await writeFile(
+        join(dir, "002-bad.sql"),
+        "create table bad_table (id int); select * from no_such_table;",
+      );
+      await expect(migrate(db, dir)).rejects.toThrow();
+      const rows = await db.query<{ version: string }>("select version from schema_migrations");
+      expect(rows.map((r) => r.version)).toEqual(["001-initial.sql"]);
+      const bad = await db.query(
+        "select 1 from information_schema.tables where table_name = 'bad_table'",
+      );
+      expect(bad).toHaveLength(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
