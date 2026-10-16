@@ -6,6 +6,7 @@
 // good? If it lands materially worse than greedy, the UI is lying to players and no
 // amount of balance tuning fixes that.
 import {
+  FLOW_TOLERANCE,
   apply,
   bestUnlockedMark,
   canAffordBuild,
@@ -367,13 +368,21 @@ const bottleneck: Policy = {
   intervalMs: purchaseIntervalMs,
   decide: (ctx) => {
     const report = ctx.solution.bottleneck;
-    // Spec 2026-10-13: a reserve lasts only while the reporter asks for it. Clear every
-    // other reserve, including one a human set by hand if this policy is driving.
+    // Spec 2026-10-13: the reporter's reserve is set. Spec 2026-10-16: any other reserve
+    // is kept while it is still working (its item growing, with room) and cleared once it
+    // is not -- including one a human set by hand if this policy is driving.
     const clears: Action[] = [];
     for (const [itemId, percent] of Object.entries(ctx.state.reserve)) {
-      if (percent > 0 && !(report?.kind === "reserve" && report.itemId === itemId)) {
-        clears.push({ type: "SET_RESERVE", itemId, percent: 0 });
-      }
+      if (percent <= 0) continue;
+      if (report?.kind === "reserve" && report.itemId === itemId) continue;
+      // Dropping a reserve the moment the advice moved made every reserve last one
+      // decision and let two payers alternate. `net` comes from the solution that
+      // includes the reserve, so the reserve's own banking counts as growth: in practice
+      // this keeps a reserve until its item is FULL or the reserve gets nothing.
+      const growing = (ctx.solution.itemRates.get(itemId)?.net ?? 0) > FLOW_TOLERANCE;
+      const full = ctx.solution.itemStates.get(itemId) === "FULL";
+      if (growing && !full) continue;
+      clears.push({ type: "SET_RESERVE", itemId, percent: 0 });
     }
     // `moves` already ends with the clears, so every return below carries them.
     const moves: Action[] = [...idleReassignments(ctx), ...clears];

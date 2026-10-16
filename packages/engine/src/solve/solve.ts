@@ -59,12 +59,42 @@ export function solve(
   let demandTargetMw = 0;
   let passes = 0;
 
+  // Spec 2026-10-16 (ruling R8 amended, "Why full power"): a reserve is sized against what
+  // its item makes at full power with no reserves set: the target is at most half of that
+  // full-power, reserve-free counterfactual -- not a bound on the reserve's share of what
+  // is actually made with it in place. Full power, not the brownout-settled rate: a
+  // brownout must not shrink a reserve (measured: sizing against the settled solve left
+  // `bottleneck` with a 1.34-collection dead stretch). It is one item pass at ratio 1, not
+  // a recursive solve, so it cannot recurse; with no reserve set it never runs.
+  const anyReserve = Object.values(state.reserve).some((percent) => percent > 0);
+  let productionOf: Map<ItemId, number> | undefined;
+  if (anyReserve) {
+    const bare: WorldState = {
+      ...state,
+      reserve: Object.fromEntries(Object.keys(state.reserve).map((id) => [id, 0])),
+    };
+    // The pass uses power target 0, so production that exists only to feed generator fuel
+    // is not counted (a fuel item's reserve may be under-sized).
+    const fullPower = solveItems({
+      content,
+      vectors,
+      state: bare,
+      capacityUnits: capacity.unitsByRecipe,
+      entries: effectivePriority(content, bare, capacity, 0),
+      reserveFloor,
+      seedPins,
+    });
+    productionOf = new Map(
+      [...fullPower.pass.flows].map(([itemId, flow]) => [itemId, flow.production] as const),
+    );
+  }
+
   let items = solveItems({
     content,
     vectors,
     state,
     capacityUnits: scaleCapacityByRatio(content, capacity, ratio).unitsByRecipe,
-    entries: effectivePriority(content, state, capacity, demandTargetMw),
+    entries: effectivePriority(content, state, capacity, demandTargetMw, productionOf),
     reserveFloor,
     seedPins,
   });
@@ -97,7 +127,7 @@ export function solve(
       vectors,
       state,
       capacityUnits: scaleCapacityByRatio(content, capacity, ratio).unitsByRecipe,
-      entries: effectivePriority(content, state, capacity, demandTargetMw),
+      entries: effectivePriority(content, state, capacity, demandTargetMw, productionOf),
       reserveFloor,
       seedPins,
     });

@@ -125,13 +125,22 @@ export function requirementVector(
 /**
  * Spec C.4 supplies the power entry's target rate from the grid demand, because
  * demand is only known once clocks are. Ruling R8 injects reserve entries, clamped
- * to at most 50% so a reserve can never starve the rest of the list.
+ * to at most 50% (of the full-power reserve-free production, spec 2026-10-16). Consumers
+ * of a reserved item can still be cut off while it is reserved, because walks treat it as
+ * pinned EMPTY (measured on the slice; see the phase-2 handoff).
+ *
+ * Spec 2026-10-16: a reserve's target is `percent x productionOf(item)`, the item's
+ * production in a full-power reserve-free item pass of the same state, with `percent`
+ * clamped to 50%. That caps the target against the counterfactual; it is not a bound on
+ * the reserve's share of what is actually made. When `productionOf` is omitted (direct
+ * callers such as tests) the legacy `percent x unconstrainedRate` sizing is kept.
  */
 export function effectivePriority(
   content: IndexedContent,
   state: WorldState,
   capacity: CapacityTable,
   powerTargetRate: number,
+  productionOf?: ReadonlyMap<ItemId, number>,
 ): PriorityEntry[] {
   const live = state.priority
     .filter((entry) => !entry.paused)
@@ -154,7 +163,9 @@ export function effectivePriority(
       itemId,
       mode: "guaranteed",
       share: 1,
-      targetRate: percent * unconstrainedRate(content, capacity, itemId),
+      targetRate:
+        percent *
+        (productionOf ? (productionOf.get(itemId) ?? 0) : unconstrainedRate(content, capacity, itemId)),
       paused: false,
     });
   }

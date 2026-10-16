@@ -539,17 +539,54 @@ describe("bottleneck and reserve advice (spec 2026-10-13)", () => {
     expect(getPolicy("bottleneck").decide(ctx)).toContainEqual({ type: "SET_RESERVE", itemId: "iron_ingot", percent: 0.25 });
   });
 
-  it("clears a reserve the advice no longer names", () => {
+  it("clears a reserve whose item has stopped growing", () => {
     const base = rich();
     const state: WorldState = { ...base.state, reserve: { ...base.state.reserve, iron_ingot: 0.25 } };
-    const solution = solve(state, content);
+    const solved = solve(state, content);
     // Precondition: the advice is not a reserve on iron_ingot.
-    expect(solution.bottleneck).not.toMatchObject({ kind: "reserve", itemId: "iron_ingot" });
+    expect(solved.bottleneck).not.toMatchObject({ kind: "reserve", itemId: "iron_ingot" });
+    // Under the keep rule a growing reserve is kept, so the item must not be growing.
+    const itemRates = new Map(solved.itemRates);
+    const production = solved.itemRates.get("iron_ingot")?.production ?? 0;
+    itemRates.set("iron_ingot", { production, consumption: production, net: 0 });
+    const solution = { ...solved, itemRates };
     expect(getPolicy("bottleneck").decide({ ...base, state, solution })).toContainEqual({
       type: "SET_RESERVE",
       itemId: "iron_ingot",
       percent: 0,
     });
+  });
+
+  // Spec 2026-10-16 (reserves that last): a reserve is kept while it is working, so it is
+  // not dropped the moment the advice moves. Measured cause: every reserve lasted one
+  // decision, and two payers alternated four times.
+  const reservedWith = (items: Record<string, number>, rates: Record<string, number>, states: Record<string, "EMPTY" | "FLOWING" | "FULL"> = {}) => {
+    const base = rich();
+    const state: WorldState = { ...base.state, reserve: { ...base.state.reserve, ...items } };
+    const solved = solve(state, content);
+    const itemRates = new Map(solved.itemRates);
+    for (const [itemId, net] of Object.entries(rates)) itemRates.set(itemId, { production: net + 1, consumption: 1, net });
+    const itemStates = new Map(solved.itemStates);
+    for (const [itemId, tag] of Object.entries(states)) itemStates.set(itemId, tag);
+    const ctx: PolicyContext = { ...base, state, solution: { ...solved, itemRates, itemStates } };
+    // Precondition: the advice is not a reserve on any of these items.
+    for (const itemId of Object.keys(items)) expect(ctx.solution.bottleneck).not.toMatchObject({ kind: "reserve", itemId });
+    return getPolicy("bottleneck").decide(ctx);
+  };
+
+  it("keeps a reserve whose item is still growing after the advice moved", () => {
+    const actions = reservedWith({ iron_ingot: 0.25 }, { iron_ingot: 2 }, { iron_ingot: "FLOWING" });
+    expect(actions).not.toContainEqual({ type: "SET_RESERVE", itemId: "iron_ingot", percent: 0 });
+  });
+
+  it("clears a reserve whose item is FULL", () => {
+    const actions = reservedWith({ iron_ingot: 0.25 }, { iron_ingot: 2 }, { iron_ingot: "FULL" });
+    expect(actions).toContainEqual({ type: "SET_RESERVE", itemId: "iron_ingot", percent: 0 });
+  });
+
+  it("keeps two reserves at once while both are growing", () => {
+    const actions = reservedWith({ iron_ingot: 0.25, iron_ore: 0.25 }, { iron_ingot: 2, iron_ore: 3 }, { iron_ingot: "FLOWING", iron_ore: "FLOWING" });
+    expect(actions.filter((a) => a.type === "SET_RESERVE" && a.percent === 0)).toEqual([]);
   });
 
   it("is the only policy that ever reserves", () => {

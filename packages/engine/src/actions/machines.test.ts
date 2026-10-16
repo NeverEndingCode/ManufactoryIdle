@@ -307,6 +307,17 @@ describe("BUY_MACHINE", () => {
         expect(result.rejected ? result.reason : "").toMatch(reason);
       });
     }
+
+    it("rejects a wrong-lane recipe before checking it can be afforded", () => {
+      // A world too poor to buy a refinery: the recipe is still the reason given, so
+      // validation runs before payment.
+      const poor: WorldState = { ...oilWorld(), stored: { ...oilWorld().stored, iron_plate: D(0), iron_ingot: D(0), iron_ore: D(0) } };
+      // Precondition: without a recipe this purchase fails on cost.
+      const unnamed = applyBuyMachine(poor, content, buy());
+      expect(unnamed.rejected ? unnamed.reason : "").toMatch(/afford/i);
+      const result = applyBuyMachine(poor, content, buy("make_plate"));
+      expect(result.rejected ? result.reason : "").toMatch(/^recipe "make_plate" does not run on refinery in oil$/);
+    });
   });
 
   it("auto-assigns the new machines to the busiest recipe in the lane-class (R5)", () => {

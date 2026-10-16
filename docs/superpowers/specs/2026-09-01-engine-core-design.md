@@ -708,6 +708,16 @@ back out. Without the third, a reserve claiming a FULL item's recipe deadlocked 
 consumers. None of this applies when no reserve is set: the pacing gate's pins are
 unchanged.
 
+**Amended 2026-10-16: a reserve is sized against what its item makes at full power** (ruling R8 — reserve entries, `solve/waterfall.ts`: a reserve's percent is clamped to 50%). A
+reserve's target is `percent × the item's production in the same state with no
+reserves, at full power`, with `percent` clamped to 50%, so the target is at most half of
+that full-power reserve-free counterfactual, and a brownout doesn't shrink a reserve. This
+is not a bound on the reserve's share of what is actually made. It was `percent × the
+unconstrained rate`, which, when the upstream was short, let a 25% reserve exceed what
+the chain makes. Consumers of a reserved item can still be cut off while it is reserved
+(walks treat it as pinned EMPTY). Measured before this change: every `bottleneck` reserve lasted
+exactly one decision.
+
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the
 grid is binding.
@@ -813,6 +823,12 @@ Each answer passes through this final step again. Measured cause: in a `bottlene
 run on the vertical slice, 33 decisions kept advising a purchase that
 `encased_industrial_beam` could not pay, while the beam recipe was starved. The
 reporter now names what limits it.
+
+**Amended 2026-10-16: `bottleneck` keeps a reserve until its item is FULL.** A reserve is
+kept until its item is FULL (or the reserve receives nothing), unless the reporter is
+advising it; the reserve's own banking counts as growth. It is no longer cleared just because
+the advice moved. Two short payers of one price can then both bank instead of alternating;
+measured, they alternated four times on the vertical slice.
 
 ### C.4 Power
 
@@ -1120,7 +1136,7 @@ sim run --policy casual --seed 42
 | `casual` | Checks in 3×/day, never reorders priorities. The lower bound |
 | **`bottleneck`** | Always buys exactly what §4.5's bottleneck reporter recommends |
 
-**Amended 2026-10-13:** bottleneck also follows reserve advice (SET_RESERVE), and clears a reserve once the advice no longer names it; no other policy reserves.
+**Amended 2026-10-13:** bottleneck also follows reserve advice (SET_RESERVE), and clears a reserve once the advice no longer names it (amended 2026-10-16: kept until its item is FULL; see §4.5); no other policy reserves.
 
 **Amended 2026-10-15:** bottleneck now buys for the advised recipe (`BUY_MACHINE.recipeId`, while the recipe is live). See `specs/2026-10-14-buy-for-a-recipe-design.md`.
 
