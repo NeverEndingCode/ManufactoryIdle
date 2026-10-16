@@ -365,7 +365,9 @@ describe("solve — a reserve is sized against its item's production (R8)", () =
   });
 
   it("leaves the item's consumers a share", () => {
-    expect(withReserve.itemRates.get("iron_ingot")!.consumption).toBeGreaterThan(0);
+    // A reserve takes at most half of what the item makes (R8); consumers keep the rest.
+    const production = bare.itemRates.get("iron_ingot")!.production;
+    expect(withReserve.itemRates.get("iron_ingot")!.consumption).toBeGreaterThanOrEqual(0.5 * production);
   });
 
   it("gives an item nothing makes no reserve effect", () => {
@@ -373,6 +375,6 @@ describe("solve — a reserve is sized against its item's production (R8)", () =
     const noMaker: WorldState = { ...start, reserve: { ...start.reserve, plastic: 0.25 } };
     const s = solve(noMaker, content);
     const plastic = s.entries.find((e) => e.entryId === "reserve:plastic");
-    expect(plastic === undefined || plastic.requested === 0).toBe(true);
+    expect(plastic?.requested).toBe(0);
   });
 });

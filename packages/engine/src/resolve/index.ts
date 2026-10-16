@@ -293,7 +293,8 @@ export type StepSolve = (world: WorldState) => StepAnswer;
  * decide its answer exactly, and each distinct combination is solved once. That is what
  * keeps a pin/unpin cycle cheap: measured 2026-10-12, the vertical slice's screw cycle
  * cost ~10,000 solves per 120 s resolve, ~20 s, and now costs a handful. If `solve` ever
- * reads anything else that can change mid-resolve, it belongs in this key.
+ * reads anything else that can change mid-resolve, it belongs in this key. `state.reserve`
+ * is constant within one resolve (only actions change it), which the key relies on.
  */
 export function resolve(
   state: WorldState,

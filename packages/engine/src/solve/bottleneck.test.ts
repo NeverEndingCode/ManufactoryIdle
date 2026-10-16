@@ -999,13 +999,13 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
   const sol = solve(start, blockable, NO_FLOOR);
   const firstAdvice = computeBottleneck(blockable, sol.capacity, sol.entries, sol.power, start, sol.itemStates, sol.itemRates);
   // `production` is the payer's production; `residue` is the byproduct's tag.
-  const advise = (production: number, residue: "EMPTY" | "FLOWING" | "FULL", c = blockable, s = sol, net = 0, ore: "EMPTY" | "FLOWING" | "FULL" = "FLOWING") => {
+  const advise = (production: number, residue: "EMPTY" | "FLOWING" | "FULL", c = blockable, s = sol, net = 0, ore: "EMPTY" | "FLOWING" | "FULL" = "FLOWING", world = start) => {
     const rates = new Map(s.itemRates);
     rates.set("iron_ingot", { production, consumption: production - net, net });
     const states = new Map(s.itemStates);
     states.set("heavy_oil_residue", residue);
     states.set("iron_ore", ore);
-    return computeBottleneck(c, s.capacity, s.entries, s.power, start, states, rates);
+    return computeBottleneck(c, s.capacity, s.entries, s.power, world, states, rates);
   };
 
   it("advises storage for the FULL output that stops the payer's recipe", () => {
@@ -1015,6 +1015,21 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
       kind: "storage",
       itemId: "heavy_oil_residue",
       limitingTarget: "item:iron_plate",
+    });
+  });
+
+  it("advises storage with no upgrade once both storage curves are maxed", () => {
+    const lane = blockable.items.get("heavy_oil_residue")?.lane;
+    if (lane === undefined) throw new Error("heavy_oil_residue has no lane");
+    const maxed: WorldState = {
+      ...start,
+      storageLevel: { ...start.storageLevel, heavy_oil_residue: blockable.bundle.storage.maxLevel },
+      qsLevel: { ...start.qsLevel, [lane]: blockable.bundle.quantumStorage.maxLevel },
+    };
+    expect(advise(0, "FULL", blockable, sol, 0, "FLOWING", maxed)).toMatchObject({
+      kind: "storage",
+      itemId: "heavy_oil_residue",
+      upgrade: null,
     });
   });
 

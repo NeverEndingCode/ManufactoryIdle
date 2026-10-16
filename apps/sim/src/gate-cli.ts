@@ -44,6 +44,9 @@ const CASUAL =
   "roughly 4x to 8x slower at every tier. Pinned rather than chased: the two cannot both be on " +
   "target unless the game is entirely idle-bound.";
 
+/** The sentence that records when a pinned figure was last measured, and why it moved. */
+const remeasured = (date: string, cause: string): string => `Re-measured ${date} after ${cause}.`;
+
 export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
   {
     policy: "greedy",
@@ -96,38 +99,38 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "target 0.42, measured 0.066 (-84%): bottleneck clears the early tiers far " +
           "faster than target because it buys almost nothing beyond what the reporter " +
           "names. Fast is not on-target -- both directions count as red. " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
+          remeasured("2026-10-13", "bottleneck began following reserve advice"),
       },
       {
         tier: 2,
         observed: 0.1321,
         why:
           "target 0.8, measured 0.132 (-84%): the same minimal-buying overshoot as tier 1. " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice.",
+          remeasured("2026-10-13", "bottleneck began following reserve advice"),
       },
       {
         tier: 3,
         observed: 0.2965,
         why:
           "target 1.2, measured 0.297 (-75%): the same overshoot, narrowing tier over tier. " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          remeasured("2026-10-13", "bottleneck began following reserve advice") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer"),
       },
       {
         tier: 4,
         observed: 0.4496,
         why:
           "target 1.9, measured 0.450 (-76%): the same overshoot. " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          remeasured("2026-10-13", "bottleneck began following reserve advice") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer"),
       },
       {
         tier: 5,
         observed: 0.5172,
         why:
           "target 2.9, measured 0.517 (-82%): the same overshoot. " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          remeasured("2026-10-13", "bottleneck began following reserve advice") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer"),
       },
       {
         tier: 6,
@@ -137,8 +140,8 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "before 2026-10-09, because a starved generator now names its fuel supplier " +
           "instead of another generator -- the policy no longer sinks purchases into " +
           "biomass burners it cannot fuel. " +
-          "Re-measured 2026-10-13 after bottleneck began following reserve advice." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          remeasured("2026-10-13", "bottleneck began following reserve advice") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer"),
       },
       {
         tier: 7,
@@ -148,24 +151,24 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "where bottleneck used to stop: the reporter advised a 4,473 iron_plate " +
           "Quantum Storage level while iron_plate could hold 4,000, and the policy " +
           "bought nothing. After payable advice the run passes tier 7. " +
-          "Re-measured 2026-10-14 after the reporter advised production for slow payers." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          remeasured("2026-10-14", "the reporter advised production for slow payers") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer"),
       },
       {
         tier: 8,
         observed: 1.4204,
         why:
           "target 11, measured 1.420 (-87%): the same minimal-buying overshoot. " +
-          "Re-measured 2026-10-14 after the reporter advised production for slow payers." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          remeasured("2026-10-14", "the reporter advised production for slow payers") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer"),
       },
       {
         tier: 9,
         observed: 2.2693,
         why:
           "target 16, measured 2.269 (-86%): the same overshoot. " +
-          "Re-measured 2026-10-14 after the reporter advised production for slow payers." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          remeasured("2026-10-14", "the reporter advised production for slow payers") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer"),
       },
       {
         tier: 10,
@@ -175,9 +178,9 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "bottleneck now finishes tier 10 because of slow-payer advice: it used to stall at " +
           "tier 9 waiting about 22.6 hours for encased_industrial_beam to afford the 12th " +
           "assembly rig, and now builds more beam production instead. " +
-          "Re-measured 2026-10-14 after the reporter advised production for slow payers." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer." +
-          " Re-measured 2026-10-15 after the reporter advised the cause for a payer not being made.",
+          remeasured("2026-10-14", "the reporter advised production for slow payers") +
+          " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
+          " " + remeasured("2026-10-15", "the reporter advised the cause for a payer not being made"),
       },
     ],
   },
