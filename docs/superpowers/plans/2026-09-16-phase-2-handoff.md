@@ -285,10 +285,20 @@ tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
   redirect resets `machinesToClear` to 1.
 - **Done 2026-10-15: the blocked-payer rule now checks the cause.** For a short payer that is not
   made, the reporter checks in order: recipe starved (one machine for the recipe that limits it),
-  then no machines (one machine for it), then FULL output (storage). Measured: the walk fires 33 -> 19
-  times in a `bottleneck` run, all for `encased_industrial_beam`. Pins moved: bottleneck t10
+  then no machines (one machine for it), then FULL output (storage). Measured: on `main`, 33
+  decisions kept advice `encased_industrial_beam` could not pay while its recipe was starved; the
+  new walk fires 19 times in a `bottleneck` run, all for the beam. Pins moved: bottleneck t10
   10.5551 -> 10.5329; dead 0.6089 -> 0.6379; t1-t9, greedy and casual unchanged. Spec
   `2026-10-15-unmade-payer-design`.
+- **`visited` serves two purposes in `payable`** (follow-up, not observed): "considered as a payer"
+  and "already advised storage". A payer considered with no cause, or an input a dead-end walk
+  stepped through, stays visited; if a later redirect's price overflows that item's cap, `payable`
+  returns the honest wall (`upgrade: null`) without trying `cheaperUpgrade`. The slow-payer path
+  already had this; the unmade-payer check adds more ways in.
+- **Walk-end advice doesn't check the end recipe's FULL outputs or power** (follow-up, theoretical):
+  both the slow-payer and unmade-payer walks advise a machine for the recipe they end on without
+  checking it can use one. Probed on the slice: every such advice had power 1.0, clock 1.0, no FULL
+  output. Belongs with the below-nameplate item above.
 - **Done 2026-10-15: `payable`'s loop has a hard cap that throws.** It allows `items.size + 2`
   passes and then throws, so a lost `visited` guard fails fast in tests instead of hanging the
   game (the reporter runs on every resolve).
