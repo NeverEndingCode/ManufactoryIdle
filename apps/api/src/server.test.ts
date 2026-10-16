@@ -230,6 +230,34 @@ describe("GET /api/world", () => {
     expect(await onlyWorld()).toEqual(before);
     expect(await lastSeenMs()).toEqual([T0]);
   });
+
+  it("2b. opens one session per player, recording the user agent, and nothing else", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    const sessions = () =>
+      db.query<{ player_id: string; opened_ms: number; closed_at: unknown; client: string }>(
+        `select player_id, round(extract(epoch from opened_at) * 1000)::float8 as opened_ms,
+                closed_at, client from sessions`,
+      );
+    expect(await sessions()).toHaveLength(0);
+    const before = await onlyWorld();
+
+    now = T0 + 5 * MINUTE;
+    const headers = { ...guest(token), "user-agent": "x".repeat(300) };
+    await app.inject({ method: "GET", url: "/api/world", headers });
+    const first = await sessions();
+    expect(first).toHaveLength(1);
+    expect(first[0]!.opened_ms).toBe(T0 + 5 * MINUTE);
+    expect(first[0]!.closed_at).toBeNull();
+    expect(first[0]!.client).toBe("x".repeat(200));
+
+    now = T0 + 6 * MINUTE;
+    await app.inject({ method: "GET", url: "/api/world", headers });
+    expect(await sessions()).toEqual(first);
+
+    expect(await onlyWorld()).toEqual(before);
+    expect(await lastSeenMs()).toEqual([T0]);
+  });
 });
 
 describe("POST /api/actions", () => {
