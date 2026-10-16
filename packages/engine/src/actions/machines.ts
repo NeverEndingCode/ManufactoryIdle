@@ -21,6 +21,7 @@ import {
 import { machineCostRange } from "../economy/curves.js";
 import { depositRefund, itemStateTag, spendForBuild } from "../economy/storage.js";
 import { solve } from "../solve/solve.js";
+import { RESERVE_FLOOR } from "../solve/waterfall.js";
 import {
   assignedTotal,
   installedAt,
@@ -137,8 +138,14 @@ const NAMEPLATE_TOLERANCE = 1e-9;
  * takes two conditions:
  *
  *   1. Its primary output is not FULL -- there is somewhere to put the result.
- *   2. It is either unstaffed, or already running at nameplate. A recipe running
- *      below nameplate has machines it cannot feed; another one changes nothing.
+ *   2. It is either unstaffed, or already running at nameplate, less the reserve
+ *      floor a contested recipe is taxed by (spec 4.2). A recipe running below that
+ *      has machines it cannot feed; another one changes nothing. The floor must be
+ *      allowed for because the waterfall taxes a contested recipe by RESERVE_FLOOR
+ *      and only offers the leftover to entries that got nothing, so a recipe running
+ *      flat out commonly reads 0.98 (measured 2026-10-16; see the phase-2 handoff).
+ *      This assumes the default floor: the `solve` call below passes no
+ *      `reserveFloor` override.
  *
  * The solver already computes (2) exactly, as the recipe's clock, so this reads it
  * rather than re-deriving a cheaper approximation that could disagree with what the
@@ -192,7 +199,7 @@ function autoAssignTarget(
     if (!recipe) return false;
     if (itemStateTag(content, state, recipe.primaryOutput) === "FULL") return false;
     if (assignmentOf(state, recipeId) === 0) return true;
-    return (clocks.get(recipeId) ?? 0) >= 1 - NAMEPLATE_TOLERANCE;
+    return (clocks.get(recipeId) ?? 0) >= 1 - RESERVE_FLOOR - NAMEPLATE_TOLERANCE;
   };
 
   const pickBest = (from: readonly RecipeId[]): RecipeId => {

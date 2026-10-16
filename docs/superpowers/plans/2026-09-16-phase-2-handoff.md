@@ -278,9 +278,11 @@ tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
   recipe) fixed it. Pins moved (2026-10-15): bottleneck t3 0.3055 -> 0.2965, t4 0.4986 -> 0.4496,
   t5 0.6190 -> 0.5172, t6 0.8877 -> 0.7622, t7 1.3033 -> 1.0315, t8 1.6826 -> 1.4204,
   t9 2.5167 -> 2.2693, t10 10.6168 -> 10.5551; dead 0.5473 -> 0.6089.
-- **The reporter can advise a recipe already running below nameplate.** 16 of 339 purchases (measured on `main` before this branch),
-  mostly `mine_coal`, buy a machine for a recipe that is live but limited by something else, so the
-  machine adds little.
+- **Done 2026-10-16 (measured, closed): the reporter advising a recipe already running below nameplate.**
+  On `main` 300b5fa, 12 of 736 recipe-advice decisions named a recipe that could not use another
+  machine: 4 were `collect_biomass` during a brownout (honest, it feeds the generators) and 8 were
+  one-off EMPTY-input decisions, each recipe once. The earlier "16 of 339" was the 2% reserve floor
+  read as below nameplate, not a reporter defect.
 - **Edge case (not observed):** if the slow payer's recipe is the advised recipe itself, the
   redirect resets `machinesToClear` to 1.
 - **Done 2026-10-15: the blocked-payer rule now checks the cause.** For a short payer that is not
@@ -295,10 +297,19 @@ tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
   stepped through, stays visited; if a later redirect's price overflows that item's cap, `payable`
   returns the honest wall (`upgrade: null`) without trying `cheaperUpgrade`. The slow-payer path
   already had this; the unmade-payer check adds more ways in.
-- **Walk-end advice doesn't check the end recipe's FULL outputs or power** (follow-up, theoretical):
-  both the slow-payer and unmade-payer walks advise a machine for the recipe they end on without
-  checking it can use one. Probed on the slice: every such advice had power 1.0, clock 1.0, no FULL
-  output. Belongs with the below-nameplate item above.
+- **Done 2026-10-16 (measured, closed): walk-end advice doesn't check the end recipe's FULL outputs or
+  power.** Probed on the slice: every such advice had power 1.0, clock 1.0, no FULL output; the
+  reporter measurement above (12 of 736, none of them a walk-end) found no live case.
+- **Done 2026-10-16: auto-assignment allows for the reserve floor.** `canUseAnother` in
+  `actions/machines.ts` now tests `clock >= 1 - RESERVE_FLOOR - NAMEPLATE_TOLERANCE`. The waterfall
+  taxes a contested recipe by 2% and phase B offers the leftover only to entries that got nothing,
+  so a contested recipe running flat out reports 0.980 (30 such recipes in one bottleneck run) and
+  was wrongly judged unable to use another machine. Inert on the vertical slice: greedy, casual
+  and bottleneck pins byte-identical.
+- **Design follow-up (spec 4.2, not a bug fix): the waterfall leaves contested recipes' 2% floor
+  idle when no entry is starved.** Phase B only offers the leftover to entries that got nothing.
+  Releasing it (a "phase C") was prototyped: greedy and casual unchanged, bottleneck t1-t9 slower,
+  t10 10.5329 -> 10.4289, dead 0.638 -> 0.657. That is a spec 4.2 decision.
 - **Done 2026-10-15: `payable`'s loop has a hard cap that throws.** It allows `items.size + 2`
   passes and then throws, so a lost `visited` guard fails fast in tests instead of hanging the
   game (the reporter runs on every resolve).
