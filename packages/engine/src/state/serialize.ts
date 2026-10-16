@@ -39,11 +39,27 @@ function sortInstalled(
   );
 }
 
+/**
+ * Plain objects nested in the state (priority entries, timers, the seed) are emitted with
+ * sorted keys too, recursively; arrays keep their order. Without this a world read back
+ * from storage that re-orders keys (Postgres jsonb does) serializes to different bytes.
+ * Key order carries no meaning, so this changes no schema version: older strings with
+ * unsorted keys still deserialize, and re-serialize canonically.
+ */
+function canonical<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(canonical) as T;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(sortedKeys(record).map((key) => [key, canonical(record[key])])) as T;
+  }
+  return value;
+}
+
 export function serializeWorld(state: WorldState): string {
   return JSON.stringify({
     schemaVersion: state.schemaVersion,
     contentVersion: state.contentVersion,
-    seed: state.seed,
+    seed: canonical(state.seed),
     tier: state.tier,
     installed: sortInstalled(state.installed),
     assignment: sortRecord(state.assignment),
@@ -54,10 +70,10 @@ export function serializeWorld(state: WorldState): string {
     storageLevel: sortRecord(state.storageLevel),
     qsLevel: sortRecord(state.qsLevel),
     reserve: sortRecord(state.reserve),
-    priority: state.priority,
+    priority: canonical(state.priority),
     powerBank: toCanonical(state.powerBank),
     tapStacks: state.tapStacks,
-    timers: state.timers,
+    timers: canonical(state.timers),
     lifetime: encodeDecimals(state.lifetime),
     lastResolvedAt: state.lastResolvedAt,
   });
