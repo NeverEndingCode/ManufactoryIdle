@@ -460,10 +460,7 @@ describe("replay", () => {
       state = batch.state;
     }
     expect(row.state_version).toBe("3");
-    // Value equality on the wire form, not byte equality: jsonb re-orders object keys, and
-    // serializeWorld emits `priority` entries (and timers) in insertion order, so the bytes of
-    // a state read back from jsonb differ from the original even when every value matches.
-    expect(row.state).toEqual(wire(state));
+    expect(serializeWorld(state)).toBe(serializeWorld(deserializeWorld(JSON.stringify(row.state))));
     expect(serializeWorld(state)).not.toBe(serializeWorld(initial));
   });
 });
