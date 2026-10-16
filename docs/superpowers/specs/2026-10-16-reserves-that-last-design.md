@@ -50,9 +50,9 @@ This replaces `percent × unconstrainedRate(...)`. `RESERVE_MAX_PERCENT` (0.5) s
 clamps `percent`, so the target is capped at `percent × full-power reserve-free
 production` (at most 50% of that counterfactual). This makes reserves smaller than the
 unconstrained sizing, but it is not a bound on the reserve's share of what is actually
-made, and consumers can still be cut off while their item is reserved, because walks treat
-a reserved item as pinned EMPTY (measured: 30 decisions; see "Measured after
-implementation"). With no reserve set, nothing changes and no extra solve runs. A reserved item
+made. While an item is reserved its consumers draw only on its production, not its stock,
+because walks treat a reserved item as pinned EMPTY; that is the reserve's purpose (see
+"Measured after implementation" and its 2026-10-17 correction). With no reserve set, nothing changes and no extra solve runs. A reserved item
 whose production without reserves is 0 gets target 0, so the reserve has no effect.
 This matches today's drained-payer rule, which never names an unmade item.
 
@@ -127,10 +127,17 @@ full power" above), so the table's Parts 1 + 2 row is what the gate should repro
 One `bottleneck` run, seed 42. 13 reserve holds in 908 decisions; at most 2 held at once;
 every hold ended at FULL (13/13), none because the item stopped growing. Holds lasted
 0.1-0.9 h except `encased_industrial_beam` at t9 (4.05 h, 1.57 h). On 30 decisions with a
-reserve held, the item's consumers got 0 despite surplus (for example `steel_pipe` at t9:
-reserve about 20% of production, consumption 0 against 9-20/s reserve-free). The cause is
-the 2026-10-13 rule that walks treat a reserved item as pinned EMPTY (`waterfall.ts`),
-interacting with R32, not the reserve's size. On 7 decisions the reserve took more than 50%
+reserve held, the item's consumers got 0 (for example `steel_pipe` at t9: reserve about 20%
+of production, consumption 0 against 9-20/s reserve-free).
+
+**Corrected 2026-10-17:** that is not a defect. Reserve-free, those consumers were draining
+the item's *stock* (`steel_pipe` net -9.0/s on 0.19/s production); the reserve locks the
+stock -- the 2026-10-13 rule that walks treat a reserved item as pinned EMPTY -- which is
+how a drained payer reaches its price. On the tier-5 `reinforced_iron_plate` cases the
+consumers were idle reserve-free too (`iron_rod` EMPTY either way). And releasing a reserve
+as soon as its stock covers the price was prototyped: slower on every tier (t10 10.0576 ->
+11.0749, dead 0.775 -> 0.671), because the stock banked beyond one price pays the next ones.
+Keep-until-FULL stays. On 7 decisions the reserve took more than 50%
 of actual production (up to 100%) at power 1.0, because the 50% cap is against the
 full-power reserve-free counterfactual, not the solved production with the reserve in
 place. The measured gate gains above are real; only the explanations were wrong.
@@ -146,8 +153,8 @@ place. The measured gate gains above are real; only the explanations were wrong.
 > that full-power reserve-free counterfactual, and a brownout doesn't shrink a reserve. This
 > is not a bound on the reserve's share of what is actually made. It was `percent × the
 > unconstrained rate`, which, when the upstream was short, let a 25% reserve exceed what
-> the chain makes. Consumers of a reserved item can still be cut off while it is reserved
-> (walks treat it as pinned EMPTY). Measured before this change: every `bottleneck` reserve lasted
+> the chain makes. While an item is reserved its consumers draw only on its production, not
+> its stock (walks treat it as pinned EMPTY) -- by design. Measured before this change: every `bottleneck` reserve lasted
 > exactly one decision.
 
 **To §4.5 / the reserves spec's policy rule:**

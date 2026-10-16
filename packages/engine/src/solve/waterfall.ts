@@ -125,9 +125,9 @@ export function requirementVector(
 /**
  * Spec C.4 supplies the power entry's target rate from the grid demand, because
  * demand is only known once clocks are. Ruling R8 injects reserve entries, clamped
- * to at most 50% (of the full-power reserve-free production, spec 2026-10-16). Consumers
- * of a reserved item can still be cut off while it is reserved, because walks treat it as
- * pinned EMPTY (measured on the slice; see the phase-2 handoff).
+ * to at most 50% (of the full-power reserve-free production, spec 2026-10-16). While an
+ * item is reserved its consumers draw only on its production, not its stock, because walks
+ * treat it as pinned EMPTY -- that is what lets a drained item bank toward a price.
  *
  * Spec 2026-10-16: a reserve's target is `percent x productionOf(item)`, the item's
  * production in a full-power reserve-free item pass of the same state, with `percent`
