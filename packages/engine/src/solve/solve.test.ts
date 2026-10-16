@@ -347,7 +347,7 @@ describe("the EMPTY clamp balances exactly", () => {
 });
 
 // Spec 2026-10-16 (reserves that last), ruling R8 amended: a reserve is sized against
-// what its item really makes. Measured cause: every bottleneck reserve lasted one
+// what its item makes at full power with no reserves set. Measured cause: every bottleneck reserve lasted one
 // decision, because 25% of the unconstrained rate took the whole short upstream.
 describe("solve — a reserve is sized against its item's production (R8)", () => {
   const start = initialWorld(content, 1, 0);
@@ -367,7 +367,8 @@ describe("solve — a reserve is sized against its item's production (R8)", () =
   });
 
   it("leaves the item's consumers a share", () => {
-    // A reserve takes at most half of what the item makes (R8); consumers keep the rest.
+    // In this fixture state a reserve takes at most half and consumers keep the rest. Not
+    // true in general: on the slice a reserved item's consumers can be cut to 0 (handoff).
     const production = bare.itemRates.get("iron_ingot")!.production;
     expect(withReserve.itemRates.get("iron_ingot")!.consumption).toBeGreaterThanOrEqual(0.5 * production);
   });

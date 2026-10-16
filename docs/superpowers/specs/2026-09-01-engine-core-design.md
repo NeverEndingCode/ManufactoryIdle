@@ -715,8 +715,8 @@ that full-power reserve-free counterfactual, and a brownout doesn't shrink a res
 is not a bound on the reserve's share of what is actually made. It was `percent × the
 unconstrained rate`, which, when the upstream was short, let a 25% reserve exceed what
 the chain makes. Consumers of a reserved item can still be cut off while it is reserved
-(walks treat it as pinned EMPTY). Measured: every `bottleneck` reserve lasted exactly one
-decision.
+(walks treat it as pinned EMPTY). Measured before this change: every `bottleneck` reserve lasted
+exactly one decision.
 
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
 output per §4.5 — never derived by the UI — or a power-shaped bottleneck instead when the

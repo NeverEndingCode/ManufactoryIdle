@@ -14,7 +14,8 @@ phase-2 handoff, plus three small test and doc gaps.
 A probe of a full `bottleneck` run (seed 42, the gate's settings, `main` at `0583997`)
 followed every reserve the policy set:
 
-- **Every reserve lasts exactly one decision.** All 32 do.
+- **Every reserve lasts exactly one decision.** All 32 do. (The causes below are as first
+  diagnosed; "Measured after implementation" corrects them.)
 - **The cause.** The reserve does make its item grow, but it also starves the item's
   consumers. For example, `steel_pipe` reserved takes consumption to 0. That changes the
   solve, so on the next decision the reporter's main answer moves, usually upstream (for
@@ -138,15 +139,16 @@ place. The measured gate gains above are real; only the explanations were wrong.
 
 **To ruling R8**, in the engine spec, where reserve entries are described:
 
-> **Amended 2026-10-16: a reserve is sized against what its item makes at full power.** A
+> **Amended 2026-10-16: a reserve is sized against what its item makes at full power**
+> (ruling R8 — reserve entries, `solve/waterfall.ts`: a reserve's percent is clamped to 50%). A
 > reserve's target is `percent × the item's production in the same state with no
 > reserves, at full power`, with `percent` clamped to 50%, so the target is at most half of
 > that full-power reserve-free counterfactual, and a brownout doesn't shrink a reserve. This
 > is not a bound on the reserve's share of what is actually made. It was `percent × the
 > unconstrained rate`, which, when the upstream was short, let a 25% reserve exceed what
 > the chain makes. Consumers of a reserved item can still be cut off while it is reserved
-> (walks treat it as pinned EMPTY). Measured: every `bottleneck` reserve lasted exactly one
-> decision.
+> (walks treat it as pinned EMPTY). Measured before this change: every `bottleneck` reserve lasted
+> exactly one decision.
 
 **To §4.5 / the reserves spec's policy rule:**
 

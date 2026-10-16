@@ -60,11 +60,12 @@ export function solve(
   let passes = 0;
 
   // Spec 2026-10-16 (ruling R8 amended, "Why full power"): a reserve is sized against what
-  // its item makes at full power with no reserves set, so it can take at most half of
-  // real production. Full power, not the brownout-settled rate: a brownout must not
-  // shrink a reserve (measured: sizing against the settled solve left `bottleneck` with a
-  // 1.34-collection dead stretch). It is one item pass at ratio 1, not a recursive
-  // solve, so it cannot recurse; with no reserve set it never runs.
+  // its item makes at full power with no reserves set: the target is at most half of that
+  // full-power, reserve-free counterfactual -- not a bound on the reserve's share of what
+  // is actually made with it in place. Full power, not the brownout-settled rate: a
+  // brownout must not shrink a reserve (measured: sizing against the settled solve left
+  // `bottleneck` with a 1.34-collection dead stretch). It is one item pass at ratio 1, not
+  // a recursive solve, so it cannot recurse; with no reserve set it never runs.
   const anyReserve = Object.values(state.reserve).some((percent) => percent > 0);
   let productionOf: Map<ItemId, number> | undefined;
   if (anyReserve) {
