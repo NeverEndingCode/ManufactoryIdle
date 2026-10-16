@@ -10,8 +10,10 @@ const LRU_CAPACITY = 8;
 export interface ContentStore {
   /** The version new worlds are created on (the bundle the server started with). */
   current: { version: string; content: IndexedContent };
-  /** The indexed bundle for a pinned version: memory first, then content_versions.bundle; throws if unknown. */
-  get(version: string): Promise<IndexedContent>;
+  /** The indexed bundle for a pinned version: memory first, then content_versions.bundle; throws if unknown.
+   * Inside a transaction pass its `tx`: a miss then reads through it (a root-db query inside a
+   * PGlite transaction deadlocks, and on `pg` it would run outside the transaction). */
+  get(version: string, tx?: Db): Promise<IndexedContent>;
 }
 
 export async function openContentStore(db: Db, dir: string): Promise<ContentStore> {
@@ -39,10 +41,10 @@ export async function openContentStore(db: Db, dir: string): Promise<ContentStor
 
   return {
     current: { version, content },
-    async get(v) {
+    async get(v, tx) {
       const hit = cache.get(v);
       if (hit) return remember(v, hit);
-      const rows = await db.query<{ bundle: ContentBundle }>(
+      const rows = await (tx ?? db).query<{ bundle: ContentBundle }>(
         "select bundle from content_versions where version = $1",
         [v],
       );

@@ -29,6 +29,14 @@ create table player_worlds (
   state_version bigint not null default 0,
   last_resolved_at timestamptz not null,
   schema_version int not null,
+  -- The world's recorded start, so initialWorld(initial_content_version, initial_seed,
+  -- created_at) plus action_log replays it exactly (spec 16.3). The PRNG state in `state`
+  -- cannot be inverted back to its seed, hence the column. int4 is enough: seeds are drawn
+  -- with randomInt(0, 2**31), and makePrng reads `seed | 0`, a 32-bit integer, anyway.
+  initial_seed int not null,
+  created_at timestamptz not null,
+  -- Never updated: D.6's migrate re-pins only content_version.
+  initial_content_version text not null references content_versions,
   unique nulls not distinct (player_id, world_type, expedition_id)
 );
 
