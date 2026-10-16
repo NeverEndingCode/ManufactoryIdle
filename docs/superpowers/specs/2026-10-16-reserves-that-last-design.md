@@ -37,8 +37,9 @@ Two things drive this:
 ### Part 1: size a reserve against the item's actual production (ruling R8)
 
 When any reserve is set, `solve` first works out each reserved item's production
-**without reserves**: the `production` that `solve` reports for the same state with every
-reserve set to 0. A reserve's target becomes:
+**without reserves, at full power**: one item solve (`solveItems`) of the same state with
+every reserve set to 0, with capacity at power ratio 1 and no power demand. A reserve's
+target becomes:
 
 ```
 targetRate = percent × productionWithoutReserves(itemId)
@@ -50,9 +51,18 @@ R8 says. With no reserve set, nothing changes and no extra solve runs. A reserve
 whose production without reserves is 0 gets target 0, so the reserve has no effect.
 This matches today's drained-payer rule, which never names an unmade item.
 
-The reserve-free solve is internal to `solve` and depends only on (state, content), so
+**Why full power** (amended 2026-10-16, after measuring). The first version of this design
+used the `production` from a full reserve-free `solve`, including the power loop. In the
+gate, that gave `bottleneck` a longest dead stretch of 1.34 collections, over this design's
+1.0 limit. It also slowed tiers 7 and 9 and made the gate about 65% slower (2m12s). The
+full-power item pass, measured on the same branch, gives 0.775 and is cheaper. During a
+brownout, the full `solve` reports less production, so reserves shrink exactly when the
+grid is short. Sizing against what the chain makes at full power keeps a reserve steady
+through a brownout.
+
+The reserve-free pass is internal to `solve` and depends only on (state, content), so
 `solve` stays pure. The per-resolve solve cache is keyed on the state, and the
-reserve-free solve is a function of that same state, so the cache stays sound.
+reserve-free pass is a function of that same state, so the cache stays sound.
 
 ### Part 2: the policy keeps a reserve that is working
 
@@ -102,10 +112,8 @@ reporter advises one. A reserve a human set by hand is treated the same way whil
 Tiers 1–3 were unchanged in every variant. A third variant, ranking reserves last so they
 bank only surplus, was slower on every tier and was dropped.
 
-The prototype's Part 1 used a cheaper reserve-free pass: one item solve at power ratio 1
-with no power target. This design specifies the full reserve-free `solve` instead, which
-has clearer semantics. Its numbers may differ slightly from the table and are re-measured
-in the gate.
+The prototype's Part 1 used the full-power item pass this design now specifies (see "Why
+full power" above), so the table's Parts 1 + 2 row is what the gate should reproduce.
 
 ## Amendments
 
@@ -113,8 +121,8 @@ in the gate.
 
 > **Amended 2026-10-16: a reserve is sized against what its item really makes.** A
 > reserve's target is `percent × the item's production in the same state with no
-> reserves`, so R8's "never more than half of an item's own production" now holds
-> literally. It was `percent × the unconstrained rate`, which, when the upstream was
+> reserves, at full power`, so R8's "never more than half of an item's own production"
+> holds against what the chain makes, and a brownout doesn't shrink a reserve. It was `percent × the unconstrained rate`, which, when the upstream was
 > short, let a 25% reserve take everything and starve the item's consumers. Measured: every
 > `bottleneck` reserve lasted exactly one decision.
 

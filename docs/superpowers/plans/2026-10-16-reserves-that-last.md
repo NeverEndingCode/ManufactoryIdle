@@ -17,7 +17,7 @@
 ## Global Constraints
 
 - **Where to work:** `.claude/worktrees/phase-1-engine`, branch `reserve-followups`, cut from `main` at `0583997`. Never work in the top-level checkout.
-- **Reserve target:** `percent × productionWithoutReserves(itemId)`, where `percent` is still clamped by `RESERVE_MAX_PERCENT` (0.5). "Production without reserves" is `solve(stateWithEveryReserveZero, content, sameOptions).itemRates.get(itemId)?.production ?? 0`.
+- **Reserve target:** `percent × productionWithoutReserves(itemId)`, where `percent` is still clamped by `RESERVE_MAX_PERCENT` (0.5). "Production without reserves" is the item's `production` from one `solveItems` pass of the state with every reserve at 0, with `capacity.unitsByRecipe` (power ratio 1) and `effectivePriority(content, bare, capacity, 0)` (no power demand). *Amended 2026-10-16 after Task 4 measured the full-`solve` version: its longest dead stretch was 1.34, over the limit.*
 - **No reserve set:** `solve` runs no extra pass, and its result is unchanged.
 - **The keep rule:** the policy clears a reserve only when its item is FULL or not growing (net ≤ `FLOW_TOLERANCE`), and the reporter isn't advising that reserve.
 - **The gate:** `greedy` and `casual` pins must stay byte-identical.
