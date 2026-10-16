@@ -2,7 +2,7 @@
 
 **Amends:** engine spec §4.5 (the bottleneck reporter's final `payable` step), and its
 2026-10-15 blocked-payer amendment.
-**Status:** approved design, 2026-10-15.
+**Status:** implemented 2026-10-15.
 **Follows:** `2026-10-14-buy-for-a-recipe-design.md` (PR #11), whose Part 2 added the
 blocked-payer rule. That rule's open follow-up was: it doesn't check that the FULL output
 is why the payer isn't made.

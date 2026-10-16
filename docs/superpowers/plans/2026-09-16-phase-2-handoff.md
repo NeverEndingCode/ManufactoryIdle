@@ -283,9 +283,12 @@ tiers 7 to 9 at 1.3033, 1.6826, 2.5167.
   machine adds little.
 - **Edge case (not observed):** if the slow payer's recipe is the advised recipe itself, the
   redirect resets `machinesToClear` to 1.
-- **The blocked-payer rule does not check that the FULL output is why the payer is not made.**
-  Candidate guards: the payer's recipe has machines (`capacity.unitsByRecipe.get(recipeId) > 0`),
-  and no EMPTY input. Neither was observed, and they could move pins.
+- **Done 2026-10-15: the blocked-payer rule now checks the cause.** For a short payer that is not
+  made, the reporter checks in order: recipe starved (one machine for the recipe that limits it),
+  then no machines (one machine for it), then FULL output (storage). Measured: the walk fires 33 -> 19
+  times in a `bottleneck` run, all for `encased_industrial_beam`. Pins moved: bottleneck t10
+  10.5551 -> 10.5329; dead 0.6089 -> 0.6379; t1-t9, greedy and casual unchanged. Spec
+  `2026-10-15-unmade-payer-design`.
 - **Done 2026-10-15: `payable`'s loop has a hard cap that throws.** It allows `items.size + 2`
   passes and then throws, so a lost `visited` guard fails fast in tests instead of hanging the
   game (the reporter runs on every resolve).
