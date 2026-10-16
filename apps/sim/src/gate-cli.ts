@@ -257,10 +257,13 @@ export async function runGate(options: GateCliOptions): Promise<number> {
   // ~250 hours. So the gate stops it there.
   const stopWhenDeadMs = DEFAULT_THRESHOLDS.maxDeadTimeCollections * content.offlineCapMs;
 
-  // The smoke gate runs one policy, shallow, and holds it to its targets with no pins:
-  // every tier it touches is green today, so a pin here would be a pin on nothing.
+  // The smoke gate runs one policy, shallow, and holds it to its targets with greedy's
+  // own known-red pins for the tiers it reaches -- the same pins the full gate asserts,
+  // so a smoke run and a full run cannot disagree about what is known (2026-10-16:
+  // tier 1 became a known red, and an empty pin list here failed every commit).
+  const greedyGate = VERTICAL_SLICE_GATE.find((gate) => gate.policy === "greedy");
   const gates: readonly PolicyGate[] = options.smoke
-    ? [{ policy: "greedy", untilTier: SMOKE_TIER, knownRed: [] }]
+    ? [{ policy: "greedy", untilTier: SMOKE_TIER, knownRed: (greedyGate?.knownRed ?? []).filter((pin) => pin.tier <= SMOKE_TIER) }]
     : VERTICAL_SLICE_GATE;
 
   // Determinism (spec E.4) at the gate's own depth, not a shallower one: divergence is
