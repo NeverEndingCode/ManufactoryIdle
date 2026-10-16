@@ -120,7 +120,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get("/api/world", async (request, reply) => {
     const playerId = await requirePlayer(request, reply);
     if (playerId === null) return reply;
-    const { world, content: pinned } = await viewWorld(db, content, playerId, clock());
+    const now = clock();
+    const { world, content: pinned } = await viewWorld(db, content, playerId, now);
+    // The only write a read makes (spec D.3): note that the player is here. It touches
+    // neither player_worlds nor players.last_seen_at. 3c closes idle sessions.
+    const agent = request.headers["user-agent"];
+    await db.query(
+      `insert into sessions (player_id, opened_at, client)
+       select $1, to_timestamp($2 / 1000.0), $3
+        where not exists (select 1 from sessions where player_id = $1 and closed_at is null)`,
+      [playerId, now, typeof agent === "string" ? agent.slice(0, 200) : null],
+    );
     return worldView(world, pinned);
   });
 

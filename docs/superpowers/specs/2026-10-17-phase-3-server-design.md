@@ -146,7 +146,7 @@ localStorage". A server-generated token is no less private and can't be chosen b
 to collide with another guest's. The client still stores it in localStorage and sends it as
 `Authorization: Guest <token>`. *Cost if wrong:* none; the client never needs to choose it.
 
-**Ruling R-11: `GET /api/world` does not write.** Resolving is deterministic, so a read can
+**Ruling R-11: `GET /api/world` writes nothing to the world.** (It may open a `sessions` row, D.3; it never touches `player_worlds` or `players.last_seen_at`.) Resolving is deterministic, so a read can
 compute "now" without persisting, and only `POST /api/actions` moves `last_resolved_at`. That
 keeps reads cheap and idempotent. *Cost if wrong:* a long-idle world re-resolves a capped
 offline window on every read until the next action. `resolve` caps at `offlineCapMs`, so that
