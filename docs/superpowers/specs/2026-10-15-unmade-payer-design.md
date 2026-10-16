@@ -110,8 +110,8 @@ To be added after the 2026-10-15 blocked-payer amendment:
 3. The existing blocked-payer tests still pass: the recipe has machines, isn't starved,
    and its output is FULL, so the advice is storage for that output.
 4. A starved payer whose walk ends on a recipe that is still starved, with nothing it can
-   walk to, leaves the advice as it was. With a second candidate payer, that candidate
-   decides instead.
+   walk to, leaves the advice as it was. (Moving on to a second candidate payer in that
+   case follows from the loop; the fixture has no two-payer price to test it on.)
 5. The termination test and the iteration cap still hold.
 
 **Measured:**
