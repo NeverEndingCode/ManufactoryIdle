@@ -454,23 +454,45 @@ function drainedPayer(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>): ItemI
 }
 
 /**
- * Spec 2026-10-15: an item the purchase is priced in that is short of the price and not
- * made at all, because its live active recipe has a FULL output (byproducts included)
- * -- returns that output, the first in recipe order not yet visited; else null. It sits
- * between drainedPayer (which names only a made item) and slowPayer (which names only a
- * growing one): a payer whose own recipe is backed up is neither. The `visited` filter
- * is what bounds the caller's loop (see the test that removes it).
+ * Spec 2026-10-15 (unmade payer): advice for the first item the purchase is priced in that
+ * is short of the price and not made at all, by the cause -- its recipe is starved (one
+ * machine for the recipe that limits it), has no machines (one machine for it), or has a
+ * FULL output (storage for that output). Null when no such payer has an answer. Adds each
+ * payer it considers, and each item the starved walk steps through, to `visited`, which
+ * is what bounds `payable`'s loop through these redirects.
  */
-function blockedPayerOutput(walk: WalkContext, costs: ReadonlyMap<ItemId, Dec>, visited: ReadonlySet<ItemId>): ItemId | null {
+function unmadePayerAdvice(
+  walk: WalkContext,
+  costs: ReadonlyMap<ItemId, Dec>,
+  visited: Set<ItemId>,
+  limitingTarget: string,
+): NonNullable<Bottleneck> | null {
   const { content, state, itemRates, itemStates } = walk;
   for (const [itemId, amount] of costs) {
+    if (visited.has(itemId)) continue;
     const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
     if (liquid(state, itemId).plus(bound).gte(amount)) continue;
     if ((itemRates.get(itemId)?.production ?? 0) > FLOW_TOLERANCE) continue;
     const recipeId = activeRecipeOf(state.activeRecipe, itemId);
     if (recipeId === undefined || !isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) continue;
+    visited.add(itemId);
+
+    if (hasEmptyInput(walk, recipeId)) {
+      let target = recipeId;
+      for (let next = starvedStep(walk, target, visited); next !== null; next = starvedStep(walk, target, visited)) {
+        target = next;
+      }
+      if (hasEmptyInput(walk, target)) continue;
+      return { kind: "recipe", recipeId: target, limitingTarget, machinesToClear: 1 };
+    }
+    if ((walk.capacity.unitsByRecipe.get(recipeId) ?? 0) === 0) {
+      return { kind: "recipe", recipeId, limitingTarget, machinesToClear: 1 };
+    }
     for (const output of content.recipes.get(recipeId)!.def.outputs) {
-      if (itemStates.get(output.item) === "FULL" && !visited.has(output.item)) return output.item;
+      if (itemStates.get(output.item) === "FULL" && !visited.has(output.item)) {
+        visited.add(output.item);
+        return { kind: "storage", itemId: output.item, limitingTarget, upgrade: cheaperUpgrade(content, state, output.item) };
+      }
     }
   }
   return null;
@@ -533,8 +555,9 @@ function starvedStep(walk: WalkContext, recipeId: RecipeId, visited: Set<ItemId>
  * Spec 2026-10-14: a payer too slow to afford the price within half an offline window
  * becomes one more machine for its active recipe -- walked on to the recipe limiting it
  * while that recipe has an EMPTY input -- priced through this same loop.
- * Spec 2026-10-15: a payer short and not made at all because its own recipe has a FULL
- * output becomes storage for that output, priced through this same loop.
+ * Spec 2026-10-15: a payer short and not made at all becomes advice for its cause --
+ * starved (one machine for the recipe limiting it), no machines (one for its recipe), or
+ * a FULL output (storage for it) -- priced through this same loop.
  * `visited` bounds the steps at one per payer; reaching one twice, or a payer with both
  * curves maxed, ends at `upgrade: null` -- the honest wall, which check 12 makes
  * unreachable at the deepest tier but not before it. The loop is also hard-capped: more
@@ -559,15 +582,12 @@ function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
       if (drained !== null) {
         return { kind: "reserve", itemId: drained, percent: RESERVE_ADVICE_PERCENT, limitingTarget: answer.limitingTarget };
       }
-      // Spec 2026-10-15: a payer not made at all because its own recipe has a FULL output
-      // waits on room for that output. Advise storage for it, priced through this loop.
-      const blocked = blockedPayerOutput(walk, costs, visited);
-      if (blocked !== null) {
-        // Adding it to `visited` is what bounds this loop: blockedPayerOutput skips visited
-        // outputs, so when the advised storage is itself paid in an item the same output
-        // blocks, the next pass finds nothing new and falls through instead of cycling.
-        visited.add(blocked);
-        current = { kind: "storage", itemId: blocked, limitingTarget: answer.limitingTarget, upgrade: cheaperUpgrade(content, state, blocked) };
+      // Spec 2026-10-15: a payer not made at all gets advice for the cause -- starved,
+      // no machines, or a FULL output -- priced through this same loop. Each redirect
+      // adds a new item to `visited`, which keeps the loop inside its cap.
+      const unmade = unmadePayerAdvice(walk, costs, visited, answer.limitingTarget);
+      if (unmade !== null) {
+        current = unmade;
         continue;
       }
       // Spec 2026-10-14: payable, but a payer is too slow to get there soon. Advise one
