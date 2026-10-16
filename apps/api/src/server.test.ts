@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -93,12 +94,17 @@ interface WorldRowView {
   last_resolved_at_ms: number;
   content_version: string;
   schema_version: number;
+  initial_seed: number;
+  initial_content_version: string;
+  created_at_ms: number;
 }
 
 async function worldRows(): Promise<WorldRowView[]> {
   return db.query<WorldRowView>(
     `select state, state_version::text as state_version, content_version, schema_version,
-            round(extract(epoch from last_resolved_at) * 1000)::float8 as last_resolved_at_ms
+            round(extract(epoch from last_resolved_at) * 1000)::float8 as last_resolved_at_ms,
+            initial_seed, initial_content_version,
+            round(extract(epoch from created_at) * 1000)::float8 as created_at_ms
        from player_worlds`,
   );
 }
@@ -125,6 +131,13 @@ async function logRows(): Promise<LogRow[]> {
             round(extract(epoch from created_at) * 1000)::float8 as created_at_ms
        from action_log order by id`,
   );
+}
+
+async function lastSeenMs(): Promise<number[]> {
+  const rows = await db.query<{ ms: number }>(
+    "select round(extract(epoch from last_seen_at) * 1000)::float8 as ms from players",
+  );
+  return rows.map((r) => r.ms);
 }
 
 const wire = (state: WorldState): unknown => JSON.parse(serializeWorld(state));
@@ -160,10 +173,10 @@ describe("POST /api/guests", () => {
 
     const content = store.current.content;
     const row = await onlyWorld();
-    const stored = deserializeWorld(JSON.stringify(row.state));
-    // The integer seed is not recoverable from the PRNG state, so the stored seed is
-    // substituted into an otherwise-independent initialWorld; every other field must match.
-    const expected: WorldState = { ...initialWorld(content, 0, T0), seed: stored.seed };
+    expect(Number.isInteger(row.initial_seed)).toBe(true);
+    expect(row.initial_seed).toBeGreaterThanOrEqual(0);
+    expect(row.initial_seed).toBeLessThan(2 ** 31);
+    const expected = initialWorld(content, row.initial_seed, T0);
     expect(row.state).toEqual(wire(expected));
     expect(body.world.state).toEqual(wire(expected));
     expect(body.world.schedule).toEqual(schedule(expected, content));
@@ -173,14 +186,25 @@ describe("POST /api/guests", () => {
     expect(row.content_version).toBe(store.current.version);
     expect(row.last_resolved_at_ms).toBe(T0);
     expect(row.schema_version).toBe(expected.schemaVersion);
+    expect(row.created_at_ms).toBe(T0);
+    expect(row.initial_content_version).toBe(store.current.version);
 
+    // Only the token's sha256 is stored; the raw token is returned once and never kept.
     const players = await db.query<{ guest_token: string }>("select guest_token from players");
-    expect(players).toEqual([{ guest_token: body.guestToken }]);
+    expect(players).toHaveLength(1);
+    expect(players[0]!.guest_token).not.toBe(body.guestToken);
+    expect(players[0]!.guest_token).not.toContain(body.guestToken);
+    expect(players[0]!.guest_token).toBe(
+      createHash("sha256").update(body.guestToken).digest("hex"),
+    );
 
     // A second guest gets its own seed (a fresh random draw, not a constant).
     await createGuest(app);
-    const seeds = (await worldRows()).map((r) => (r.state as { seed: unknown }).seed);
-    expect(seeds[0]).not.toEqual(seeds[1]);
+    const rows = await worldRows();
+    expect(rows[0]!.initial_seed).not.toBe(rows[1]!.initial_seed);
+    expect((rows[0]!.state as { seed: unknown }).seed).not.toEqual(
+      (rows[1]!.state as { seed: unknown }).seed,
+    );
   });
 });
 
@@ -204,6 +228,7 @@ describe("GET /api/world", () => {
     expect(body.stateVersion).toBe(0);
 
     expect(await onlyWorld()).toEqual(before);
+    expect(await lastSeenMs()).toEqual([T0]);
   });
 });
 
@@ -235,14 +260,12 @@ describe("POST /api/actions", () => {
     expect(row.state).toEqual(wire(batch.state));
     expect(row.state_version).toBe("1");
     expect(row.last_resolved_at_ms).toBe(now);
+    expect(row.last_resolved_at_ms).toBe(batch.state.lastResolvedAt);
 
     expect(await logRows()).toEqual([
       { actions: [BUY_MINER], idempotency_key: "k-1", created_at_ms: now },
     ]);
-    const players = await db.query<{ ms: number }>(
-      "select round(extract(epoch from last_seen_at) * 1000)::float8 as ms from players",
-    );
-    expect(players).toEqual([{ ms: now }]);
+    expect(await lastSeenMs()).toEqual([now]);
   });
 
   it("4. a batch with a rejected second action is a 409 and persists nothing", async () => {
@@ -264,6 +287,7 @@ describe("POST /api/actions", () => {
 
     expect(await onlyWorld()).toEqual(before);
     expect(await logRows()).toEqual([]);
+    expect(await lastSeenMs()).toEqual([T0]);
   });
 
   it("5. malformed bodies are a 400, open no transaction and change nothing", async () => {
@@ -293,37 +317,66 @@ describe("POST /api/actions", () => {
     expect(await onlyWorld()).toEqual(before);
     expect(await logRows()).toEqual([]);
   });
+
+  it("5b. an over-long id, or an over-long priority list, is a 400", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    const txBefore = db.transactions;
+    const ok = { idempotencyKey: "k", baseVersion: 0 };
+    const long = "x".repeat(65);
+    const bodies: unknown[] = [
+      { ...ok, actions: [{ ...BUY_MINER, lane: long }] },
+      { ...ok, actions: [{ ...BUY_MINER, recipeId: long }] },
+      { ...ok, actions: [{ type: "SET_RESERVE", itemId: long, percent: 1 }] },
+      { ...ok, actions: [{ type: "REORDER_PRIORITY", entries: [long] }] },
+      { ...ok, actions: [{ type: "REORDER_PRIORITY", entries: Array(257).fill("power") }] },
+    ];
+    for (const body of bodies) {
+      const res = await postActions(app, token, body);
+      expect(res.statusCode, JSON.stringify(body).slice(0, 120)).toBe(400);
+    }
+    // 64 is still allowed through to the engine (which rejects the unknown lane: a 409).
+    const at64 = await postActions(app, token, {
+      ...ok,
+      actions: [{ ...BUY_MINER, lane: "x".repeat(64) }],
+    });
+    expect(at64.statusCode).toBe(409);
+    expect(db.transactions).toBe(txBefore + 1);
+  });
 });
 
 describe("auth", () => {
   it("6. a missing or unknown guest token is a 401", async () => {
     const { app } = await server();
-    await createGuest(app);
+    const token = await createGuest(app);
     const body = { idempotencyKey: "k", baseVersion: 0, actions: [BUY_MINER] };
 
-    expect((await app.inject({ method: "GET", url: "/api/world" })).statusCode).toBe(401);
-    expect(
-      (await app.inject({ method: "POST", url: "/api/actions", payload: body })).statusCode,
-    ).toBe(401);
-
-    const unknown = guest("not-a-real-token");
-    expect(
-      (await app.inject({ method: "GET", url: "/api/world", headers: unknown })).statusCode,
-    ).toBe(401);
-    expect(
-      (await app.inject({ method: "POST", url: "/api/actions", headers: unknown, payload: body }))
-        .statusCode,
-    ).toBe(401);
-    expect(
-      (
-        await app.inject({
-          method: "GET",
-          url: "/api/world",
-          headers: { authorization: "Bearer x" },
-        })
-      ).statusCode,
-    ).toBe(401);
+    const headerSets: (Record<string, string> | undefined)[] = [
+      undefined,
+      guest("not-a-real-token"),
+      guest("A".repeat(43)), // well-formed, but no such guest
+      { authorization: `Bearer ${token}` },
+      { authorization: `Guest ${token}x` },
+    ];
+    for (const headers of headerSets) {
+      for (const req of [
+        { method: "GET" as const, url: "/api/world" },
+        { method: "POST" as const, url: "/api/actions", payload: body },
+      ]) {
+        const res = await app.inject({ ...req, ...(headers ? { headers } : {}) });
+        expect(res.statusCode, `${req.method} ${JSON.stringify(headers)}`).toBe(401);
+        expect(res.headers["www-authenticate"]).toBe("Guest");
+      }
+    }
     expect((await onlyWorld()).state_version).toBe("0");
+
+    // The scheme is case-insensitive, and the real token is accepted.
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/world",
+      headers: { authorization: `guest  ${token}` },
+    });
+    expect(ok.statusCode).toBe(200);
   });
 });
 
@@ -370,11 +423,9 @@ describe("content versions", () => {
 });
 
 describe("replay", () => {
-  it("8. replaying action_log from the initial state reproduces the stored state", async () => {
+  it("8. the recorded start plus action_log reproduces the stored state", async () => {
     const { app, store } = await server();
     const token = await createGuest(app);
-    const initial = await storedState();
-    const content = store.current.content;
 
     const steps: [number, Action[]][] = [
       [10 * MINUTE, [BUY_MINER]],
@@ -394,6 +445,11 @@ describe("replay", () => {
       expect(res.statusCode, res.body).toBe(200);
     }
 
+    // Rebuild the start from the recorded columns only, never from a stored state.
+    const row = await onlyWorld();
+    const content = await store.get(row.initial_content_version);
+    const initial = initialWorld(content, row.initial_seed, row.created_at_ms);
+
     const log = await logRows();
     expect(log.map((r) => r.created_at_ms)).toEqual(steps.map(([at]) => T0 + at));
     let state = initial;
@@ -403,9 +459,11 @@ describe("replay", () => {
       if (batch.rejected) throw new Error(`replay rejected: ${batch.reason}`);
       state = batch.state;
     }
-    const row = await onlyWorld();
     expect(row.state_version).toBe("3");
-    expect(serializeWorld(state)).toBe(serializeWorld(deserializeWorld(JSON.stringify(row.state))));
+    // Value equality on the wire form, not byte equality: jsonb re-orders object keys, and
+    // serializeWorld emits `priority` entries (and timers) in insertion order, so the bytes of
+    // a state read back from jsonb differ from the original even when every value matches.
+    expect(row.state).toEqual(wire(state));
     expect(serializeWorld(state)).not.toBe(serializeWorld(initial));
   });
 });

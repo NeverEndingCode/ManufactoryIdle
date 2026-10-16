@@ -1,7 +1,7 @@
 // Players and worlds: create a guest, load a world, and spec D.2's action transaction.
 // State is stored as JSON.parse(serializeWorld(state)) (R-5). Every timestamp written
 // here comes from the injected clock, never now(), so tests and replays are exact (R-6).
-import { randomBytes, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import {
   applyBatch,
   deserializeWorld,
@@ -64,6 +64,11 @@ function fromRow(row: WorldRow): World {
   };
 }
 
+/** Only this is stored in players.guest_token: a db leak must not hand out live tokens. */
+export function hashGuestToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 /** Creates a guest player and its main world on the current content version, in one transaction. */
 export async function createGuest(
   db: Db,
@@ -78,13 +83,14 @@ export async function createGuest(
     const [player] = await tx.query<{ id: string }>(
       `insert into players (guest_token, created_at, last_seen_at)
        values ($1, to_timestamp($2 / 1000.0), to_timestamp($2 / 1000.0)) returning id`,
-      [guestToken, nowMs],
+      [hashGuestToken(guestToken), nowMs],
     );
     const [world] = await tx.query<WorldRow>(
-      `insert into player_worlds (player_id, content_version, state, state_version, last_resolved_at, schema_version)
-       values ($1, $2, $3::jsonb, 0, to_timestamp($4 / 1000.0), $5)
+      `insert into player_worlds (player_id, content_version, state, state_version, last_resolved_at,
+                                  schema_version, initial_seed, created_at, initial_content_version)
+       values ($1, $2, $3::jsonb, 0, to_timestamp($4 / 1000.0), $5, $6, to_timestamp($4 / 1000.0), $2)
        returning id, player_id, content_version, state_version::text as state_version, state`,
-      [player!.id, version, toWire(state), nowMs, state.schemaVersion],
+      [player!.id, version, toWire(state), nowMs, state.schemaVersion, seed],
     );
     return { guestToken, world: fromRow(world!) };
   });
@@ -126,18 +132,10 @@ export async function applyActions(
   idempotencyKey: string,
   nowMs: number,
 ): Promise<{ world: World; content: IndexedContent; summary: ResolveSummary }> {
-  // ContentStore.get reads content_versions through the root db on a cache miss, and a
-  // root-db query inside a PGlite transaction deadlocks. So the pinned bundle is warmed
-  // before the transaction opens; inside it, the locked row's version is authoritative
-  // and is fetched again only if it changed in between (D.6's migrate, from 3c).
-  const peek = await loadMainWorld(db, playerId);
-  const warmed = await content.get(peek.contentVersion);
   return db.transaction(async (tx) => {
     const world = await loadMainWorld(tx, playerId, true);
-    const pinned =
-      world.contentVersion === peek.contentVersion
-        ? warmed
-        : await content.get(world.contentVersion);
+    // Under the lock, through tx: the locked row's version is the one that counts.
+    const pinned = await content.get(world.contentVersion, tx);
     const resolved = resolve(world.state, pinned, nowMs - world.state.lastResolvedAt);
     const batch = applyBatch(resolved.state, pinned, actions, resolved.state.seed);
     if (batch.rejected) {
@@ -149,7 +147,9 @@ export async function applyActions(
               last_resolved_at = to_timestamp($3 / 1000.0)
         where id = $1
         returning state_version::text as state_version`,
-      [world.id, toWire(batch.state), nowMs],
+      // R-6: last_resolved_at mirrors the state's own clock. action_log.created_at below is
+      // the request time from clock(); the two agree today, but they mean different things.
+      [world.id, toWire(batch.state), batch.state.lastResolvedAt],
     );
     await tx.query(
       `insert into action_log (player_id, world_id, actions, idempotency_key, created_at)

@@ -45,6 +45,24 @@ describe("openContentStore", () => {
     expect((await b.get(b.current.version)).bundle).toEqual(b.current.content.bundle);
   });
 
+  it("reads a miss through the given transaction (no deadlock on PGlite)", async () => {
+    const a = await openContentStore(db, SLICE);
+    const b = await openContentStore(db, FIXTURE);
+    const got = await db.transaction(async (tx) => {
+      // A row only this transaction can see: proves the read goes through tx.
+      await tx.query(
+        `insert into content_versions (version, checksum, bundle)
+         select 'tx-only', 'tx-only', bundle from content_versions where version = $1`,
+        [a.current.version],
+      );
+      const viaTx = await b.get("tx-only", tx);
+      const missed = await b.get(a.current.version, tx);
+      return { viaTx, missed };
+    });
+    expect(got.viaTx.bundle).toEqual(a.current.content.bundle);
+    expect(got.missed.bundle).toEqual(a.current.content.bundle);
+  }, 5_000);
+
   it("rejects an unknown version", async () => {
     const store = await openContentStore(db, SLICE);
     await expect(store.get("unknown")).rejects.toThrow(/unknown/);

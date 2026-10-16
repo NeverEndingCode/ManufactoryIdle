@@ -4,7 +4,8 @@
 // why numeric fields are typed but not ranged beyond what JSON already guarantees.
 // Kept in step with the engine's `Action` union (packages/engine/src/actions/types.ts).
 
-const str = { type: "string" } as const;
+/** Every content id (lane, machine class, item, recipe, priority entry) is bounded. */
+const str = { type: "string", maxLength: 64 } as const;
 const int = { type: "integer" } as const;
 const num = { type: "number" } as const;
 
@@ -30,7 +31,7 @@ export const actionSchema = {
     action("UPGRADE_MARK", { lane: str, machineClass: str, fromMark: int }),
     action("ASSIGN_MACHINES", { recipeId: str, count: int }),
     action("SELECT_RECIPE", { itemId: str, recipeId: str }),
-    action("REORDER_PRIORITY", { entries: { type: "array", items: str } }),
+    action("REORDER_PRIORITY", { entries: { type: "array", maxItems: 256, items: str } }),
     action(
       "SET_PRIORITY_MODE",
       { entryId: str, mode: { enum: ["guaranteed", "share"] } },

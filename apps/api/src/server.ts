@@ -1,6 +1,12 @@
 // buildServer takes its dependencies (db, content, a clock, an auth resolver) so tests
 // run it on PGlite with a fake clock through inject(), with no network (spec 3a layout).
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import Fastify, {
+  type FastifyBaseLogger,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+  type FastifyServerOptions,
+} from "fastify";
 import { schedule, serializeWorld, type Action, type IndexedContent } from "@manufactory/engine";
 import type { Db } from "./db/db.js";
 import type { ContentStore } from "./content.js";
@@ -10,19 +16,21 @@ import {
   WorldNotFoundError,
   applyActions,
   createGuest,
+  hashGuestToken,
   viewWorld,
   type World,
 } from "./worlds.js";
 
 export type Auth = (request: FastifyRequest) => Promise<{ playerId: string } | null>;
 
-/** The 3a resolver: `Authorization: Guest <token>` → that guest player's id, else null. */
+/** The 3a resolver: `Authorization: Guest <token>` → that guest player's id, else null.
+ * Tokens are 32 random bytes in base64url (43 chars); only their sha256 is stored. */
 export function guestAuth(db: Db): Auth {
   return async (request) => {
-    const match = /^Guest ([A-Za-z0-9_-]{1,128})$/.exec(request.headers.authorization ?? "");
+    const match = /^guest\s+([A-Za-z0-9_-]{43})$/i.exec(request.headers.authorization ?? "");
     if (!match) return null;
     const rows = await db.query<{ id: string }>("select id from players where guest_token = $1", [
-      match[1],
+      hashGuestToken(match[1]!),
     ]);
     return rows.length === 0 ? null : { playerId: rows[0]!.id };
   };
@@ -33,6 +41,12 @@ export interface ServerDeps {
   content: ContentStore;
   clock: () => number;
   auth: Auth;
+  /** Fastify `logger` options, or a pino-compatible instance. Omitted: no logging. */
+  logger?: FastifyServerOptions["logger"] | FastifyBaseLogger;
+}
+
+function isLoggerInstance(logger: ServerDeps["logger"]): logger is FastifyBaseLogger {
+  return typeof logger === "object" && typeof (logger as { child?: unknown }).child === "function";
 }
 
 interface ActionsBody {
@@ -51,8 +65,10 @@ function worldView(world: World, content: IndexedContent) {
 }
 
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const { db, content, clock, auth } = deps;
+  const { db, content, clock, auth, logger } = deps;
   const app = Fastify({
+    // Fastify 5 takes a ready-made logger as `loggerInstance`; `logger` only takes options.
+    ...(isLoggerInstance(logger) ? { loggerInstance: logger } : { logger: logger ?? false }),
     // Fastify's Ajv defaults would strip unknown properties (removeAdditional) and coerce
     // "1" to 1 (coerceTypes); both would turn a malformed action into an accepted one.
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
@@ -61,7 +77,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   async function requirePlayer(request: FastifyRequest, reply: FastifyReply) {
     const who = await auth(request);
     if (!who) {
-      await reply.code(401).send({ error: "unauthorized" });
+      await reply.code(401).header("www-authenticate", "Guest").send({ error: "unauthorized" });
       return null;
     }
     return who.playerId;
@@ -74,9 +90,21 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         .code(409)
         .send({ failedAction: error.action, index: error.index, reason: error.reason });
     }
-    const status = (error as { statusCode?: number }).statusCode;
+    const {
+      statusCode: status,
+      validation,
+      code,
+      message,
+    } = error as {
+      statusCode?: number;
+      validation?: unknown;
+      code?: string;
+      message?: string;
+    };
     if (status !== undefined && status >= 400 && status < 500) {
-      return reply.code(status).send({ error: (error as Error).message });
+      // Only Fastify's own errors (validation, FST_*) carry messages written for clients.
+      const ours = validation !== undefined || code?.startsWith("FST_") === true;
+      return reply.code(status).send({ error: ours ? message : "request failed" });
     }
     app.log.error(error);
     return reply.code(500).send({ error: "internal error" });

@@ -66,8 +66,9 @@ describe("migrate", () => {
     );
     const ins = () =>
       db.query(
-        `insert into player_worlds (id, player_id, content_version, state, last_resolved_at, schema_version)
-         values ($1, $2, 'v1', '{}', now(), 1)`,
+        `insert into player_worlds (id, player_id, content_version, state, last_resolved_at, schema_version,
+                                    initial_seed, created_at, initial_content_version)
+         values ($1, $2, 'v1', '{}', now(), 1, 0, now(), 'v1')`,
         [crypto.randomUUID(), pid],
       );
     await ins();
