@@ -59,22 +59,25 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     policy: "casual",
     untilTier: 10,
     knownRed: [
-      { tier: 1, observed: 3.0035, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone: one more stock item adds one 2-minute storage purchase to greedy-style tier-0 sweeps, crossing an offline-window boundary." },
-      { tier: 2, observed: 4.0139, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
+      { tier: 1, observed: 3.0035, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone: one more stock item adds one 2-minute storage purchase to greedy-style tier-0 sweeps, crossing an offline-window boundary") },
+      { tier: 2, observed: 4.0139, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") },
       { tier: 3, observed: 6.1115, why: CASUAL },
-      { tier: 4, observed: 9.0434, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
+      { tier: 4, observed: 9.0434, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") },
       { tier: 5, observed: 18.0034, why: CASUAL },
       { tier: 6, observed: 28.0021, why: CASUAL },
       { tier: 7, observed: 42.0167, why: CASUAL },
       { tier: 8, observed: 62.0021, why: CASUAL },
-      { tier: 9, observed: 90.0014, why: CASUAL + " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone." },
+      { tier: 9, observed: 90.0014, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") },
       {
         tier: 10,
         observed: 98.0222,
         why:
           CASUAL +
-          " Re-measured 2026-10-13 after tier 10 became the assembly-rig capstone " +
-          "(was 205.0120 on the old smart_plating requirement).",
+          " " +
+          remeasured(
+            "2026-10-13",
+            "tier 10 became the assembly-rig capstone (was 205.0120 on the old smart_plating requirement)",
+          ),
       },
     ],
   },

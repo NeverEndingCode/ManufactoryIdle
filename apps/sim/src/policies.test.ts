@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { D, apply, computeCapacity, indexContent, solve, type WorldState } from "@manufactory/engine";
+import { D, FLOW_TOLERANCE, apply, computeCapacity, indexContent, solve, type WorldState } from "@manufactory/engine";
 import { SLICE_BUNDLE_DIR, loadContent, newWorld } from "./bootstrap.js";
 import {
   POLICY_NAMES,
@@ -581,6 +581,11 @@ describe("bottleneck and reserve advice (spec 2026-10-13)", () => {
 
   it("clears a reserve whose item is FULL", () => {
     const actions = reservedWith({ iron_ingot: 0.25 }, { iron_ingot: 2 }, { iron_ingot: "FULL" });
+    expect(actions).toContainEqual({ type: "SET_RESERVE", itemId: "iron_ingot", percent: 0 });
+  });
+
+  it("clears a reserve whose net is exactly FLOW_TOLERANCE (growing is net > FLOW_TOLERANCE)", () => {
+    const actions = reservedWith({ iron_ingot: 0.25 }, { iron_ingot: FLOW_TOLERANCE }, { iron_ingot: "FLOWING" });
     expect(actions).toContainEqual({ type: "SET_RESERVE", itemId: "iron_ingot", percent: 0 });
   });
 
