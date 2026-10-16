@@ -357,6 +357,8 @@ describe("solve — a reserve is sized against its item's production (R8)", () =
   const entry = withReserve.entries.find((e) => e.entryId === "reserve:iron_ingot");
 
   it("targets percent x production without reserves", () => {
+    // The code sizes against a full-power item pass; at tier 1 there is no brownout, so
+    // that agrees with the settled `bare` solve and the comparator is the same number.
     const production = bare.itemRates.get("iron_ingot")!.production;
     // Precondition: the upstream is short, so the two sizings differ.
     expect(production).toBeGreaterThan(0);

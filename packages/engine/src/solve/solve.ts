@@ -59,22 +59,32 @@ export function solve(
   let demandTargetMw = 0;
   let passes = 0;
 
-  // Spec 2026-10-16 (ruling R8 amended): a reserve is sized against what its item makes
-  // with no reserves set, so it can take at most half of real production. The
-  // reserve-free state takes the branch below's `undefined` path, so this never
-  // recurses, and with no reserve set it never runs.
+  // Spec 2026-10-16 (ruling R8 amended, "Why full power"): a reserve is sized against what
+  // its item makes at full power with no reserves set, so it can take at most half of
+  // real production. Full power, not the brownout-settled rate: a brownout must not
+  // shrink a reserve (measured: sizing against the settled solve left `bottleneck` with a
+  // 1.34-collection dead stretch). It is one item pass at ratio 1, not a recursive
+  // solve, so it cannot recurse; with no reserve set it never runs.
   const anyReserve = Object.values(state.reserve).some((percent) => percent > 0);
-  const productionOf = anyReserve
-    ? new Map(
-        [
-          ...solve(
-            { ...state, reserve: Object.fromEntries(Object.keys(state.reserve).map((id) => [id, 0])) },
-            content,
-            options,
-          ).itemRates,
-        ].map(([itemId, flow]) => [itemId, flow.production] as const),
-      )
-    : undefined;
+  let productionOf: Map<ItemId, number> | undefined;
+  if (anyReserve) {
+    const bare: WorldState = {
+      ...state,
+      reserve: Object.fromEntries(Object.keys(state.reserve).map((id) => [id, 0])),
+    };
+    const fullPower = solveItems({
+      content,
+      vectors,
+      state: bare,
+      capacityUnits: capacity.unitsByRecipe,
+      entries: effectivePriority(content, bare, capacity, 0),
+      reserveFloor,
+      seedPins,
+    });
+    productionOf = new Map(
+      [...fullPower.pass.flows].map(([itemId, flow]) => [itemId, flow.production] as const),
+    );
+  }
 
   let items = solveItems({
     content,
