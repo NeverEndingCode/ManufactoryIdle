@@ -714,8 +714,8 @@ reserves, at full power`, with `percent` clamped to 50%, so the target is at mos
 that full-power reserve-free counterfactual, and a brownout doesn't shrink a reserve. This
 is not a bound on the reserve's share of what is actually made. It was `percent × the
 unconstrained rate`, which, when the upstream was short, let a 25% reserve exceed what
-the chain makes. Consumers of a reserved item can still be cut off while it is reserved
-(walks treat it as pinned EMPTY). Measured before this change: every `bottleneck` reserve lasted
+the chain makes. While an item is reserved its consumers draw only on its production, not
+its stock (walks treat it as pinned EMPTY) -- by design. Measured before this change: every `bottleneck` reserve lasted
 exactly one decision.
 
 **Bottleneck** returns `{ recipeId, limitingTarget, machinesToClear }` as first-class
