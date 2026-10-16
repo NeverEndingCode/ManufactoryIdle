@@ -59,12 +59,29 @@ export function solve(
   let demandTargetMw = 0;
   let passes = 0;
 
+  // Spec 2026-10-16 (ruling R8 amended): a reserve is sized against what its item makes
+  // with no reserves set, so it can take at most half of real production. The
+  // reserve-free state takes the branch below's `undefined` path, so this never
+  // recurses, and with no reserve set it never runs.
+  const anyReserve = Object.values(state.reserve).some((percent) => percent > 0);
+  const productionOf = anyReserve
+    ? new Map(
+        [
+          ...solve(
+            { ...state, reserve: Object.fromEntries(Object.keys(state.reserve).map((id) => [id, 0])) },
+            content,
+            options,
+          ).itemRates,
+        ].map(([itemId, flow]) => [itemId, flow.production] as const),
+      )
+    : undefined;
+
   let items = solveItems({
     content,
     vectors,
     state,
     capacityUnits: scaleCapacityByRatio(content, capacity, ratio).unitsByRecipe,
-    entries: effectivePriority(content, state, capacity, demandTargetMw),
+    entries: effectivePriority(content, state, capacity, demandTargetMw, productionOf),
     reserveFloor,
     seedPins,
   });
@@ -97,7 +114,7 @@ export function solve(
       vectors,
       state,
       capacityUnits: scaleCapacityByRatio(content, capacity, ratio).unitsByRecipe,
-      entries: effectivePriority(content, state, capacity, demandTargetMw),
+      entries: effectivePriority(content, state, capacity, demandTargetMw, productionOf),
       reserveFloor,
       seedPins,
     });

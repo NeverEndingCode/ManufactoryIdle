@@ -5,6 +5,7 @@ import { D } from "../numbers/decimal.js";
 import { computeBottleneck } from "./bottleneck.js";
 import { indexContent } from "../graph/index-content.js";
 import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
+import { unconstrainedRate } from "../economy/capacity.js";
 import { solve } from "./solve.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
@@ -342,5 +343,36 @@ describe("the EMPTY clamp balances exactly", () => {
   it("leaves an unclamped item's net alone", () => {
     // iron_ore has four miners feeding one smelter: a genuine surplus, nothing clamps it.
     expect(solve(overConsumed(), content, NO_FLOOR).itemRates.get("iron_ore")!.net).toBeGreaterThan(0);
+  });
+});
+
+// Spec 2026-10-16 (reserves that last), ruling R8 amended: a reserve is sized against
+// what its item really makes. Measured cause: every bottleneck reserve lasted one
+// decision, because 25% of the unconstrained rate took the whole short upstream.
+describe("solve — a reserve is sized against its item's production (R8)", () => {
+  const start = initialWorld(content, 1, 0);
+  const reserved: WorldState = { ...start, reserve: { ...start.reserve, iron_ingot: 0.25 } };
+  const bare = solve(start, content);
+  const withReserve = solve(reserved, content);
+  const entry = withReserve.entries.find((e) => e.entryId === "reserve:iron_ingot");
+
+  it("targets percent x production without reserves", () => {
+    const production = bare.itemRates.get("iron_ingot")!.production;
+    // Precondition: the upstream is short, so the two sizings differ.
+    expect(production).toBeGreaterThan(0);
+    expect(unconstrainedRate(content, withReserve.capacity, "iron_ingot")).toBeGreaterThan(production * 1.01);
+    expect(entry?.requested).toBeCloseTo(0.25 * production, 9);
+  });
+
+  it("leaves the item's consumers a share", () => {
+    expect(withReserve.itemRates.get("iron_ingot")!.consumption).toBeGreaterThan(0);
+  });
+
+  it("gives an item nothing makes no reserve effect", () => {
+    // plastic is not live at tier 1, so nothing makes it.
+    const noMaker: WorldState = { ...start, reserve: { ...start.reserve, plastic: 0.25 } };
+    const s = solve(noMaker, content);
+    const plastic = s.entries.find((e) => e.entryId === "reserve:plastic");
+    expect(plastic === undefined || plastic.requested === 0).toBe(true);
   });
 });
