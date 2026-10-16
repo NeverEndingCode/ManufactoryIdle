@@ -13,20 +13,30 @@ function wrap(q: Queryable, pool: pg.Pool | null): Db {
       // Already on a checked-out client: reuse the outer transaction.
       if (!pool) return fn(wrap(q, null));
       const client = await pool.connect();
+      let destroy = false;
       try {
         await client.query("BEGIN");
         const result = await fn(wrap(client, null));
-        await client.query("COMMIT");
+        try {
+          await client.query("COMMIT");
+        } catch (err) {
+          destroy = true;
+          throw err;
+        }
         return result;
       } catch (err) {
-        try {
-          await client.query("ROLLBACK");
-        } catch {
-          // The original error matters more than a failed rollback.
+        if (!destroy) {
+          try {
+            await client.query("ROLLBACK");
+          } catch {
+            // The original error matters more than a failed rollback.
+            destroy = true;
+          }
         }
         throw err;
       } finally {
-        client.release();
+        // release(true) makes the pool destroy a client that may be stuck mid-transaction.
+        client.release(destroy);
       }
     },
     async close() {
@@ -38,5 +48,7 @@ function wrap(q: Queryable, pool: pg.Pool | null): Db {
 /** Production adapter over a pg.Pool. */
 export function pgDb(connectionString: string): Db {
   const pool = new pg.Pool({ connectionString });
+  // An idle client erroring (e.g. a Postgres restart) must not crash the process.
+  pool.on("error", (err) => console.error("pg pool idle client error", err));
   return wrap(pool, pool);
 }

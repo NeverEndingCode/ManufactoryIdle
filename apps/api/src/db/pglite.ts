@@ -6,8 +6,8 @@ type Queryable = Pick<PGlite, "query" | "exec">;
 function wrap(q: Queryable, root: PGlite | null, inTx: boolean): Db {
   return {
     async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
-      // Parameterless SQL goes through exec so migrations may hold several statements.
-      if (params === undefined) {
+      // No params -> exec(), which allows multi-statement SQL and returns the last statement's rows.
+      if (params === undefined || params.length === 0) {
         const results = await q.exec(sql);
         return (results[results.length - 1]?.rows ?? []) as T[];
       }
