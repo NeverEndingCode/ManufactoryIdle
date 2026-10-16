@@ -1136,7 +1136,7 @@ sim run --policy casual --seed 42
 | `casual` | Checks in 3×/day, never reorders priorities. The lower bound |
 | **`bottleneck`** | Always buys exactly what §4.5's bottleneck reporter recommends |
 
-**Amended 2026-10-17:** `greedy`, `casual` and `optimal` offer `BUY_STORAGE` only for an item some live recipe outputs (primary or byproduct), as they already did for machines (measured: 98 and 108 dead storage levels for `greedy` and `casual`).
+**Amended 2026-10-16:** `greedy`, `casual` and `optimal` offer `BUY_STORAGE` only for an item some live recipe outputs (primary or byproduct), as they already did for machines (measured: 98 and 108 dead storage levels for `greedy` and `casual`).
 
 **Amended 2026-10-13:** bottleneck also follows reserve advice (SET_RESERVE), and clears a reserve once the advice no longer names it (amended 2026-10-16: kept until its item is FULL; see §4.5); no other policy reserves.
 

@@ -36,7 +36,7 @@ import type { RunReport } from "./report.js";
  * names the thing that has to change for it to go away.
  *
  * Measured 2026-09-16, seed 42, `slice.v1`; `bottleneck` re-measured 2026-10-10;
- * all three policies re-measured 2026-10-13 (tier 10 capstone) and again 2026-10-17.
+ * all three policies re-measured 2026-10-13 (tier 10 capstone) and again 2026-10-16.
  */
 const CASUAL =
   "spec E.5 asks every policy to hit the same targets; calibration fits one set of " +
@@ -62,7 +62,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "iron_plate amount crosses storage-cap boundaries (about 2,800 and 3,200), so no amount " +
           "reaches 0.42 within 5%; the calibrator reports tier 1 as unable to be brought within 5%. " +
           "It sat on target before only because greedy bought storage for items nothing live produces. " +
-          remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
     ],
   },
@@ -70,15 +70,15 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     policy: "casual",
     untilTier: 10,
     knownRed: [
-      { tier: 1, observed: 2.0046, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone: one more stock item adds one 2-minute storage purchase to greedy-style tier-0 sweeps, crossing an offline-window boundary") + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
-      { tier: 2, observed: 3.1389, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
-      { tier: 3, observed: 5.0069, why: CASUAL + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
-      { tier: 4, observed: 8.0579, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
+      { tier: 1, observed: 2.0046, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone: one more stock item adds one 2-minute storage purchase to greedy-style tier-0 sweeps, crossing an offline-window boundary") + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
+      { tier: 2, observed: 3.1389, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
+      { tier: 3, observed: 5.0069, why: CASUAL + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
+      { tier: 4, observed: 8.0579, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
       { tier: 5, observed: 18.0034, why: CASUAL },
-      { tier: 6, observed: 26.0021, why: CASUAL + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
-      { tier: 7, observed: 41.0167, why: CASUAL + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
+      { tier: 6, observed: 26.0021, why: CASUAL + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
+      { tier: 7, observed: 41.0167, why: CASUAL + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
       { tier: 8, observed: 62.0021, why: CASUAL },
-      { tier: 9, observed: 89.0013, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
+      { tier: 9, observed: 89.0013, why: CASUAL + " " + remeasured("2026-10-13", "tier 10 became the assembly-rig capstone") + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated") },
       {
         tier: 10,
         observed: 97.1651,
@@ -90,7 +90,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
             "tier 10 became the assembly-rig capstone (was 205.0120 on the old smart_plating requirement)",
           ) +
           " " +
-          remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
     ],
   },
@@ -118,7 +118,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "faster than target because it buys almost nothing beyond what the reporter " +
           "names. Fast is not on-target -- both directions count as red. " +
           remeasured("2026-10-13", "bottleneck began following reserve advice")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 2,
@@ -126,7 +126,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
         why:
           "target 0.8, measured 0.190 (-76%): the same minimal-buying overshoot as tier 1. " +
           remeasured("2026-10-13", "bottleneck began following reserve advice")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 3,
@@ -135,7 +135,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           "target 1.2, measured 0.333 (-72%): the same overshoot, narrowing tier over tier. " +
           remeasured("2026-10-13", "bottleneck began following reserve advice") +
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 4,
@@ -145,7 +145,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           remeasured("2026-10-13", "bottleneck began following reserve advice") +
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
           " " + remeasured("2026-10-16", "reserves were sized against production and kept while working")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 5,
@@ -155,7 +155,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           remeasured("2026-10-13", "bottleneck began following reserve advice") +
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
           " " + remeasured("2026-10-16", "reserves were sized against production and kept while working")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 6,
@@ -168,7 +168,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           remeasured("2026-10-13", "bottleneck began following reserve advice") +
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
           " " + remeasured("2026-10-16", "reserves were sized against production and kept while working")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 7,
@@ -181,7 +181,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           remeasured("2026-10-14", "the reporter advised production for slow payers") +
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
           " " + remeasured("2026-10-16", "reserves were sized against production and kept while working")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 8,
@@ -191,7 +191,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           remeasured("2026-10-14", "the reporter advised production for slow payers") +
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
           " " + remeasured("2026-10-16", "reserves were sized against production and kept while working")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 9,
@@ -201,7 +201,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           remeasured("2026-10-14", "the reporter advised production for slow payers") +
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
           " " + remeasured("2026-10-16", "reserves were sized against production and kept while working")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
       {
         tier: 10,
@@ -215,7 +215,7 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
           " " + remeasured("2026-10-15", "bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer") +
           " " + remeasured("2026-10-15", "the reporter advised the cause for a payer not being made") +
           " " + remeasured("2026-10-16", "reserves were sized against production and kept while working")
-          + " " + remeasured("2026-10-17", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
+          + " " + remeasured("2026-10-16", "greedy and casual stopped buying storage for items nothing live produces, and the slice was recalibrated"),
       },
     ],
   },

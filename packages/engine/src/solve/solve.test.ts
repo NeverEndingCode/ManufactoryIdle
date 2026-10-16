@@ -386,7 +386,7 @@ describe("solve — a reserve is sized against its item's production (R8)", () =
   it("leaves the item's consumers a share", () => {
     // In this fixture state a reserve takes at most half and consumers keep the rest. Not
     // true in general: on the slice a reserved item's consumers lose its stock and can get
-    // 0 of its production -- by design (spec 2026-10-16, corrected 2026-10-17).
+    // 0 of its production -- by design (spec 2026-10-16, corrected 2026-10-16).
     const production = bare.itemRates.get("iron_ingot")!.production;
     expect(withReserve.itemRates.get("iron_ingot")!.consumption).toBeGreaterThanOrEqual(0.5 * production);
   });

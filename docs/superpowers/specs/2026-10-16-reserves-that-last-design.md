@@ -52,7 +52,7 @@ production` (at most 50% of that counterfactual). This makes reserves smaller th
 unconstrained sizing, but it is not a bound on the reserve's share of what is actually
 made. While an item is reserved its consumers draw only on its production, not its stock,
 because walks treat a reserved item as pinned EMPTY; that is the reserve's purpose (see
-"Measured after implementation" and its 2026-10-17 correction). With no reserve set, nothing changes and no extra solve runs. A reserved item
+"Measured after implementation" and its 2026-10-16 correction). With no reserve set, nothing changes and no extra solve runs. A reserved item
 whose production without reserves is 0 gets target 0, so the reserve has no effect.
 This matches today's drained-payer rule, which never names an unmade item.
 
@@ -130,7 +130,7 @@ every hold ended at FULL (13/13), none because the item stopped growing. Holds l
 reserve held, the item's consumers got 0 (for example `steel_pipe` at t9: reserve about 20%
 of production, consumption 0 against 9-20/s reserve-free).
 
-**Corrected 2026-10-17:** that is not a defect. Reserve-free, those consumers were draining
+**Corrected 2026-10-16:** that is not a defect. Reserve-free, those consumers were draining
 the item's *stock* (`steel_pipe` net -9.0/s on 0.19/s production); the reserve locks the
 stock -- the 2026-10-13 rule that walks treat a reserved item as pinned EMPTY -- which is
 how a drained payer reaches its price. On the tier-5 `reinforced_iron_plate` cases the
