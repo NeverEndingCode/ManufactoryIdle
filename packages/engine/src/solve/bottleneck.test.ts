@@ -1112,4 +1112,32 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
     const advice = computeBottleneck(blockable, sol.capacity, sol.entries, sol.power, { ...start, activeRecipe }, states, rates);
     expect(advice).toMatchObject({ kind: "recipe", recipeId: "make_plate" });
   });
+
+  it("stops after one redirect when the unmade payer's own machine is priced in the payer", () => {
+    // smelt_iron's smelter is itself priced in iron_ingot, the unmade payer: the redirect's
+    // own price names the payer again, and `visited` is what stops a second redirect.
+    const selfPriced = indexContent({
+      ...blockable.bundle,
+      machineClasses: blockable.bundle.machineClasses.map((cls) =>
+        cls.id !== "smelter"
+          ? cls
+          : { ...cls, marks: cls.marks.map((m, i) => (i === 0 ? { ...m, buildCost: [{ item: "iron_ingot", amount: 20 }] } : m)) },
+      ),
+    } as never);
+    const s0 = solve(start, selfPriced, NO_FLOOR);
+    const capacity = { ...s0.capacity, unitsByRecipe: new Map(s0.capacity.unitsByRecipe) };
+    capacity.unitsByRecipe.set("smelt_iron", 0);
+    const s = { ...s0, capacity };
+    // Precondition: the variant still advises make_plate first.
+    expect(computeBottleneck(selfPriced, s0.capacity, s0.entries, s0.power, start, s0.itemStates, s0.itemRates)).toMatchObject({
+      kind: "recipe",
+      recipeId: "make_plate",
+    });
+    expect(advise(0, "FLOWING", selfPriced, s)).toEqual({
+      kind: "recipe",
+      recipeId: "smelt_iron",
+      limitingTarget: "item:iron_plate",
+      machinesToClear: 1,
+    });
+  });
 });
