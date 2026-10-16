@@ -85,7 +85,9 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
     // The redirect walks on past a recipe starved of an input to the recipe that limits it
     // (final review, same day), which moved tiers 7 to 10. Re-measured 2026-10-15: it now buys
     // for the advised recipe and the reporter advises storage for a blocked payer, so tier 10
-    // lands at 10.5551 and its dead time is 0.6089 collections.
+    // lands at 10.5551 and its dead time is 0.6089 collections. Re-measured again the same day
+    // after the reporter advised the cause for a payer not being made: tier 10 at 10.5329, dead
+    // time 0.6379 collections.
     knownRed: [
       {
         tier: 1,
@@ -167,14 +169,15 @@ export const VERTICAL_SLICE_GATE: readonly PolicyGate[] = [
       },
       {
         tier: 10,
-        observed: 10.5551,
+        observed: 10.5329,
         why:
-          "target 25, measured 10.555 (-58%): the overshoot is at its narrowest. " +
+          "target 25, measured 10.533 (-58%): the overshoot is at its narrowest. " +
           "bottleneck now finishes tier 10 because of slow-payer advice: it used to stall at " +
           "tier 9 waiting about 22.6 hours for encased_industrial_beam to afford the 12th " +
           "assembly rig, and now builds more beam production instead. " +
           "Re-measured 2026-10-14 after the reporter advised production for slow payers." +
-          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer.",
+          " Re-measured 2026-10-15 after bottleneck bought for the advised recipe and the reporter advised storage for a blocked payer." +
+          " Re-measured 2026-10-15 after the reporter advised the cause for a payer not being made.",
       },
     ],
   },

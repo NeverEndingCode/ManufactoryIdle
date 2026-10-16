@@ -999,11 +999,12 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
   const sol = solve(start, blockable, NO_FLOOR);
   const firstAdvice = computeBottleneck(blockable, sol.capacity, sol.entries, sol.power, start, sol.itemStates, sol.itemRates);
   // `production` is the payer's production; `residue` is the byproduct's tag.
-  const advise = (production: number, residue: "EMPTY" | "FLOWING" | "FULL", c = blockable, s = sol, net = 0) => {
+  const advise = (production: number, residue: "EMPTY" | "FLOWING" | "FULL", c = blockable, s = sol, net = 0, ore: "EMPTY" | "FLOWING" | "FULL" = "FLOWING") => {
     const rates = new Map(s.itemRates);
     rates.set("iron_ingot", { production, consumption: production - net, net });
     const states = new Map(s.itemStates);
     states.set("heavy_oil_residue", residue);
+    states.set("iron_ore", ore);
     return computeBottleneck(c, s.capacity, s.entries, s.power, start, states, rates);
   };
 
@@ -1064,11 +1065,79 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
     rates.set("iron_plate", { production: 0, consumption: 0, net: 0 });
     const states = new Map(s.itemStates);
     states.set("heavy_oil_residue", "FULL");
+    states.set("iron_ore", "FLOWING");
+    states.set("iron_ingot", "FLOWING");
     expect(computeBottleneck(both, s.capacity, s.entries, s.power, w, states, rates)).toEqual({
       kind: "storage",
       itemId: "heavy_oil_residue",
       limitingTarget: "item:iron_plate",
       upgrade: "storage",
+    });
+  });
+
+  // Spec 2026-10-15 (unmade payer): a short payer not made at all gets the cause. Measured
+  // cause: 33 bottleneck decisions kept advising a purchase encased_industrial_beam could
+  // not pay while the beam recipe was starved.
+  it("walks a starved payer's recipe to what limits it, even when an output is FULL", () => {
+    // Precondition: the fresh variant has iron_ore EMPTY, so smelt_iron is starved.
+    expect(sol.itemStates.get("iron_ore")).toBe("EMPTY");
+    expect(advise(0, "FULL", blockable, sol, 0, "EMPTY")).toEqual({
+      kind: "recipe",
+      recipeId: start.activeRecipe.iron_ore,
+      limitingTarget: "item:iron_plate",
+      machinesToClear: 1,
+    });
+  });
+
+  it("advises one machine for a payer whose recipe has no machines", () => {
+    const capacity = { ...sol.capacity, unitsByRecipe: new Map(sol.capacity.unitsByRecipe) };
+    capacity.unitsByRecipe.set("smelt_iron", 0);
+    const s = { ...sol, capacity };
+    expect(advise(0, "FLOWING", blockable, s)).toEqual({
+      kind: "recipe",
+      recipeId: "smelt_iron",
+      limitingTarget: "item:iron_plate",
+      machinesToClear: 1,
+    });
+  });
+
+  it("leaves the advice alone when a starved payer's walk dead-ends", () => {
+    // iron_ore's recipe is not live, so the walk from smelt_iron cannot step to it.
+    const { iron_ore: _dropped, ...activeRecipe } = start.activeRecipe;
+    const rates = new Map(sol.itemRates);
+    rates.set("iron_ingot", { production: 0, consumption: 0, net: 0 });
+    const states = new Map(sol.itemStates);
+    states.set("iron_ore", "EMPTY");
+    states.set("heavy_oil_residue", "FLOWING");
+    const advice = computeBottleneck(blockable, sol.capacity, sol.entries, sol.power, { ...start, activeRecipe }, states, rates);
+    expect(advice).toMatchObject({ kind: "recipe", recipeId: "make_plate" });
+  });
+
+  it("stops after one redirect when the unmade payer's own machine is priced in the payer", () => {
+    // smelt_iron's smelter is itself priced in iron_ingot, the unmade payer: the redirect's
+    // own price names the payer again, and `visited` is what stops a second redirect.
+    const selfPriced = indexContent({
+      ...blockable.bundle,
+      machineClasses: blockable.bundle.machineClasses.map((cls) =>
+        cls.id !== "smelter"
+          ? cls
+          : { ...cls, marks: cls.marks.map((m, i) => (i === 0 ? { ...m, buildCost: [{ item: "iron_ingot", amount: 20 }] } : m)) },
+      ),
+    } as never);
+    const s0 = solve(start, selfPriced, NO_FLOOR);
+    const capacity = { ...s0.capacity, unitsByRecipe: new Map(s0.capacity.unitsByRecipe) };
+    capacity.unitsByRecipe.set("smelt_iron", 0);
+    const s = { ...s0, capacity };
+    // Precondition: the variant still advises make_plate first.
+    expect(computeBottleneck(selfPriced, s0.capacity, s0.entries, s0.power, start, s0.itemStates, s0.itemRates)).toMatchObject({
+      kind: "recipe",
+      recipeId: "make_plate",
+    });
+    expect(advise(0, "FLOWING", selfPriced, s)).toEqual({
+      kind: "recipe",
+      recipeId: "smelt_iron",
+      limitingTarget: "item:iron_plate",
+      machinesToClear: 1,
     });
   });
 });

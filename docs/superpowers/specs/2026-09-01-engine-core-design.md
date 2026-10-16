@@ -802,6 +802,18 @@ buy a packager it could not afford, because rubber had stopped: the oil chain ha
 backed up through `heavy_oil_residue` to an unconsumed `fuel`. With this rule it
 finishes tier 10 at 10.56 collections.
 
+**Amended 2026-10-15: a payer that is not being made gets the cause.** A payer short
+of the price and not made at all is checked for why, in this order:
+- its recipe is starved of an input: advise one machine for the recipe that limits it;
+- it has no machines: advise one machine for it;
+- it has a FULL output: advise storage for that output (the blocked-payer rule, now
+  applying only when the first two don't).
+
+Each answer passes through this final step again. Measured cause: in a `bottleneck`
+run on the vertical slice, 33 decisions kept advising a purchase that
+`encased_industrial_beam` could not pay, while the beam recipe was starved. The
+reporter now names what limits it.
+
 ### C.4 Power
 
 Grid per §6.1: `powerRatio = min(1, capacity / demand)`, demand scales with clock, clock
