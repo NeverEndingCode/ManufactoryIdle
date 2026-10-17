@@ -2,7 +2,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stderr, stdout } from "node:process";
-import { loadBundleDir, serialiseDerived } from "@manufactory/content";
+import { loadBundleDir, serialiseDerived, type Derived } from "@manufactory/content";
 import { FIXTURE_BUNDLE_DIR } from "./bootstrap.js";
 import { calibrate, type CalibrationResult, type TierCalibration } from "./calibrate.js";
 import type { PolicyName } from "./policies.js";
@@ -17,6 +17,46 @@ export interface CalibrationCliOptions {
   solveREff: boolean;
   scales?: number[] | undefined;
   refine?: boolean | undefined;
+  /** Keep derived.yaml's milestones above `maxTier` instead of refusing a partial write. */
+  merge?: boolean | undefined;
+}
+
+/** The flags `bin.ts` parses for `sim calibrate`, as `parseArgs` hands them over. */
+export interface CalibrateFlags {
+  policy?: string | undefined;
+  content?: string | undefined;
+  seed?: string | undefined;
+  "max-tier"?: string | undefined;
+  tolerance?: string | undefined;
+  write?: boolean | undefined;
+  "no-solve-reff"?: boolean | undefined;
+  scales?: string | undefined;
+  scale?: string | undefined;
+  "no-refine"?: boolean | undefined;
+  merge?: boolean | undefined;
+}
+
+export function calibrateOptionsFromFlags(values: CalibrateFlags): CalibrationCliOptions {
+  if (values.scale !== undefined && values.scales !== undefined) {
+    throw new Error("--scale and --scales are alternatives; pass one");
+  }
+  // --scale <s> is --scales <s> --no-refine: one scale, taken as given.
+  const scales =
+    values.scale !== undefined
+      ? [Number(values.scale)]
+      : values.scales?.split(",").map((v) => Number(v.trim()));
+  return {
+    contentDir: values.content,
+    policy: (values.policy ?? "greedy") as PolicyName,
+    seed: Number(values.seed ?? "42"),
+    maxTier: values["max-tier"] === undefined ? undefined : Number(values["max-tier"]),
+    tolerance: Number(values.tolerance ?? "0.05"),
+    write: values.write ?? false,
+    solveREff: !values["no-solve-reff"],
+    refine: values.scale !== undefined ? false : !values["no-refine"],
+    scales,
+    merge: values.merge ?? false,
+  };
 }
 
 function formatScan(result: CalibrationResult): string {
@@ -57,11 +97,44 @@ function formatTable(tiers: TierCalibration[], tolerance: number): string {
   return lines.join("\n");
 }
 
+/**
+ * This run's derived block, with the previous file's milestones above `maxTier` kept.
+ * Their `observedCollectionsToTier` entries are null: nothing in this run measured them.
+ */
+function mergeAbove(
+  fresh: Derived,
+  previous: Derived | undefined,
+  maxTier: number,
+  highestTier: number,
+): Derived {
+  const kept = (previous?.milestones ?? []).filter((m) => m.tier > maxTier);
+  const observed = [...(fresh.run?.observedCollectionsToTier ?? [])];
+  while (observed.length < highestTier) observed.push(null);
+  return {
+    ...fresh,
+    ...(fresh.run === undefined ? {} : { run: { ...fresh.run, observedCollectionsToTier: observed } }),
+    milestones: [...(fresh.milestones ?? []).filter((m) => m.tier <= maxTier), ...kept],
+  };
+}
+
 export function runCalibration(options: CalibrationCliOptions): number {
   const dir = options.contentDir ?? FIXTURE_BUNDLE_DIR;
   // Authored seeds, not the last run's output: calibration has to be idempotent, so
   // it must not search outward from a solution it already wrote (see LoadOptions).
   const bundle = loadBundleDir(dir, { applyDerived: false });
+  const highestTier = Math.max(0, ...bundle.milestones.map((m) => m.tier));
+  const partial = options.maxTier !== undefined && options.maxTier < highestTier;
+
+  // Refuse before any simulation, and before anything is written: a partial run emits
+  // milestones only up to maxTier, and the loader reads a missing tier as "authored
+  // seed", so overwriting derived.yaml would silently drop every solved tier above it.
+  if (partial && options.write && !options.merge) {
+    throw new Error(
+      `--max-tier ${options.maxTier} is below the bundle's highest tier (${highestTier}), so ` +
+        `--write would drop the solved tiers above it from derived.yaml. ` +
+        `Pass --merge to keep their existing amounts, or omit --write.`,
+    );
+  }
 
   const result = calibrate({
     bundle,
@@ -82,7 +155,9 @@ export function runCalibration(options: CalibrationCliOptions): number {
 
   if (options.write) {
     const path = join(dir, "derived.yaml");
-    writeFileSync(path, serialiseDerived(result.derived));
+    const derived =
+      partial && options.merge ? mergeAbove(result.derived, bundle.derived, options.maxTier!, highestTier) : result.derived;
+    writeFileSync(path, serialiseDerived(derived));
     stdout.write(`\nwrote ${path}\n`);
   } else {
     stdout.write(`\n(dry run — pass --write to emit derived.yaml)\n`);

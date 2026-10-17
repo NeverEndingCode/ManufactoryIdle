@@ -373,7 +373,16 @@ describe("solve — a reserve is sized against its item's production (R8)", () =
     const bareBrownout = solve(world, content);
     expect(bareBrownout.power.ratio).toBeLessThan(1);
     const settled = bareBrownout.itemRates.get("iron_ingot")!.production; // ~0.961
-    const fullPower = 1.47; // measured: the full-power, reserve-free item pass
+    // The full-power, reserve-free figure, derived rather than hard-coded: the same state
+    // solved against a bundle whose grid is large enough that the power ratio is 1. The
+    // engine does not export its item pass, so this is the "raise capacity" route.
+    const rich = indexContent({
+      ...loadBundleDir(fixtureDir),
+      baseGridCapacityMw: 1_000_000,
+    });
+    const fullSolve = solve(world, rich);
+    expect(fullSolve.power.ratio).toBe(1);
+    const fullPower = fullSolve.itemRates.get("iron_ingot")!.production;
     // Precondition: the two sizings differ by more than 1%.
     expect(Math.abs(settled - fullPower) / fullPower).toBeGreaterThan(0.01);
 

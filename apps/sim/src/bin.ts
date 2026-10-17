@@ -16,7 +16,7 @@ const USAGE = `usage:
   sim play [--content <dir>] [--seed <n>]
   sim calibrate [--content <dir>] [--policy <name>] [--seed <n>] [--max-tier <n>]
            [--tolerance <f>] [--write] [--no-solve-reff]
-           [--scales a,b,c] [--no-refine]
+           [--scales a,b,c | --scale s] [--no-refine] [--merge]
   sim gate [--content <dir>] [--seed <n>] [--smoke] [--max-days <n>] [--emit-pins]
 
   gate is spec E.5's pacing gate: it runs the policies and fails the build on a
@@ -28,12 +28,17 @@ const USAGE = `usage:
 
   calibrate solves the free content numbers against pacing.targetCollectionsToTier
   by running the simulator (spec B.7): it scans r_eff, then bisects each tier's
-  delivery amounts underneath the winner. --no-solve-reff holds r_eff where the
-  bundle authored it and solves amounts only. --scales replaces the coarse r_eff
-  grid, which matters because cost rises steeply with the scale: measured on the
-  slice, 0.5 took 417s and 4.0 took 7,774s. It prints what it found;
+  delivery amounts underneath the winner. --no-solve-reff holds the authored r_eff
+  (scale 1.0), not the scale derived.yaml was solved at; use --scale <s> for that.
+  It solves amounts only. --scale <s> is --scales <s> --no-refine. --scales
+  replaces the coarse r_eff grid, which matters because cost rises steeply with the
+  scale: measured on the slice, 0.5 took 417s and 4.0 took 7,774s. It prints what
+  it found;
   --write emits it to <dir>/derived.yaml, which the loader lays over the authored
-  files. Expect it to take a while: every step of every search is a real run.
+  files. --max-tier N with --write is refused when N is below the bundle's highest
+  tier, because it would drop the solved tiers above N; add --merge to keep their
+  existing amounts (their observed values become null). Expect it to take a while:
+  every step of every search is a real run.
 `;
 
 function parseUntilTier(value: string | undefined): number {
@@ -64,6 +69,8 @@ async function main(): Promise<number> {
       write: { type: "boolean", default: false },
       "no-solve-reff": { type: "boolean", default: false },
       scales: { type: "string" },
+      scale: { type: "string" },
+      merge: { type: "boolean", default: false },
       "no-refine": { type: "boolean", default: false },
       smoke: { type: "boolean", default: false },
       "emit-pins": { type: "boolean", default: false },
@@ -82,21 +89,8 @@ async function main(): Promise<number> {
   }
 
   if (mode === "calibrate") {
-    const { runCalibration } = await import("./calibrate-cli.js");
-    return runCalibration({
-      contentDir: values.content,
-      policy: values.policy as PolicyName,
-      seed: Number(values.seed),
-      maxTier: values["max-tier"] === undefined ? undefined : Number(values["max-tier"]),
-      tolerance: Number(values.tolerance),
-      write: values.write,
-      solveREff: !values["no-solve-reff"],
-      refine: !values["no-refine"],
-      scales:
-        values.scales === undefined
-          ? undefined
-          : values.scales.split(",").map((v) => Number(v.trim())),
-    });
+    const { runCalibration, calibrateOptionsFromFlags } = await import("./calibrate-cli.js");
+    return runCalibration(calibrateOptionsFromFlags(values));
   }
 
   if (mode === "play") {
