@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
       POSTGRES_DB: manufactory
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
@@ -20,7 +20,10 @@ services:
       retries: 12
 
   supertokens:
-    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
+    # Pinned to a core whose coreDriverInterfaceSupported.json lists CDI 5.4, the only CDI
+    # supertokens-node 24.0.3 supports (its lib/build/version.js). Core 12.3.1 supports
+    # CDI 2.7-5.7. Re-check both lists when bumping either side.
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:12.3.1
     restart: unless-stopped
     depends_on:
       postgres:
@@ -29,7 +32,7 @@ services:
       POSTGRESQL_CONNECTION_URI: postgresql://manufactory:${POSTGRES_PASSWORD}@postgres:5432/supertokens
       API_KEYS: ${SUPERTOKENS_API_KEY:?set SUPERTOKENS_API_KEY in infra/.env}
     ports:
-      - "3567:3567"
+      - "127.0.0.1:3567:3567"
 
 volumes:
   pgdata:
