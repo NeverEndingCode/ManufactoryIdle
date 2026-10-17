@@ -452,7 +452,10 @@ describe("resolve — solves each item-state configuration once per call", () =>
   );
   const start = (): WorldState => deserializeWorld(readFileSync(worldFile, "utf8"));
 
-  it("runs the solver once per distinct item-state configuration, not once per step", () => {
+  // It deliberately runs a resolve until the MAX_EVENTS guard trips (~0.7 s locally). On a
+  // shared 2-core CI runner, alongside the other packages' suites, it measured 5.04 s and hit
+  // vitest's 5 s default, so it gets an explicit budget.
+  it("runs the solver once per distinct item-state configuration, not once per step", { timeout: 30_000 }, () => {
     const out = resolve(start(), slice, 120_000);
     // Precondition: the cycle is still there -- the guard trips, as before.
     expect(out.summary.guardTripped).toBe(true);
