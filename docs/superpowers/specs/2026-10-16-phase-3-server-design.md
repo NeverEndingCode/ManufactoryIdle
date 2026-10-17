@@ -2,7 +2,7 @@
 
 **Implements:** engine spec Section D (D.1–D.7) and build order F.2, phase 3: "Action API,
 schema, SuperTokens, guests, idempotency, rate limits" — *a game with a backend*.
-**Status:** design, 2026-10-17. Written under the user's standing instruction to work
+**Status:** design, 2026-10-16. Written under the user's standing instruction to work
 through the milestones; every design call below is recorded as a **Ruling** with its
 reason and what it costs if wrong.
 
