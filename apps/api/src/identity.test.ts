@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { initialWorld, serializeWorld } from "@manufactory/engine";
+import { initialWorld, serializeWorld, type Action } from "@manufactory/engine";
 import { pgliteDb } from "./db/pglite.js";
 import { migrate } from "./db/migrate.js";
 import type { Db } from "./db/db.js";
@@ -14,6 +14,7 @@ const SLICE = fileURLToPath(
   new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
 );
 const T0 = 1_760_000_000_000;
+let now = T0;
 
 // Test-only fake: the "session" is whatever the x-test-user header says.
 const verifySession: SessionVerifier = async (request) => {
@@ -26,14 +27,16 @@ let store: ContentStore;
 let app: FastifyInstance;
 
 beforeEach(async () => {
+  now = T0;
   db = await pgliteDb();
   await migrate(db);
   store = await openContentStore(db, SLICE);
   app = buildServer({
     db,
     content: store,
-    clock: () => T0,
-    auth: identityAuth({ db, content: store, clock: () => T0, verifySession }),
+    clock: () => now,
+    auth: identityAuth({ db, content: store, clock: () => now, verifySession }),
+    verifySession,
   });
 });
 afterEach(async () => {
@@ -114,5 +117,106 @@ describe("precedence and guests", () => {
     expect((await getWorld({ authorization: `Guest ${token}` })).statusCode).toBe(200);
     expect((await getWorld({})).statusCode).toBe(401);
     expect(await db.query("select 1 from players")).toHaveLength(1);
+  });
+});
+
+const BUY_MINER: Action = {
+  type: "BUY_MACHINE",
+  lane: "iron",
+  machineClass: "miner",
+  mark: 1,
+  count: 1,
+};
+
+const newGuest = async () =>
+  ((await app.inject({ method: "POST", url: "/api/guests" })).json() as { guestToken: string })
+    .guestToken;
+const claim = (user: string | null, body: unknown, extra: Record<string, string> = {}) =>
+  app.inject({
+    method: "POST",
+    url: "/api/auth/claim",
+    headers: { ...(user ? { "x-test-user": user } : {}), ...extra },
+    payload: body as object,
+  });
+describe("POST /api/auth/claim", () => {
+  it("claims a played guest world before the account's first request", async () => {
+    const token = await newGuest();
+    now = T0 + 10 * 60_000;
+    const played = await app.inject({
+      method: "POST",
+      url: "/api/actions",
+      headers: { authorization: `Guest ${token}` },
+      payload: { idempotencyKey: "k-1", baseVersion: 0, actions: [BUY_MINER] },
+    });
+    expect(played.statusCode).toBe(200);
+    const before = await db.query<{ player_id: string; state: unknown; state_version: string }>(
+      "select player_id, state, state_version::text as state_version from player_worlds",
+    );
+    const logBefore = await db.query("select * from action_log");
+    expect(before).toHaveLength(1);
+
+    const res = await claim("u5", { guestToken: token });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toHaveProperty("stateVersion", 1);
+
+    const players = await db.query<{ id: string; supertokens_user_id: string; guest_token: null }>(
+      "select id, supertokens_user_id, guest_token from players",
+    );
+    expect(players).toHaveLength(1);
+    expect(players[0]).toMatchObject({
+      id: before[0]!.player_id,
+      supertokens_user_id: "u5",
+      guest_token: null,
+    });
+    expect(
+      await db.query(
+        "select player_id, state, state_version::text as state_version from player_worlds",
+      ),
+    ).toEqual(before);
+    expect(await db.query("select * from action_log")).toEqual(logBefore);
+
+    const world = await getWorld({ "x-test-user": "u5" });
+    expect(world.statusCode).toBe(200);
+    expect(world.json()).toHaveProperty("stateVersion", 1);
+    expect(await db.query("select 1 from players")).toHaveLength(1);
+    expect((await getWorld({ authorization: `Guest ${token}` })).statusCode).toBe(401);
+  });
+
+  it("409s when the account already has a world, leaving the guest untouched", async () => {
+    const token = await newGuest();
+    expect((await getWorld({ "x-test-user": "u6" })).statusCode).toBe(200);
+    const res = await claim("u6", { guestToken: token });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: "already-has-world" });
+    expect(await db.query("select 1 from players")).toHaveLength(2);
+    expect(
+      await db.query("select 1 from players where guest_token is not null and supertokens_user_id is null"),
+    ).toHaveLength(1);
+    expect((await getWorld({ authorization: `Guest ${token}` })).statusCode).toBe(200);
+  });
+
+  it("404s on an unknown token, and when the guest was already claimed (R-18)", async () => {
+    const unknown = await claim("u7", { guestToken: "A".repeat(43) });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual({ error: "unknown-guest" });
+    expect(await db.query("select 1 from players")).toHaveLength(0);
+
+    const token = await newGuest();
+    expect((await claim("u5", { guestToken: token })).statusCode).toBe(200);
+    const again = await claim("u7", { guestToken: token });
+    expect(again.statusCode).toBe(404);
+    expect(again.json()).toEqual({ error: "unknown-guest" });
+  });
+
+  it("401s without a session and 400s on a malformed body", async () => {
+    const token = await newGuest();
+    expect((await claim(null, { guestToken: token })).statusCode).toBe(401);
+    expect(
+      (await claim(null, { guestToken: token }, { authorization: `Guest ${token}` })).statusCode,
+    ).toBe(401);
+    for (const body of [{}, { guestToken: "short" }, { guestToken: token, extra: 1 }]) {
+      expect((await claim("u8", body)).statusCode).toBe(400);
+    }
+    expect(await db.query("select 1 from players where supertokens_user_id is not null")).toHaveLength(0);
   });
 });

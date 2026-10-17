@@ -210,3 +210,31 @@ export async function applyActions(
     };
   });
 }
+
+/**
+ * Spec 3b R-14/R-18: attach a guest's player (and so its world) to an account, in one
+ * transaction. No merge: an account that already has a player is refused, and the guest row
+ * is locked so two claimers cannot both take it. The account's own player is not created here.
+ */
+export async function claimGuest(
+  db: Db,
+  guestToken: string,
+  superTokensUserId: string,
+): Promise<{ claimed: true; playerId: string } | { claimed: false; reason: "already-has-world" | "unknown-guest" }> {
+  return db.transaction(async (tx) => {
+    const own = await tx.query("select 1 from players where supertokens_user_id = $1", [
+      superTokensUserId,
+    ]);
+    if (own.length > 0) return { claimed: false, reason: "already-has-world" } as const;
+    const guest = await tx.query<{ id: string }>(
+      `select id from players where guest_token = $1 and supertokens_user_id is null for update`,
+      [hashGuestToken(guestToken)],
+    );
+    if (guest.length === 0) return { claimed: false, reason: "unknown-guest" } as const;
+    await tx.query("update players set supertokens_user_id = $2, guest_token = null where id = $1", [
+      guest[0]!.id,
+      superTokensUserId,
+    ]);
+    return { claimed: true, playerId: guest[0]!.id } as const;
+  });
+}
