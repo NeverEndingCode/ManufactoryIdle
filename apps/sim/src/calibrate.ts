@@ -51,6 +51,14 @@ export interface BisectOptions {
    * an identical `y`, at one simulated run apiece.
    */
   minBracketRatio?: number;
+  /**
+   * The smallest input worth evaluating. A downward bracket stops here: if `f` still
+   * overshoots the target at the floor, nothing smaller can do better, so that is
+   * reported as unconverged rather than searched past. Without it a search whose inputs
+   * are quantised (milestone amounts floor at one unit) keeps dividing by four through
+   * inputs that all measure the same thing.
+   */
+  floor?: number;
 }
 
 export interface BisectResult {
@@ -114,6 +122,17 @@ export function bisectMonotone(f: (x: number) => number, options: BisectOptions)
 
   hi = x;
   let hiY = y;
+  const floor = options.floor;
+  if (floor !== undefined) {
+    // One run at the floor answers "does even the minimum overshoot?". If it does, the
+    // walk down below would only measure inputs that are no better, a run apiece. If it
+    // does not, the probe is spent and the walk proceeds as before: the bracket stays
+    // tight around the answer instead of stretching to the floor.
+    if (x <= floor) return { x, y: hiY, evaluations: counter.n, converged: false };
+    const floorY = evaluate(floor);
+    if (hit(floorY)) return { x: floor, y: floorY, evaluations: counter.n, converged: true };
+    if (floorY > target) return { x: floor, y: floorY, evaluations: counter.n, converged: false };
+  }
   for (let i = 0; i < maxExpansions; i += 1) {
     lo = x / 4;
     const loY = evaluate(lo);
@@ -1221,6 +1240,9 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
         // Past this the two candidate factors round to the same whole-unit
         // requirement, so another split costs a simulated run and buys nothing.
         minBracketRatio: 1e-4,
+        // Every amount of this tier is a whole number of at least 1, so below
+        // 1 / (largest amount) they are all 1 and every factor measures the same.
+        floor: 1 / Math.max(...working.milestones.find((m) => m.tier === tier)!.requires.map((r) => r.amount)),
       },
     );
 

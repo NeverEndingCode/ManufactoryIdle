@@ -289,6 +289,23 @@ describe("calibrate", () => {
   }, 300_000);
 });
 
+describe("the amounts search when even the minimum overshoots (ruling C-3)", () => {
+  // A target no whole-unit requirement can be quick enough to meet: tier 1 overshoots
+  // at the floor amount. The search should learn that from the floor and stop, not
+  // keep dividing by four through factors that all round to the same requirement.
+  it("stops at the floor: the seed probe, one floor probe, and the confirming run", () => {
+    const result = calibrate({
+      bundle: withTargets(slice, [1e-6]),
+      maxTier: 1,
+      tolerance: 0.05,
+      solveREff: false,
+      solveCapPerTier: false,
+    });
+    expect(result.tiers[0]!.converged).toBe(false);
+    expect(result.tiers[0]!.evaluations).toBeLessThanOrEqual(3);
+  }, 300_000);
+});
+
 describe("a requirement nobody could ever deliver", () => {
   // Ruling R7 pays deliveries from liquid stock, so a requirement above what storage
   // and Quantum Storage can hold at maximum level can never be met -- not slowly, not
@@ -1093,7 +1110,7 @@ describe("a tier already unlocked at the resume point", () => {
     // halving changes nothing and each extra step is a simulated run of the same input.
     const steps = lines.filter((l) => /tier +3 try/.test(l));
     const atFloor = steps.filter((l) => /iron_plate 1\b/.test(l));
-    expect(atFloor.length).toBeLessThanOrEqual(2);
+    expect(atFloor.length).toBeLessThanOrEqual(3);
   }, 300_000);
 });
 
