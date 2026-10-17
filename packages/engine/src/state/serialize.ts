@@ -48,7 +48,13 @@ function sortInstalled(
  */
 function canonical<T>(value: T): T {
   if (Array.isArray(value)) return value.map(canonical) as T;
+  // Only plain objects (prototype Object or null) are rebuilt. Anything else -- a
+  // Decimal, a Date, a Map -- is returned as-is: rebuilding it from its own keys would
+  // drop its prototype (and toJSON), so a nested Decimal would serialize as its
+  // internal fields instead of its canonical string.
   if (value !== null && typeof value === "object") {
+    const proto: unknown = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
     const record = value as Record<string, unknown>;
     return Object.fromEntries(sortedKeys(record).map((key) => [key, canonical(record[key])])) as T;
   }
