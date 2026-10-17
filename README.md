@@ -9,7 +9,7 @@ for years.
 
 ## Status
 
-**Phases 0 and 1 complete; Phase 2 (calibrated content) in progress.** The monorepo, four
+**Phases 0, 1 and 2 complete; Phase 3 (server) in progress.** The monorepo, four
 packages (`rational`, `content`, `engine`, `sim`), CI, and local infra (Postgres +
 SuperTokens via Docker Compose) are in place, with the test suite, lint, typecheck and
 `pnpm content:check` all green.
@@ -37,9 +37,9 @@ The original spec is decomposed into four, of which the engine core is the first
 | Phase | Deliverable | Ends in |
 |---|---|---|
 | 0 | Monorepo, Postgres, SuperTokens, engine skeleton, content validator, CI | Green pipeline — **done** |
-| 1 | Engine + simulator | A playable game in the terminal |
-| 2 | Calibrated content | A game that is *paced* |
-| 3 | Server + authority | A game with a backend |
+| 1 | Engine + simulator | A playable game in the terminal — **done** |
+| 2 | Calibrated content | A game that is *paced* — **done** |
+| 3 | Server + authority | A game with a backend — *in progress* |
 | 4 | Web client | A game other people can play |
 
 ## Design pillars

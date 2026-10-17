@@ -1,5 +1,7 @@
 # Phase 2 — Calibrated content
 
+**Phase 2 status: complete (2026-10-16).** The calibrator, `derived.yaml`, and the CI pacing and smoke gates have shipped; the close-out is `2026-10-16-phase-2-closeout.md`. Phase 3 (server) continues in `docs/superpowers/specs/2026-10-16-phase-3-server-design.md`. The "Still to do" and "Carried forward" lists below carry a verdict on every item.
+
 **Goal (spec F.2):** the B.5 vertical slice, the calibration script, all eleven validator
 checks, and CI pacing gates. **Ends in:** a game that is *paced*.
 
@@ -315,7 +317,9 @@ calibration. The row above is.
 
 ---
 
-## Task 3 — The calibration script — **IN PROGRESS**
+## Task 3 — The calibration script — **DONE**
+
+**Shipped:** the calibrator (`sim calibrate`), the generated `derived.yaml`, and a fit of all ten tiers; since PR #17's live-only storage guard `greedy` tier 1 is a known red (0.3735 against 0.42). Close-out fixes to the calibrator: `--merge`, `--scale` and an overshoot short-circuit (commits e5d1172, cf82e7d). The history below is kept as written.
 
 **It is the simulator with a search wrapper** (B.7). It runs `sim run --policy greedy` and
 binary-searches the free parameters until the observed curve matches
@@ -935,7 +939,7 @@ that out, and it did; it just cost ten hours per scale to say so.
 *Renumbered 2026-10-12 (the list had two 2s and two 3s). Superseded claims are marked
 in place rather than deleted.*
 
-1. **Reconcile the pacing intent with the content.** Three routes, and this is a design
+1. **DONE (reconciled; one miss since PR #17).** All ten tiers were within 5% (2026-10-13) until PR #17's live-only storage guard made `greedy` tier 1 a storage-cap staircase (0.37 / 0.59 / 0.80): now a pinned known red at 0.3735 against 0.42. **Reconcile the pacing intent with the content.** Three routes, and this is a design
    decision rather than a calibration one:
    - **Retune `targetCollectionsToTier`** to the span the content actually supports.
      Cheapest, and the measured curve above is the evidence for what that span is.
@@ -946,23 +950,23 @@ in place rather than deleted.*
      slowly. `SET_RESERVE` and `REORDER_PRIORITY` (still emitted by nothing) are exactly
      the levers a real player would use here.
    - **Add content per tier**, so a tier has more to ask for than one item's cap allows.
-2. **Make a ten-tier run affordable before attempting another.** *(Superseded: since the
+2. **DONE.** A full ten-tier calibration takes about 3 minutes; the gate runs in 2m19s locally (since the `resolve` fix above). **Make a ten-tier run affordable before attempting another.** *(Superseded: since the
    `resolve` fix a full ten-tier calibration takes ~1 hour.)* At ten hours a scale an
    eleven-scale scan is a week. A clearing probe has to simulate the whole 700-game-day
    run, so the cost is structural: either the scan gets far smaller, or the deep tiers
    are calibrated against something cheaper than a full replay.
-3. **Stop the amounts search bisecting toward a floor it will never reach.** Tier 4 spent
+3. **DONE (close-out C-3, commit cf82e7d).** The search did not already short-circuit the overshoot case: a floor probe now stops an overshooting search (34 evaluations down to 3). **Stop the amounts search bisecting toward a floor it will never reach.** Tier 4 spent
    34 runs halving its requirement to the minimum, and tier 9 another 34, when one run at
    the minimum answers "even this overshoots". The unreachable case already short-circuits;
    the overshoot case does not.
-4. **Decide what remains of B.7's storage list.** `capPerTier` is solved jointly with
+4. **DONE (decided).** `pacing.storageBindingCadence` was deleted in PR #7 (commit a1b2d30); the storage cost curves stay authored by decision (handoff, 2026-10-12). **Decide what remains of B.7's storage list.** `capPerTier` is solved jointly with
    `r_eff`. The cost curves — `capGrowth`, `costGrowth`, `baseCostAmount`, `maxLevel` on
    both storage and Quantum Storage — are still authored, and
    `pacing.storageBindingCadence` (12 machines between storage binding) is read by
    nothing. Either solve them against that target or drop the intent; leaving an
    authored pacing knob that nothing consumes is the `purchaseIntervalLateSeconds`
    pattern for a third time.
-5. **Decide `SET_RESERVE` and `REORDER_PRIORITY`.** Both are implemented in the engine
+5. **DONE.** `bottleneck` emits `SET_RESERVE` since PR #9 (`apps/sim/src/policies.ts`); `greedy` and `optimal` emit `REORDER_PRIORITY`, milestone-first, since PR #7 (`milestoneFirstReorder`). **Decide `SET_RESERVE` and `REORDER_PRIORITY`.** Both are implemented in the engine
    and reachable from `sim play`, and no automated policy emits either. Every calibrated
    number is therefore tuned for a player who never uses two core mechanics. A spec
    decision about E.2's policy definitions, not a calibration one.
@@ -993,7 +997,9 @@ authoring decision; the numbers inside it are the calibrator's output.
 
 ---
 
-## Task 4 — CI pacing gates (spec E.5)
+## Task 4 — CI pacing gates (spec E.5) — **DONE**
+
+**Shipped:** the pacing gate (`sim gate`, the `pacing` CI job, PRs and nightly) and the smoke gate (`gate:smoke`, in `check` on every commit). The history below is kept as written.
 
 - `content:check` — all eleven checks
 - `greedy`, `casual`, `bottleneck` all within tolerance of `targetCollectionsToTier`
@@ -1339,21 +1345,23 @@ the full catalog lands and we can see whether any item there is cycle-only.
 
 ---
 
-## Carried forward, still open
+## Carried forward
 
-| Item | From |
-|---|---|
-| Pin SuperTokens image (currently `:latest`) — needs no Docker, just a version tag or registry digest | Phase 0, due at Phase 3 |
-| `installedUnits` / `ladderInput` duplication — same mark-weighted sum in two files, now asserted equal by a property | Phase 1 |
-| `entries`/`allocations` reconciliation early-exit | Phase 1 |
-| `fireDueTimers` comparator not antisymmetric for duplicate ids | Phase 1 |
-| `ValidationIssue` defined in `load.ts` — pure validation importing from the I/O module | Phase 0 |
-| Three test-bundle factories to reconcile | Phase 0 |
-| Ruling R6 is implemented twice — engine `findCyclicRecipes`, content `findStronglyConnectedComponents`. Same semantics today; if they drift the validator clears content the engine refuses to run | Task 7 |
-| Check 10's generator-unlock scan still reads every recipe. Over-strict rather than stuck-save, so it can wait | Task 7 |
-| Spec B.5 prose says "Four lanes" while its own table lists five and the bundle has five (Power is a lane) — a spec fix, not a content one | Task 6 |
-| `build` and `typecheck` now run identical `tsc --noEmit` commands in every package | Task 6 |
-| ~~`README.md` hardcodes a test count~~ — **DONE** (Task 3): number deleted rather than updated, with a line saying why, and the stale "Phase 1 is next" status corrected | Phase 0 |
+Verdicts as of 2026-10-16, each checked against the code.
+
+| Item | From | Verdict |
+|---|---|---|
+| Pin SuperTokens image (currently `:latest`) — needs no Docker, just a version tag or registry digest | Phase 0, due at Phase 3 | **Moved to Phase 3c.** `infra/docker-compose.yml` still uses `:latest`; it is due when the server lands. |
+| `installedUnits` / `ladderInput` duplication — same mark-weighted sum in two files, now asserted equal by a property | Phase 1 | **Still open.** Both bodies still exist (`economy/capacity.ts`, `economy/curves.ts`); the property test holds them equal. |
+| `entries`/`allocations` reconciliation early-exit | Phase 1 | **Still open.** `solve/fixpoint.ts` re-runs the reconciling waterfall unconditionally; a minor optimisation. |
+| `fireDueTimers` comparator not antisymmetric for duplicate ids | Phase 1 | **Still open.** `resolve/index.ts` still sorts with `a.id < b.id ? -1 : 1`. |
+| `ValidationIssue` defined in `load.ts` — pure validation importing from the I/O module | Phase 0 | **Still open.** `content/src/load.ts` still defines it and `validate/*` import it. |
+| Three test-bundle factories to reconcile | Phase 0 | **Still open.** `validate/graph.test.ts` and `validate/economy.test.ts` each define their own `bundle()`, and `load.test.ts` writes its own inline bundle. |
+| Ruling R6 is implemented twice — engine `findCyclicRecipes`, content `findStronglyConnectedComponents`. Same semantics today; if they drift the validator clears content the engine refuses to run | Task 7 | **Still open.** Both exist (`graph/index-content.ts`, `validate/scc.ts`); a comment in `scc.ts` ties them together. |
+| Check 10's generator-unlock scan still reads every recipe. Over-strict rather than stuck-save, so it can wait | Task 7 | **Still open.** `checkGeneratorCapacity` still scans all `bundle.recipes`. |
+| Spec B.5 prose says "Four lanes" while its own table lists five and the bundle has five (Power is a lane) — a spec fix, not a content one | Task 6 | **Still open.** `2026-09-01-engine-core-design.md:487` still says "Four lanes". |
+| `build` and `typecheck` now run identical `tsc --noEmit` commands in every package | Task 6 | **Still open.** All four packages' `package.json` scripts are identical. |
+| ~~`README.md` hardcodes a test count~~ — **DONE** (Task 3): number deleted rather than updated, with a line saying why, and the stale "Phase 1 is next" status corrected | Phase 0 | **Done** (commit 176d3ac). |
 
 ---
 
