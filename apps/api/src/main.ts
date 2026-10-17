@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { pgDb } from "./db/pg.js";
 import { migrate } from "./db/migrate.js";
 import { openContentStore } from "./content.js";
-import { buildServer, guestAuth } from "./server.js";
+import { buildServer } from "./server.js";
+import { identityAuth, noSessions } from "./identity.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -27,7 +28,7 @@ const app = buildServer({
   db,
   content,
   clock: Date.now,
-  auth: guestAuth(db),
+  auth: identityAuth({ db, content, clock: Date.now, verifySession: noSessions }),
   logger: { level: process.env.LOG_LEVEL ?? "info" },
 });
 
