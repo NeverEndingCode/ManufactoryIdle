@@ -106,10 +106,19 @@ export interface Schedule {
 export function schedule(state: WorldState, content: IndexedContent): Schedule;
 ```
 
-It is `nextDiscontinuity` over one `solve`, exported. The client draws each item as a straight
-line `stock + net × (t − atMs)` until `nextBoundaryAtMs`, then asks again (D2's "the client draws
-straight lines and never solves"). Tests: the boundary equals the time `resolve` would fire its
-next event for the same state, and `null` when nothing will change.
+It is `resolve`'s own `nextDiscontinuity` over a `solve`, exported, with one step first. When
+the next discontinuity is the internal unpin (an EMPTY item whose net rate is positive, which
+`resolve` handles with an `EPSILON_MS` step), `schedule` does the same: it advances with
+`resolve(state, content, EPSILON_MS)`, repeating while the next is still an unpin (at most once
+per stock item), and builds stock, rates and boundary from the advanced state, with `atMs` its
+`lastResolvedAt`. Without that step a fresh world reports the pinned solve's rates, which are
+wrong (on the vertical slice iron_ore reads 0.98/s rather than 1.0/s, and the boundary comes out
+at 7.8e6 ms rather than resolve's first fill at 4.0e6 ms). The client draws each item as a
+straight line `stock + net × (t − atMs)` until `nextBoundaryAtMs`, then asks again (D2's "the
+client draws straight lines and never solves"). Tests: on the fixture and on a fresh vertical-
+slice world, the boundary equals the time `resolve` would fire its first reported event (up to
+floating-point rounding), the rates are the post-unpin solve's, and `null` when nothing will
+change.
 
 ### Schema (migration 001)
 
@@ -128,9 +137,13 @@ D.3 verbatim, with these rulings:
   migration.
 - **`idempotency`.** **Ruling R-9:** it stores the full response (`response jsonb`), not only
   `response_hash`, because D.5 says "cached response returned verbatim", and a hash can't be
-  returned. The table is created in 3a and used in 3c.
+  returned. The table is created in 3a and used in 3c. Its primary key is `(player_id, key)`:
+  keys are client-chosen, so they are scoped per player.
 - **`sessions`.** As D.3; 3a creates the table, and a session row is written on world load
-  (`client` from the `User-Agent`), closed after 30 minutes idle by 3c's cleanup.
+  (`client` from the `User-Agent`), closed after 30 minutes idle by 3c's cleanup. A partial
+  unique index (`sessions_one_open`, on `player_id` where `closed_at is null`) keeps at most one
+  open session per player, and the insert is `on conflict … do nothing`, so concurrent loads
+  cannot open two.
 
 ### Endpoints
 
@@ -259,6 +272,22 @@ for a nightly cron):
 - **A CI `api-integration` job** with a `postgres:16` service, running the
   `DATABASE_URL`-gated tests: the concurrency serialization test and a migrations-on-real-
   Postgres check.
+
+**Carried from 3a review:**
+- **Migrate under an advisory lock.** `migrate` takes `pg_advisory_xact_lock` so two instances
+  booting at once cannot both apply a migration.
+- **Replay across a D.6 re-pin.** Replay-from-start uses `initial_content_version` for every
+  batch; once the admin migrate endpoint re-pins a world, later batches ran on another version.
+  Either record the content version on each `action_log` row or log the re-pin as an entry.
+- **Retention vs replay.** 30-day `action_log` retention ends replay-from-start for any world
+  older than 30 days. Decide: snapshot (a replay base row) or keep the log for live worlds.
+- **Two meanings of "contentVersion".** `WorldState.contentVersion` is a state label;
+  `player_worlds.content_version` and the API's `contentVersion` are the bundle checksum.
+  Document the distinction or rename one.
+- **Untested paths:** the 4xx message allowlist in the error handler, and the
+  logger-instance branch of `buildServer`.
+- **Content LRU:** a test that eviction past capacity reloads from the table, and in-flight
+  dedupe so concurrent misses on one version index it once.
 
 ## What Phase 3 does not do
 
