@@ -11,6 +11,7 @@ import { schedule, serializeWorld, type Action, type IndexedContent } from "@man
 import type { Db } from "./db/db.js";
 import type { ContentStore } from "./content.js";
 import { actionsBodySchema } from "./http/actions-schema.js";
+import { TokenBucket, type BucketConfig } from "./http/token-bucket.js";
 import {
   WorldNotFoundError,
   applyActions,
@@ -49,6 +50,13 @@ export interface ServerDeps {
     register(app: FastifyInstance): void;
     handleError(error: unknown, request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
   };
+  /** Per-instance, in-memory rate limits (R-23). Omitted: the defaults. */
+  limits?: {
+    /** Per player id, shared by /api/world and /api/actions. Default 30 burst, 3 per second. */
+    player?: BucketConfig;
+    /** Per client IP (`request.ip`) on POST /api/guests. Default 5 per hour. */
+    guestsPerIp?: BucketConfig;
+  };
   /** Fastify `logger` options, or a pino-compatible instance. Omitted: no logging. */
   logger?: FastifyServerOptions["logger"] | FastifyBaseLogger;
 }
@@ -74,6 +82,22 @@ function worldView(world: World, content: IndexedContent) {
 
 export function buildServer(deps: ServerDeps): FastifyInstance {
   const { db, content, clock, auth, verifySession, accounts, logger } = deps;
+  const playerBucket = new TokenBucket(
+    deps.limits?.player ?? { capacity: 30, refillPerSec: 3 },
+    clock,
+  );
+  const guestBucket = new TokenBucket(
+    deps.limits?.guestsPerIp ?? { capacity: 5, refillPerSec: 5 / 3600 },
+    clock,
+  );
+  // Behind a reverse proxy, request.ip is the proxy's address unless Fastify's `trustProxy`
+  // option is set; main.ts must set it for such a deployment, or every guest shares one bucket.
+  async function limited(bucket: TokenBucket, key: string, reply: FastifyReply): Promise<boolean> {
+    const taken = bucket.take(key);
+    if (taken.ok) return false;
+    await reply.code(429).header("retry-after", String(taken.retryAfterSec)).send({ error: "rate-limited" });
+    return true;
+  }
   const app = Fastify({
     // Fastify 5 takes a ready-made logger as `loggerInstance`; `logger` only takes options.
     ...(isLoggerInstance(logger) ? { loggerInstance: logger } : { logger: logger ?? false }),
@@ -88,6 +112,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       await reply.code(401).header("www-authenticate", "Guest").send({ error: "unauthorized" });
       return null;
     }
+    // Rate limit after auth, so an unauthenticated call neither spends nor reveals a bucket.
+    // A replayed idempotency key still spends a token: it costs a locked transaction.
+    if (await limited(playerBucket, who.playerId, reply)) return null;
     return who.playerId;
   }
 
@@ -118,7 +145,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   app.get("/api/health", async () => ({ ok: true, contentVersion: content.current.version }));
 
-  app.post("/api/guests", async (_request, reply) => {
+  app.post("/api/guests", async (request, reply) => {
+    if (await limited(guestBucket, request.ip, reply)) return reply;
     const { guestToken, world } = await createGuest(db, content, clock());
     return reply.code(201).send({ guestToken, world: worldView(world, content.current.content) });
   });
