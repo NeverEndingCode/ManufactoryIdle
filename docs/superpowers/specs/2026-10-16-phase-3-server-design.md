@@ -274,6 +274,11 @@ for a nightly cron):
   Postgres check.
 
 **Carried from 3a review:**
+- **A schedule boundary EPSILON away.** `schedule` steps past unpins up to once per stock
+  item. For an item in a steady pin/unpin cycle (the slice's screw case) it can exhaust that
+  bound and report a boundary ~1 ns ahead, which would make a naive client re-fetch at once.
+  The client (Phase 4) needs a minimum re-poll interval, or `schedule` reports the cycle as a
+  steady average rate.
 - **Migrate under an advisory lock.** `migrate` takes `pg_advisory_xact_lock` so two instances
   booting at once cannot both apply a migration.
 - **Replay across a D.6 re-pin.** Replay-from-start uses `initial_content_version` for every

@@ -33,7 +33,8 @@ describe("schedule", () => {
 
   it("on a fresh world steps past the internal unpin and matches the first reported event", () => {
     // iron_ore and iron_ingot start EMPTY-pinned, so resolve's first internal step is
-    // the EPSILON unpin. It is not a visible rate change, so schedule must not report it.
+    // the EPSILON unpin. That step is not a visible rate change, so schedule steps past it
+    // (as resolve does) and reports the boundary after it.
     const state = initialWorld(content, 1, 0);
     const s = schedule(state, content);
     const { events } = resolve(state, content, BIG);
