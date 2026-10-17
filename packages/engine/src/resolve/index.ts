@@ -246,6 +246,59 @@ function nextDiscontinuity(
   return best;
 }
 
+/** What the client needs to draw stock as straight lines until the next rate change (D.2). */
+export interface Schedule {
+  /**
+   * World time (ms) the schedule describes: state.lastResolvedAt, or a few EPSILON_MS
+   * later when schedule() stepped past an internal unpin.
+   */
+  atMs: number;
+  /** Per stock item: liquid stock now (canonical decimal string) and net rate per second. */
+  items: Record<ItemId, { stock: string; netPerSecond: number }>;
+  /** World time of the next rate change (fill, drain, timer, milestone; never the internal unpin), or null if none. */
+  nextBoundaryAtMs: number | null;
+}
+
+/**
+ * Pure. Does what `resolve` does at the start of a window: while the next discontinuity
+ * is the internal unpin (an item leaving EMPTY), it steps past it with
+ * `resolve(state, content, EPSILON_MS)`, because the pinned solve's rates are not the
+ * rates the world actually runs at (on the vertical slice a fresh world's iron_ore is
+ * 0.98/s pinned and 1.0/s unpinned, and the pinned boundary is ~2x too late). The
+ * rates, stock and boundary are then all taken from that advanced state, and `atMs`
+ * is its `lastResolvedAt` (at most a few nanoseconds after the input's). Each step
+ * clears at least one pin, so the loop runs at most once per stock item.
+ *
+ * The boundary search is `resolve`'s own, so on the advanced state the reported
+ * boundary is the first fill/drain/timer/milestone `resolve` would fire, up to
+ * floating-point rounding.
+ */
+export function schedule(state: WorldState, content: IndexedContent): Schedule {
+  let current = state;
+  let solution = solve(current, content);
+  let next = nextDiscontinuity(content, current, solution, current.lastResolvedAt);
+  for (let i = 0; next.kind === "unpin" && i < content.stockItemIds.length; i += 1) {
+    current = resolve(current, content, EPSILON_MS).state;
+    solution = solve(current, content);
+    next = nextDiscontinuity(content, current, solution, current.lastResolvedAt);
+  }
+  const items: Record<ItemId, { stock: string; netPerSecond: number }> = Object.fromEntries(
+    content.stockItemIds.map((itemId) => [
+      itemId,
+      {
+        stock: toCanonical(liquid(current, itemId)),
+        netPerSecond: solution.itemRates.get(itemId)?.net ?? 0,
+      },
+    ]),
+  );
+  const atMs = current.lastResolvedAt;
+  return {
+    atMs,
+    items,
+    nextBoundaryAtMs: Number.isFinite(next.dtMs) ? atMs + next.dtMs : null,
+  };
+}
+
 function integrate(
   content: IndexedContent,
   state: WorldState,

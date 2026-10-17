@@ -21,3 +21,13 @@ Reset everything, including data:
 - `initdb/` runs only on a first-time volume initialization. If you change it,
   you must `docker compose down -v` for the change to take effect.
 - Production adds a `pg_dump` cron sidecar (spec section 15). Not needed locally.
+
+## Running the API against this Postgres
+
+With the compose stack up (and `.env` filled in), from the repo root:
+
+    DATABASE_URL=postgres://manufactory:<POSTGRES_PASSWORD>@localhost:5432/manufactory \
+      pnpm --filter @manufactory/api start
+
+The password is `POSTGRES_PASSWORD` from `.env`. The API applies its
+migrations on startup and listens on `127.0.0.1:8080` (see `apps/api/README.md`).
