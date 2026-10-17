@@ -1,7 +1,7 @@
 // Content versions (spec R-4): a world pins the bundleChecksum it was created on.
 // The server publishes the bundle it started with into content_versions and serves
 // older pinned versions from that table, through a small LRU of indexed bundles.
-import { bundleChecksum, loadBundleDir } from "@manufactory/content";
+import { bundleChecksum, loadBundleDir, type Bundle } from "@manufactory/content";
 import { indexContent, type ContentBundle, type IndexedContent } from "@manufactory/engine";
 import type { Db } from "./db/db.js";
 
@@ -17,8 +17,9 @@ export interface ContentStore {
 }
 
 export async function openContentStore(db: Db, dir: string): Promise<ContentStore> {
-  const bundle: ContentBundle = loadBundleDir(dir);
-  const version = bundleChecksum(loadBundleDir(dir));
+  const loaded = loadBundleDir(dir);
+  const version = bundleChecksum(loaded);
+  const bundle: ContentBundle = loaded;
   const content = indexContent(bundle);
 
   await db.transaction(async (tx) => {
@@ -44,12 +45,20 @@ export async function openContentStore(db: Db, dir: string): Promise<ContentStor
     async get(v, tx) {
       const hit = cache.get(v);
       if (hit) return remember(v, hit);
-      const rows = await (tx ?? db).query<{ bundle: ContentBundle }>(
+      const rows = await (tx ?? db).query<{ bundle: Bundle }>(
         "select bundle from content_versions where version = $1",
         [v],
       );
       if (rows.length === 0) throw new Error(`unknown content version: ${v}`);
-      return remember(v, indexContent(rows[0]!.bundle));
+      const stored = rows[0]!.bundle;
+      // The version is the bundle's checksum, which survives the jsonb round trip; a
+      // mismatch means the row was edited or corrupted, and a world must never run on
+      // content other than the version it pinned.
+      const actual = bundleChecksum(stored);
+      if (actual !== v) {
+        throw new Error(`content version ${v}: stored bundle checksum mismatch (got ${actual})`);
+      }
+      return remember(v, indexContent(stored));
     },
   };
 }

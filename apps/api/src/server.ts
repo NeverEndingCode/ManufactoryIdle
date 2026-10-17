@@ -123,12 +123,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const now = clock();
     const { world, content: pinned } = await viewWorld(db, content, playerId, now);
     // The only write a read makes (spec D.3): note that the player is here. It touches
-    // neither player_worlds nor players.last_seen_at. 3c closes idle sessions.
+    // neither player_worlds nor players.last_seen_at. 3c closes idle sessions. The
+    // sessions_one_open partial unique index makes this race-safe.
     const agent = request.headers["user-agent"];
     await db.query(
       `insert into sessions (player_id, opened_at, client)
-       select $1, to_timestamp($2 / 1000.0), $3
-        where not exists (select 1 from sessions where player_id = $1 and closed_at is null)`,
+       values ($1, to_timestamp($2 / 1000.0), $3)
+       on conflict (player_id) where closed_at is null do nothing`,
       [playerId, now, typeof agent === "string" ? agent.slice(0, 200) : null],
     );
     return worldView(world, pinned);

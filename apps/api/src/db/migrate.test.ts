@@ -74,6 +74,33 @@ describe("migrate", () => {
     await ins();
     await expect(ins()).rejects.toThrow();
   });
+  it("idempotency keys are per player: two players can store the same key", async () => {
+    await migrate(db);
+    const ins = (pid: string) =>
+      db.query("insert into idempotency (player_id, key, response) values ($1, 'k', '{}')", [pid]);
+    const a = crypto.randomUUID();
+    const b = crypto.randomUUID();
+    await ins(a);
+    await ins(b);
+    await expect(ins(a)).rejects.toThrow();
+    await expect(
+      db.query("insert into idempotency (key, response) values ('k2', '{}')"),
+    ).rejects.toThrow();
+  });
+
+  it("sessions allows at most one open session per player", async () => {
+    await migrate(db);
+    const pid = crypto.randomUUID();
+    await db.query("insert into players (id, guest_token) values ($1, 'g')", [pid]);
+    const open = () => db.query("insert into sessions (player_id) values ($1)", [pid]);
+    await open();
+    await expect(open()).rejects.toThrow();
+    await db.query("update sessions set closed_at = now() where player_id = $1", [pid]);
+    await open();
+    await db.query("insert into sessions (player_id, closed_at) values ($1, now())", [pid]);
+    const rows = await db.query("select 1 from sessions where player_id = $1", [pid]);
+    expect(rows).toHaveLength(3);
+  });
 });
 
 describe("failing migration", () => {

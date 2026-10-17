@@ -258,6 +258,19 @@ describe("GET /api/world", () => {
     expect(await onlyWorld()).toEqual(before);
     expect(await lastSeenMs()).toEqual([T0]);
   });
+
+  it("2c. two GETs racing still leave exactly one open session", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 5 * MINUTE;
+    const get = () => app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+    const [a, b] = await Promise.all([get(), get()]);
+    expect(a.statusCode).toBe(200);
+    expect(b.statusCode).toBe(200);
+    await get();
+    const open = await db.query("select 1 from sessions where closed_at is null");
+    expect(open).toHaveLength(1);
+  });
 });
 
 describe("POST /api/actions", () => {

@@ -50,11 +50,14 @@ create table action_log (
 );
 create index action_log_world_created on action_log (world_id, created_at);
 
+-- Keys are client-chosen, so they are scoped per player: one player's key can never
+-- collide with (or replay) another's.
 create table idempotency (
-  key text primary key,
   player_id uuid not null,
+  key text not null,
   response jsonb not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  primary key (player_id, key)
 );
 
 create table sessions (
@@ -64,3 +67,6 @@ create table sessions (
   closed_at timestamptz,
   client text
 );
+-- At most one open session per player, so concurrent GET /api/world calls cannot open
+-- two; the insert targets this index with on conflict ... do nothing.
+create unique index sessions_one_open on sessions (player_id) where closed_at is null;
