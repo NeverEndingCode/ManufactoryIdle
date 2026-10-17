@@ -24,8 +24,8 @@ const TABLES = [
 ];
 
 describe("migrate", () => {
-  it("applies 001-initial.sql and creates all six tables", async () => {
-    expect(await migrate(db)).toEqual(["001-initial.sql"]);
+  it("applies the migrations and creates all six tables", async () => {
+    expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql"]);
     const rows = await db.query<{ table_name: string }>(
       `select table_name from information_schema.tables
        where table_schema = 'public' and table_name = any($1) order by table_name`,
@@ -38,7 +38,7 @@ describe("migrate", () => {
     await migrate(db);
     expect(await migrate(db)).toEqual([]);
     const rows = await db.query("select * from schema_migrations");
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
   });
 
   it("players check requires exactly one identifier", async () => {
