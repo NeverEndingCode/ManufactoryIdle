@@ -43,20 +43,26 @@ const BUY_MINER: Action = {
 const BUY_1000_MINERS: Action = { ...BUY_MINER, count: 1000 };
 
 /** Counts transactions, so a 400 can be shown to open none. */
-function countingDb(inner: Db): Db & { transactions: number } {
-  const wrapped = {
+function countingDb(inner: Db): Db & { transactions: number; afterRollback?: () => Promise<void> } {
+  const wrapped: Db & { transactions: number; afterRollback?: () => Promise<void> } = {
     transactions: 0,
     query: inner.query.bind(inner),
-    transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
+    async transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
       wrapped.transactions += 1;
-      return inner.transaction(fn);
+      try {
+        return await inner.transaction(fn);
+      } catch (err) {
+        // The gap after a rollback, where the row lock is free: a test can race a retry into it.
+        await wrapped.afterRollback?.();
+        throw err;
+      }
     },
     close: () => inner.close(),
   };
   return wrapped;
 }
 
-let db: Db & { transactions: number };
+let db: Db & { transactions: number; afterRollback?: () => Promise<void> };
 let now: number;
 const clock = () => now;
 let apps: FastifyInstance[] = [];
@@ -382,8 +388,8 @@ describe("POST /api/actions", () => {
       actions: [{ ...BUY_MINER, lane: "x".repeat(64) }],
     });
     expect(at64.statusCode).toBe(409);
-    // A 409 opens two: the rolled-back batch, then the small one that stores the rejection.
-    expect(db.transactions).toBe(txBefore + 2);
+    // A rejection stores its 409 inside the one locked transaction.
+    expect(db.transactions).toBe(txBefore + 1);
   });
 });
 
@@ -434,6 +440,30 @@ describe("POST /api/actions idempotency", () => {
     const second = await postActions(app, token, body("k-409", [BUY_MINER, BUY_1000_MINERS]));
     expect(second.statusCode).toBe(409);
     expect(second.body).toBe(first.body);
+    expect(await logRows()).toEqual([]);
+    expect((await onlyWorld()).state_version).toBe("0");
+  });
+
+  it("a retry racing a rejection cannot turn its 409 into an applied 200", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    const rejected = body("k-race", [BUY_MINER, BUY_1000_MINERS]);
+    now = T0 + 10 * MINUTE;
+    // If the rejection rolled back and stored its 409 afterwards, this retry would take the
+    // lock in between, with more time accrued, and apply. Stored under the lock, it cannot.
+    let raced: { statusCode: number } | undefined;
+    db.afterRollback = async () => {
+      db.afterRollback = undefined;
+      now = T0 + 10_000 * MINUTE;
+      raced = await postActions(app, token, rejected);
+    };
+    const first = await postActions(app, token, rejected);
+    expect(first.statusCode).toBe(409);
+    expect(raced).toBeUndefined();
+    now = T0 + 10_000 * MINUTE;
+    const retry = await postActions(app, token, rejected);
+    expect(retry.statusCode).toBe(409);
+    expect(retry.body).toBe(first.body);
     expect(await logRows()).toEqual([]);
     expect((await onlyWorld()).state_version).toBe("0");
   });
