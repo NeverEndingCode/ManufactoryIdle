@@ -44,6 +44,12 @@ export interface ServerDeps {
   auth: Auth;
   /** The raw session check (no lazy creation) for /api/auth/claim. Omitted: claim answers 503. */
   verifySession?: (request: FastifyRequest) => Promise<string | null>;
+  /** SuperTokens (src/auth/supertokens.ts): registered before the routes, and its error
+   * handler runs ahead of the API's. Omitted: guest-only, no /auth/* routes (R-16). */
+  accounts?: {
+    register(app: FastifyInstance): void;
+    handleError(error: unknown, request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
+  };
   /** Fastify `logger` options, or a pino-compatible instance. Omitted: no logging. */
   logger?: FastifyServerOptions["logger"] | FastifyBaseLogger;
 }
@@ -68,7 +74,7 @@ function worldView(world: World, content: IndexedContent) {
 }
 
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const { db, content, clock, auth, verifySession, logger } = deps;
+  const { db, content, clock, auth, verifySession, accounts, logger } = deps;
   const app = Fastify({
     // Fastify 5 takes a ready-made logger as `loggerInstance`; `logger` only takes options.
     ...(isLoggerInstance(logger) ? { loggerInstance: logger } : { logger: logger ?? false }),
@@ -86,7 +92,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return who.playerId;
   }
 
-  app.setErrorHandler(async (error, _request, reply) => {
+  accounts?.register(app);
+
+  app.setErrorHandler(async (error, request, reply) => {
+    if (accounts && (await accounts.handleError(error, request, reply))) return reply;
     if (error instanceof WorldNotFoundError) return reply.code(404).send({ error: "no world" });
     if (error instanceof ActionRejectedError) {
       return reply

@@ -7,7 +7,7 @@ import { migrate } from "./db/migrate.js";
 import type { Db } from "./db/db.js";
 import { openContentStore, type ContentStore } from "./content.js";
 import { buildServer } from "./server.js";
-import { identityAuth, type SessionVerifier } from "./identity.js";
+import { identityAuth, noSessions, type SessionVerifier } from "./identity.js";
 import { claimGuest, createPlayerWithWorld } from "./worlds.js";
 
 const SLICE = fileURLToPath(
@@ -238,5 +238,92 @@ describe("POST /api/auth/claim", () => {
     expect(
       await db.query("select 1 from players where guest_token is not null and supertokens_user_id is null"),
     ).toHaveLength(1);
+  });
+});
+
+describe("accounts disabled (R-16)", () => {
+  // main.ts's wiring when SUPERTOKENS_CONNECTION_URI is unset: no verifier, no accounts.
+  let guestOnly: FastifyInstance;
+  beforeEach(() => {
+    guestOnly = buildServer({
+      db,
+      content: store,
+      clock: () => now,
+      auth: identityAuth({ db, content: store, clock: () => now, verifySession: noSessions }),
+    });
+  });
+  afterEach(() => guestOnly.close());
+
+  it("claim answers 503 accounts-disabled, and guests still play", async () => {
+    const created = await guestOnly.inject({ method: "POST", url: "/api/guests" });
+    const token = (created.json() as { guestToken: string }).guestToken;
+    const res = await guestOnly.inject({
+      method: "POST",
+      url: "/api/auth/claim",
+      headers: { "x-test-user": "u10" },
+      payload: { guestToken: token },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ error: "accounts-disabled" });
+    expect(
+      (await guestOnly.inject({ method: "GET", url: "/api/world", headers: { "x-test-user": "u10" } }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      (await guestOnly.inject({ method: "POST", url: "/auth/signup", payload: {} })).statusCode,
+    ).toBe(404);
+    expect(
+      (
+        await guestOnly.inject({
+          method: "GET",
+          url: "/api/world",
+          headers: { authorization: `Guest ${token}` },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(await db.query("select 1 from players where supertokens_user_id is not null")).toHaveLength(0);
+  });
+});
+
+describe("accounts wiring", () => {
+  it("registers accounts before the routes and runs their error handler first", async () => {
+    class AccountsError extends Error {}
+    const seen: unknown[] = [];
+    const wired = buildServer({
+      db,
+      content: store,
+      clock: () => now,
+      auth: identityAuth({ db, content: store, clock: () => now, verifySession }),
+      verifySession,
+      accounts: {
+        register(instance) {
+          instance.get("/auth/boom", async () => {
+            throw new AccountsError("boom");
+          });
+        },
+        async handleError(error, _request, reply) {
+          seen.push(error);
+          if (!(error instanceof AccountsError)) return false;
+          await reply.code(401).send({ message: "try refresh token" });
+          return true;
+        },
+      },
+    });
+    try {
+      const boom = await wired.inject({ method: "GET", url: "/auth/boom" });
+      expect(boom.statusCode).toBe(401);
+      expect(boom.json()).toEqual({ message: "try refresh token" });
+      // Errors that aren't the accounts' fall through to the API's handler.
+      const malformed = await wired.inject({
+        method: "POST",
+        url: "/api/auth/claim",
+        headers: { "x-test-user": "u11" },
+        payload: { guestToken: "short" },
+      });
+      expect(malformed.statusCode).toBe(400);
+      expect(seen).toHaveLength(2);
+    } finally {
+      await wired.close();
+    }
   });
 });

@@ -20,7 +20,10 @@ services:
       retries: 12
 
   supertokens:
-    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
+    # Pinned to a core whose coreDriverInterfaceSupported.json lists CDI 5.4, the only CDI
+    # supertokens-node 24.0.3 supports (its lib/build/version.js). Core 12.3.1 supports
+    # CDI 2.7-5.7. Re-check both lists when bumping either side.
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:12.3.1
     restart: unless-stopped
     depends_on:
       postgres:
