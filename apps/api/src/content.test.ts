@@ -19,7 +19,7 @@ beforeEach(async () => {
   await migrate(db);
 });
 afterEach(async () => {
-  await db.close();
+  await db?.close();
 });
 
 describe("openContentStore", () => {

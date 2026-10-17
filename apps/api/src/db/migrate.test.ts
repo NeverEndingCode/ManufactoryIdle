@@ -11,7 +11,7 @@ beforeEach(async () => {
   db = await pgliteDb();
 });
 afterEach(async () => {
-  await db.close();
+  await db?.close();
 });
 
 const TABLES = [
