@@ -70,7 +70,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   for (const app of apps) await app.close();
-  await db.close();
+  await db?.close();
 });
 
 async function server(dir: string = SLICE): Promise<{ app: FastifyInstance; store: ContentStore }> {
