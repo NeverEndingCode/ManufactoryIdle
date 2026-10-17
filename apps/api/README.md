@@ -17,8 +17,9 @@ authoritative; the client sends actions and gets back the resolved world.
 | `LOG_LEVEL` | `info` | pino log level. |
 | `SUPERTOKENS_CONNECTION_URI` | unset | The SuperTokens core, e.g. `http://localhost:3567`. Unset: accounts are disabled (see below). |
 | `SUPERTOKENS_API_KEY` | unset | The core's API key (`API_KEYS` in `infra/.env`). |
-| `API_DOMAIN` | `http://localhost:8080` | Where browsers reach this API; SuperTokens serves `/auth/*` here. |
-| `WEBSITE_DOMAIN` | `http://localhost:5173` | The web client's origin: the only CORS origin, with credentials. |
+| `API_DOMAIN` | required with accounts | Where browsers reach this API, e.g. `https://api.example.com`; SuperTokens serves `/auth/*` here. Session cookies are `Secure` only when it is `https` (startup warns otherwise; `http://localhost:8080` is fine for local dev). |
+| `WEBSITE_DOMAIN` | required with accounts | The web client's origin, e.g. `http://localhost:5173` locally: the only CORS origin, with credentials. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Password-reset mail over your SMTP server (port 465 uses TLS). All five or none (R-24). |
 | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | unset | Discord sign-in. Configured only when both are set (R-12). |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | GitHub sign-in. Configured only when both are set (R-12). |
 
@@ -43,12 +44,20 @@ account's first `GET /api/world`.
 
 SuperTokens' own routes (`/auth/signup`, `/auth/signin`, `/auth/session/refresh`, ...)
 are served by its Fastify plugin. Sign-in is EmailPassword, plus Discord and GitHub when
-their credentials are set.
+their credentials are set. With `SUPERTOKENS_CONNECTION_URI` set, `API_DOMAIN` and
+`WEBSITE_DOMAIN` are required: startup fails naming whichever is missing.
+
+**Password-reset mail stays self-hosted (R-24).** SuperTokens' default would POST the
+player's email and the live reset link to `api.supertokens.io`. Instead, with all five
+`SMTP_*` variables set the API sends it through that SMTP server (the SDK's SMTP
+service). Otherwise it sends nothing and logs only `password reset email not sent: SMTP
+not configured`, without the address or the token.
 
 **Accounts disabled (R-16).** Without `SUPERTOKENS_CONNECTION_URI` the API logs
 `accounts disabled (SUPERTOKENS_CONNECTION_URI unset)` and runs guest-only: no `/auth/*`
 routes, no CORS, and `/api/auth/claim` answers `503 accounts-disabled`. Dev and CI run
-this way.
+this way. Because no CORS headers are sent, a browser client on another origin needs
+accounts on, or a dev proxy that serves the client and the API from one origin.
 
 ## Endpoints
 

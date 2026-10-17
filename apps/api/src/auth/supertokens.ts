@@ -10,12 +10,18 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import * as supertokens from "supertokens-node";
 import { errorHandler, plugin } from "supertokens-node/framework/fastify";
 import * as EmailPassword from "supertokens-node/recipe/emailpassword";
+import { SMTPService } from "supertokens-node/recipe/emailpassword/emaildelivery";
 import * as Session from "supertokens-node/recipe/session";
 import * as ThirdParty from "supertokens-node/recipe/thirdparty";
 import type { ProviderInput } from "supertokens-node/recipe/thirdparty/types";
 import type { SessionVerifier } from "../identity.js";
 
 export type Env = Record<string, string | undefined>;
+export type Log = (message: string) => void;
+/** EmailPassword's email delivery service (the SDK doesn't export the interface here). */
+export type ResetMailService = NonNullable<
+  NonNullable<NonNullable<Parameters<typeof EmailPassword.init>[0]>["emailDelivery"]>["service"]
+>;
 
 export interface SuperTokensAccounts {
   /** Registers CORS for WEBSITE_DOMAIN and SuperTokens' plugin (its /auth/* routes). */
@@ -45,12 +51,70 @@ export function providersFromEnv(env: Env): ProviderInput[] {
   return providers;
 }
 
-/** Null when SUPERTOKENS_CONNECTION_URI is unset (R-16); otherwise initializes the SDK
- * (process-global, once) and returns the wiring. Contacts no core until a request needs it. */
-export function superTokensFromEnv(env: Env): SuperTokensAccounts | null {
+/** How password-reset mail is delivered (R-24). Never SuperTokens' default, which POSTs
+ * the email and the live reset link to api.supertokens.io: SMTP when all five SMTP_*
+ * vars are set, otherwise a service that sends nothing and logs no address or token. */
+export function passwordResetDelivery(
+  env: Env,
+  log: Log,
+): { kind: "smtp" | "none"; service: ResetMailService } {
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM } = env;
+  if (set(SMTP_HOST) && set(SMTP_PORT) && set(SMTP_USER) && set(SMTP_PASSWORD) && set(SMTP_FROM)) {
+    const port = Number(SMTP_PORT);
+    if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
+      throw new Error(
+        `SMTP_PORT must be an integer from 1 to 65535, got ${JSON.stringify(SMTP_PORT)}`,
+      );
+    }
+    return {
+      kind: "smtp",
+      service: new SMTPService({
+        smtpSettings: {
+          host: SMTP_HOST,
+          port,
+          secure: port === 465,
+          authUsername: SMTP_USER,
+          password: SMTP_PASSWORD,
+          from: { name: "Manufactory Idle", email: SMTP_FROM },
+        },
+      }),
+    };
+  }
+  return {
+    kind: "none",
+    service: {
+      async sendEmail() {
+        log("password reset email not sent: SMTP not configured");
+      },
+    },
+  };
+}
+
+/** Null when SUPERTOKENS_CONNECTION_URI is unset (R-16). Otherwise API_DOMAIN and
+ * WEBSITE_DOMAIN are required (cookieSecure follows apiDomain's scheme, so a missing
+ * https API_DOMAIN would drop the cookies' Secure flag), and the SDK is initialized.
+ *
+ * `supertokens.init` is once per process: a second call is a silent no-op that keeps the
+ * first config, so call this once (main.ts). It contacts no core until a request needs it. */
+export function superTokensFromEnv(
+  env: Env,
+  log: { info: Log; warn: Log } = { info: console.log, warn: console.warn },
+): SuperTokensAccounts | null {
   const connectionURI = env.SUPERTOKENS_CONNECTION_URI;
   if (!set(connectionURI)) return null;
-  const websiteDomain = env.WEBSITE_DOMAIN || "http://localhost:5173";
+  const missing = (["API_DOMAIN", "WEBSITE_DOMAIN"] as const).filter((k) => !set(env[k]));
+  if (missing.length > 0) {
+    throw new Error(
+      `SUPERTOKENS_CONNECTION_URI is set, so ${missing.join(" and ")} must be set too`,
+    );
+  }
+  const apiDomain = env.API_DOMAIN!;
+  const websiteDomain = env.WEBSITE_DOMAIN!;
+  if (!apiDomain.startsWith("https://")) {
+    log.warn(
+      `API_DOMAIN ${apiDomain} is not https: session cookies will not be Secure (fine for local dev only)`,
+    );
+  }
 
   supertokens.init({
     framework: "fastify",
@@ -60,12 +124,14 @@ export function superTokensFromEnv(env: Env): SuperTokensAccounts | null {
     },
     appInfo: {
       appName: "Manufactory Idle",
-      apiDomain: env.API_DOMAIN || "http://localhost:8080",
+      apiDomain,
       websiteDomain,
       apiBasePath: "/auth",
     },
     recipeList: [
-      EmailPassword.init(),
+      EmailPassword.init({
+        emailDelivery: { service: passwordResetDelivery(env, log.info).service },
+      }),
       ThirdParty.init({ signInAndUpFeature: { providers: providersFromEnv(env) } }),
       Session.init(),
     ],
@@ -85,6 +151,9 @@ export function superTokensFromEnv(env: Env): SuperTokensAccounts | null {
         methods: ["GET", "PUT", "POST", "DELETE"],
         credentials: true,
       });
+      // SuperTokens' preHandler sends /auth/* replies without `return reply`, so Fastify
+      // stops only because reply.sent (raw.writableEnded) is already true. An async onSend
+      // hook would delay that and let the request run on; re-check /auth/* before adding one.
       app.register(plugin);
       app.addHook("onRequest", async (request, reply) => {
         replies.set(request, reply);
@@ -92,8 +161,15 @@ export function superTokensFromEnv(env: Env): SuperTokensAccounts | null {
     },
     async handleError(error, request, reply) {
       if (!supertokens.Error.isErrorFromSuperTokens(error)) return false;
-      await renderError(error, request, reply);
-      return true;
+      // UNKNOWN_ERROR would be sent as a 500 with its message: let the API's generic 500
+      // (which logs it) answer instead.
+      if (error.type === supertokens.Error.UNKNOWN_ERROR) return false;
+      try {
+        await renderError(error, request, reply);
+      } catch {
+        return false; // no recipe claimed it (the SDK rethrows): the API's handler answers
+      }
+      return reply.sent;
     },
     async verifySession(request) {
       const reply = replies.get(request);
