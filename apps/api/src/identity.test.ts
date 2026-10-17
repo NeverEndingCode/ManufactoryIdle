@@ -8,7 +8,7 @@ import type { Db } from "./db/db.js";
 import { openContentStore, type ContentStore } from "./content.js";
 import { buildServer } from "./server.js";
 import { identityAuth, type SessionVerifier } from "./identity.js";
-import { createPlayerWithWorld } from "./worlds.js";
+import { claimGuest, createPlayerWithWorld } from "./worlds.js";
 
 const SLICE = fileURLToPath(
   new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
@@ -218,5 +218,25 @@ describe("POST /api/auth/claim", () => {
       expect((await claim("u8", body)).statusCode).toBe(400);
     }
     expect(await db.query("select 1 from players where supertokens_user_id is not null")).toHaveLength(0);
+  });
+
+  it("answers already-has-world when the account's player appears between check and update", async () => {
+    const token = await newGuest();
+    // Deterministic race: the account's player is inserted just before the claim's update.
+    const racing = (inner: Db): Db => ({
+      query: async (sql, params) => {
+        if (/^\s*update players set supertokens_user_id/i.test(sql)) {
+          await inner.query("insert into players (supertokens_user_id) values ('u9')");
+        }
+        return inner.query(sql, params);
+      },
+      transaction: (fn) => inner.transaction((tx) => fn(racing(tx))),
+      close: () => inner.close(),
+    });
+    const result = await claimGuest(racing(db), token, "u9");
+    expect(result).toEqual({ claimed: false, reason: "already-has-world" });
+    expect(
+      await db.query("select 1 from players where guest_token is not null and supertokens_user_id is null"),
+    ).toHaveLength(1);
   });
 });
