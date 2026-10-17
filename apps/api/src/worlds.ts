@@ -69,6 +69,60 @@ export function hashGuestToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+export type PlayerKey = { guestTokenHash: string } | { superTokensUserId: string };
+
+const isUniqueViolation = (err: unknown): boolean =>
+  typeof err === "object" && err !== null && (err as { code?: unknown }).code === "23505";
+
+/**
+ * Inserts a player and its main world on the current content version, in one transaction.
+ * Pass the root db (or a tx that has no failed statement): for an account key, a
+ * unique-violation on supertokens_user_id (R-17, a lost lazy-creation race) aborts the
+ * transaction, so it is caught outside it and the winner's player and world are returned.
+ */
+export async function createPlayerWithWorld(
+  db: Db,
+  key: PlayerKey,
+  content: ContentStore,
+  nowMs: number,
+): Promise<{ playerId: string; world: World }> {
+  const seed = randomInt(0, 2 ** 31);
+  const { version } = content.current;
+  const state = initialWorld(content.current.content, seed, nowMs);
+  try {
+    return await db.transaction(async (tx) => {
+      const [player] =
+        "guestTokenHash" in key
+          ? await tx.query<{ id: string }>(
+              `insert into players (guest_token, created_at, last_seen_at)
+               values ($1, to_timestamp($2 / 1000.0), to_timestamp($2 / 1000.0)) returning id`,
+              [key.guestTokenHash, nowMs],
+            )
+          : await tx.query<{ id: string }>(
+              `insert into players (supertokens_user_id, created_at, last_seen_at)
+               values ($1, to_timestamp($2 / 1000.0), to_timestamp($2 / 1000.0)) returning id`,
+              [key.superTokensUserId, nowMs],
+            );
+      const [world] = await tx.query<WorldRow>(
+        `insert into player_worlds (player_id, content_version, state, state_version, last_resolved_at,
+                                    schema_version, initial_seed, created_at, initial_content_version)
+         values ($1, $2, $3::jsonb, 0, to_timestamp($4 / 1000.0), $5, $6, to_timestamp($4 / 1000.0), $2)
+         returning id, player_id, content_version, state_version::text as state_version, state`,
+        [player!.id, version, toWire(state), nowMs, state.schemaVersion, seed],
+      );
+      return { playerId: player!.id, world: fromRow(world!) };
+    });
+  } catch (err) {
+    if (!("superTokensUserId" in key) || !isUniqueViolation(err)) throw err;
+    const rows = await db.query<{ id: string }>(
+      "select id from players where supertokens_user_id = $1",
+      [key.superTokensUserId],
+    );
+    if (rows.length === 0) throw err;
+    return { playerId: rows[0]!.id, world: await loadMainWorld(db, rows[0]!.id) };
+  }
+}
+
 /** Creates a guest player and its main world on the current content version, in one transaction. */
 export async function createGuest(
   db: Db,
@@ -76,24 +130,13 @@ export async function createGuest(
   nowMs: number,
 ): Promise<{ guestToken: string; world: World }> {
   const guestToken = randomBytes(32).toString("base64url");
-  const seed = randomInt(0, 2 ** 31);
-  const { version } = content.current;
-  const state = initialWorld(content.current.content, seed, nowMs);
-  return db.transaction(async (tx) => {
-    const [player] = await tx.query<{ id: string }>(
-      `insert into players (guest_token, created_at, last_seen_at)
-       values ($1, to_timestamp($2 / 1000.0), to_timestamp($2 / 1000.0)) returning id`,
-      [hashGuestToken(guestToken), nowMs],
-    );
-    const [world] = await tx.query<WorldRow>(
-      `insert into player_worlds (player_id, content_version, state, state_version, last_resolved_at,
-                                  schema_version, initial_seed, created_at, initial_content_version)
-       values ($1, $2, $3::jsonb, 0, to_timestamp($4 / 1000.0), $5, $6, to_timestamp($4 / 1000.0), $2)
-       returning id, player_id, content_version, state_version::text as state_version, state`,
-      [player!.id, version, toWire(state), nowMs, state.schemaVersion, seed],
-    );
-    return { guestToken, world: fromRow(world!) };
-  });
+  const { world } = await createPlayerWithWorld(
+    db,
+    { guestTokenHash: hashGuestToken(guestToken) },
+    content,
+    nowMs,
+  );
+  return { guestToken, world };
 }
 
 const SELECT_MAIN = `select id, player_id, content_version, state_version::text as state_version, state
