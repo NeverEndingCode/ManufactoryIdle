@@ -15,6 +15,7 @@ import {
   ActionRejectedError,
   WorldNotFoundError,
   applyActions,
+  claimGuest,
   createGuest,
   hashGuestToken,
   viewWorld,
@@ -41,6 +42,8 @@ export interface ServerDeps {
   content: ContentStore;
   clock: () => number;
   auth: Auth;
+  /** The raw session check (no lazy creation) for /api/auth/claim. Omitted: claim answers 503. */
+  verifySession?: (request: FastifyRequest) => Promise<string | null>;
   /** Fastify `logger` options, or a pino-compatible instance. Omitted: no logging. */
   logger?: FastifyServerOptions["logger"] | FastifyBaseLogger;
 }
@@ -65,7 +68,7 @@ function worldView(world: World, content: IndexedContent) {
 }
 
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const { db, content, clock, auth, logger } = deps;
+  const { db, content, clock, auth, verifySession, logger } = deps;
   const app = Fastify({
     // Fastify 5 takes a ready-made logger as `loggerInstance`; `logger` only takes options.
     ...(isLoggerInstance(logger) ? { loggerInstance: logger } : { logger: logger ?? false }),
@@ -156,11 +159,48 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     },
   );
 
+  // Needs a session but not lazy creation: a never-seen account must be able to claim.
+  // Auth runs in preValidation, so a missing session is a 401 even with a malformed body.
+  app.post<{ Body: { guestToken: string } }>(
+    "/api/auth/claim",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["guestToken"],
+          additionalProperties: false,
+          properties: { guestToken: { type: "string", pattern: "^[A-Za-z0-9_-]{43}$" } },
+        },
+      },
+      preValidation: async (request, reply) => {
+        if (!verifySession) {
+          return reply.code(503).send({ error: "accounts-disabled" });
+        }
+        const userId = await verifySession(request);
+        if (userId === null) {
+          return reply.code(401).header("www-authenticate", "Guest").send({ error: "unauthorized" });
+        }
+        request.sessionUserId = userId;
+      },
+    },
+    async (request, reply) => {
+      const result = await claimGuest(db, request.body.guestToken, request.sessionUserId!);
+      if (!result.claimed) {
+        return reply
+          .code(result.reason === "already-has-world" ? 409 : 404)
+          .send({ error: result.reason });
+      }
+      const { world, content: pinned } = await viewWorld(db, content, result.playerId, clock());
+      return worldView(world, pinned);
+    },
+  );
+
   return app;
 }
 
 declare module "fastify" {
   interface FastifyRequest {
     playerId?: string;
+    sessionUserId?: string;
   }
 }
