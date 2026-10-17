@@ -47,7 +47,18 @@ function wrap(q: Queryable, pool: pg.Pool | null): Db {
 
 /** Production adapter over a pg.Pool. */
 export function pgDb(connectionString: string): Db {
-  const pool = new pg.Pool({ connectionString });
+  const pool = new pg.Pool({
+    connectionString,
+    // Bounded, so a burst of requests queues here instead of exhausting Postgres's
+    // max_connections; a request that cannot get a connection fails after 10 s rather
+    // than hanging, and idle connections are returned after 30 s.
+    max: 10,
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 30_000,
+    // Server-side per-statement cap: a runaway query (or one stuck behind a lock)
+    // is cancelled by Postgres after 15 s instead of pinning a pool slot forever.
+    statement_timeout: 15_000,
+  });
   // An idle client erroring (e.g. a Postgres restart) must not crash the process.
   pool.on("error", (err) => console.error("pg pool idle client error", err));
   return wrap(pool, pool);

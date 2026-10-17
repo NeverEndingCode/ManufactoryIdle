@@ -14,6 +14,10 @@ const contentDir =
   process.env.CONTENT_DIR ??
   fileURLToPath(new URL("../../../packages/content/bundles/vertical-slice", import.meta.url));
 const port = Number(process.env.PORT ?? 8080);
+if (!Number.isInteger(port) || port < 0 || port >= 65536) {
+  console.error(`PORT must be an integer from 0 to 65535, got ${JSON.stringify(process.env.PORT)}`);
+  process.exit(1);
+}
 const host = process.env.HOST ?? "127.0.0.1";
 
 const db = pgDb(databaseUrl);
@@ -31,9 +35,19 @@ let closing = false;
 async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
-  await app.close();
-  await db.close();
-  process.exit(0);
+  let code = 0;
+  try {
+    try {
+      await app.close();
+    } finally {
+      // The pool must close even if Fastify's close hooks throw.
+      await db.close();
+    }
+  } catch (err) {
+    console.error("shutdown failed", err);
+    code = 1;
+  }
+  process.exit(code);
 }
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());

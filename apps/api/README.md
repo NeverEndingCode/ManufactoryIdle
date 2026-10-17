@@ -10,7 +10,7 @@ authoritative; the client sends actions and gets back the resolved world.
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATABASE_URL` | required | Postgres connection string. Migrations run at startup. |
-| `CONTENT_DIR` | the vertical slice bundle | Directory of the content bundle to serve. |
+| `CONTENT_DIR` | the vertical slice bundle | Directory of the content bundle to serve. A relative path resolves against the working directory, which under `pnpm --filter` is `apps/api`; use an absolute path. |
 | `PORT` | `8080` | Listen port. |
 | `HOST` | `127.0.0.1` | Listen address. |
 | `LOG_LEVEL` | `info` | pino log level. |
@@ -33,10 +33,13 @@ It is returned once; only its sha256 is stored.
 
     # apply actions atomically (all or none). The body requires idempotencyKey and
     # baseVersion (the stateVersion you last saw); 3a validates but does not yet act on
-    # them, replay and stale-version handling arrive in a later PR.
+    # them, replay and stale-version handling arrive in a later PR. Make idempotencyKey
+    # unique per batch (e.g. a UUID): from 3c a repeated key replays the stored response.
+    # The BUY_MACHINE below is illustrative: a fresh world may answer 409 until it has
+    # the stock to pay for it.
     curl -X POST http://127.0.0.1:8080/api/actions \
       -H "Authorization: Guest $TOKEN" -H "Content-Type: application/json" \
-      -d '{"idempotencyKey":"k-1","baseVersion":0,"actions":[{"type":"BUY_MACHINE","lane":"iron","machineClass":"miner","mark":1,"count":1}]}'
+      -d '{"idempotencyKey":"'"$(uuidgen)"'","baseVersion":0,"actions":[{"type":"BUY_MACHINE","lane":"iron","machineClass":"miner","mark":1,"count":1}]}'
 
 Errors: 400 malformed body, 401 missing or unknown token, 404 no world, 409 an action
 was rejected (body: `failedAction`, `index`, `reason`).
