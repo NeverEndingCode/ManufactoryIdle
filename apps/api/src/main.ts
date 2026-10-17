@@ -22,12 +22,19 @@ if (!Number.isInteger(port) || port < 0 || port >= 65536) {
 }
 const host = process.env.HOST ?? "127.0.0.1";
 
+// R-16: accounts are optional; without a SuperTokens core the API is guest-only.
+let accounts: ReturnType<typeof superTokensFromEnv>;
+try {
+  accounts = superTokensFromEnv(process.env);
+} catch (err) {
+  console.error((err as Error).message);
+  process.exit(1);
+}
+if (!accounts) console.log("accounts disabled (SUPERTOKENS_CONNECTION_URI unset)");
+
 const db = pgDb(databaseUrl);
 await migrate(db);
 const content = await openContentStore(db, contentDir);
-// R-16: accounts are optional; without a SuperTokens core the API is guest-only.
-const accounts = superTokensFromEnv(process.env);
-if (!accounts) console.log("accounts disabled (SUPERTOKENS_CONNECTION_URI unset)");
 const app = buildServer({
   db,
   content,

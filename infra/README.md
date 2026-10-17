@@ -17,6 +17,8 @@ Reset everything, including data:
 
 ## Notes
 
+- Postgres (5432) and the SuperTokens core (3567) are published on `127.0.0.1` only.
+  The core trusts whoever holds its API key, and neither belongs on the LAN.
 - `.env` is gitignored. Never commit real secrets; the image carries none.
 - `initdb/` runs only on a first-time volume initialization. If you change it,
   you must `docker compose down -v` for the change to take effect.
@@ -40,11 +42,14 @@ Point the API at the compose SuperTokens core as well (port 3567, API key
     DATABASE_URL=postgres://manufactory:<POSTGRES_PASSWORD>@localhost:5432/manufactory \
     SUPERTOKENS_CONNECTION_URI=http://localhost:3567 \
     SUPERTOKENS_API_KEY=<SUPERTOKENS_API_KEY> \
+    API_DOMAIN=http://localhost:8080 WEBSITE_DOMAIN=http://localhost:5173 \
       pnpm --filter @manufactory/api start
 
 Without `SUPERTOKENS_CONNECTION_URI` the API runs guest-only (it logs `accounts
-disabled`). The other account variables (`API_DOMAIN`, `WEBSITE_DOMAIN`, the Discord and
-GitHub credentials) are listed in `apps/api/README.md`.
+disabled`). With it, `API_DOMAIN` and `WEBSITE_DOMAIN` are required; an `http`
+`API_DOMAIN` logs a warning (session cookies aren't `Secure`), which is expected locally.
+The other account variables (SMTP for reset mail, the Discord and GitHub credentials)
+are listed in `apps/api/README.md`.
 
 The core image is pinned (`12.3.1`) to a version whose supported CDI list includes the
 one `supertokens-node` speaks (5.4 for 24.0.3). When bumping either, compare
@@ -55,7 +60,7 @@ release's `coreDriverInterfaceSupported.json`.
 
 `apps/api/src/auth/supertokens.smoke.test.ts` signs up a real EmailPassword user through
 the core, loads its lazily created world, and claims a guest. `pnpm test` skips it. With
-the compose stack up:
+the compose stack up (it defaults `API_DOMAIN`/`WEBSITE_DOMAIN` to the local ones above):
 
     SUPERTOKENS_CONNECTION_URI=http://localhost:3567 \
     SUPERTOKENS_API_KEY=<SUPERTOKENS_API_KEY> \

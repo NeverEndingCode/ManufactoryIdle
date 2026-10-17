@@ -285,6 +285,38 @@ describe("accounts disabled (R-16)", () => {
   });
 });
 
+describe("a failing session check", () => {
+  it("does not fall back to the guest token", async () => {
+    const throwing = buildServer({
+      db,
+      content: store,
+      clock: () => now,
+      auth: identityAuth({
+        db,
+        content: store,
+        clock: () => now,
+        verifySession: async () => {
+          throw new Error("core unreachable");
+        },
+      }),
+    });
+    try {
+      const created = await throwing.inject({ method: "POST", url: "/api/guests" });
+      const token = (created.json() as { guestToken: string }).guestToken;
+      const res = await throwing.inject({
+        method: "GET",
+        url: "/api/world",
+        headers: { authorization: `Guest ${token}` },
+      });
+      expect(res.statusCode).not.toBe(200);
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: "internal error" });
+    } finally {
+      await throwing.close();
+    }
+  });
+});
+
 describe("accounts wiring", () => {
   it("registers accounts before the routes and runs their error handler first", async () => {
     class AccountsError extends Error {}

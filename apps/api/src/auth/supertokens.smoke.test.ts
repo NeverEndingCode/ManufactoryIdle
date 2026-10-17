@@ -24,7 +24,12 @@ describe.skipIf(!process.env.SUPERTOKENS_CONNECTION_URI)("SuperTokens smoke", ()
     db = await pgliteDb();
     await migrate(db);
     const content = await openContentStore(db, SLICE);
-    const accounts = superTokensFromEnv(process.env)!;
+    // Local-dev domains unless the environment names its own.
+    const accounts = superTokensFromEnv({
+      API_DOMAIN: "http://localhost:8080",
+      WEBSITE_DOMAIN: "http://localhost:5173",
+      ...process.env,
+    })!;
     app = buildServer({
       db,
       content,
