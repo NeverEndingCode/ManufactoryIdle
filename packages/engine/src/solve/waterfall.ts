@@ -132,8 +132,9 @@ export function requirementVector(
  * Spec 2026-10-16: a reserve's target is `percent x productionOf(item)`, the item's
  * production in a full-power reserve-free item pass of the same state, with `percent`
  * clamped to 50%. That caps the target against the counterfactual; it is not a bound on
- * the reserve's share of what is actually made. When `productionOf` is omitted (direct
- * callers such as tests) the legacy `percent x unconstrainedRate` sizing is kept.
+ * the reserve's share of what is actually made. When `productionOf` is omitted the legacy
+ * `percent x unconstrainedRate` sizing is kept: that path exists only for direct callers
+ * (tests); `solve` always passes `productionOf`.
  */
 export function effectivePriority(
   content: IndexedContent,
@@ -163,6 +164,7 @@ export function effectivePriority(
       itemId,
       mode: "guaranteed",
       share: 1,
+      // Legacy fallback (direct callers/tests only): `solve` always passes productionOf.
       targetRate:
         percent *
         (productionOf ? (productionOf.get(itemId) ?? 0) : unconstrainedRate(content, capacity, itemId)),

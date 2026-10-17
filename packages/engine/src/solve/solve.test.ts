@@ -366,10 +366,27 @@ describe("solve — a reserve is sized against its item's production (R8)", () =
     expect(entry?.requested).toBeCloseTo(0.25 * production, 9);
   });
 
+  it("sizes against the full-power pass, not a full solve of the reserve-free state", () => {
+    // brownout(1): 60 miners draw 300 MW against 200 MW, so the settled solve runs at a
+    // power ratio < 1 and makes less iron_ingot than the full-power item pass does.
+    const world = brownout(1);
+    const bareBrownout = solve(world, content);
+    expect(bareBrownout.power.ratio).toBeLessThan(1);
+    const settled = bareBrownout.itemRates.get("iron_ingot")!.production; // ~0.961
+    const fullPower = 1.47; // measured: the full-power, reserve-free item pass
+    // Precondition: the two sizings differ by more than 1%.
+    expect(Math.abs(settled - fullPower) / fullPower).toBeGreaterThan(0.01);
+
+    const sol = solve({ ...world, reserve: { ...world.reserve, iron_ingot: 0.25 } }, content);
+    const e = sol.entries.find((x) => x.entryId === "reserve:iron_ingot");
+    expect(e?.requested).toBeCloseTo(0.25 * fullPower, 6);
+    expect(Math.abs(e!.requested - 0.25 * settled)).toBeGreaterThan(0.25 * settled * 0.01);
+  });
+
   it("leaves the item's consumers a share", () => {
     // In this fixture state a reserve takes at most half and consumers keep the rest. Not
     // true in general: on the slice a reserved item's consumers lose its stock and can get
-    // 0 of its production -- by design (spec 2026-10-16, corrected 2026-10-17).
+    // 0 of its production -- by design (spec 2026-10-16, corrected 2026-10-16).
     const production = bare.itemRates.get("iron_ingot")!.production;
     expect(withReserve.itemRates.get("iron_ingot")!.consumption).toBeGreaterThanOrEqual(0.5 * production);
   });

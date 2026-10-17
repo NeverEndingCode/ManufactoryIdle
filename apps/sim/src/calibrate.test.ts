@@ -1148,7 +1148,11 @@ describe("a tier whose seed is already met when the tier below unlocks", () => {
   // With the bug the search is inert, so two different targets produce the identical
   // number -- the checkpoint's clock -- and neither is a measurement of anything.
   it("moves tier 2 when its target moves", () => {
-    const near = solve([0.5, 2]).tiers.find((t) => t.tier === 2)!.observed!;
+    // Targets widened 2026-10-16: greedy stopped buying storage for items nothing live
+    // produces, so tier 2's response to targets 2 vs 8 fell from a ratio of 1.73 to 1.17
+    // (1.93 vs 2.27; the fixture cannot be slowed past about 2.27). Targets 1 vs 8 give
+    // near 0.9986 and far 2.2672, a ratio of 2.27.
+    const near = solve([0.5, 1]).tiers.find((t) => t.tier === 2)!.observed!;
     const far = solve([0.5, 8]).tiers.find((t) => t.tier === 2)!.observed!;
     expect(far).toBeGreaterThan(near * 1.5);
   }, 300_000);
