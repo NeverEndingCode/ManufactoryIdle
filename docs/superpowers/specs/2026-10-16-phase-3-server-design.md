@@ -224,6 +224,8 @@ tests build a server on PGlite with a fake clock and inject requests with Fastif
 
 ## PR 3b — accounts
 
+**Status:** implemented, with plan rulings R-16 (accounts optional at runtime), R-17 (the lazy-creation race) and R-18 (claimed or unknown token → 404).
+
 - **The SuperTokens core:** EmailPassword, plus Discord and GitHub third-party providers.
   The providers are configured only when their client id and secret env vars are set
   (**Ruling R-12:** no credentials in the repo, so dev and CI run EmailPassword only).
