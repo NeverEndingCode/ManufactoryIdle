@@ -150,6 +150,23 @@ export async function viewWorld(
   return { world: { ...world, state: resolved.state }, content: pinned };
 }
 
+/**
+ * R-19: spends `budgetMs` across the batch's TAPs in order, so their clientElapsedMs
+ * together never exceed it. Other actions pass through; a negative budget counts as zero.
+ */
+export function capTaps(actions: Action[], budgetMs: number): { actions: Action[]; hasTap: boolean } {
+  let left = Math.max(0, budgetMs);
+  let hasTap = false;
+  const capped = actions.map((a) => {
+    if (a.type !== "TAP") return a;
+    hasTap = true;
+    const clientElapsedMs = Math.min(a.clientElapsedMs, left);
+    left -= clientElapsedMs;
+    return { ...a, clientElapsedMs };
+  });
+  return { actions: capped, hasTap };
+}
+
 /** What a client is told about a batch: the status and the exact JSON body. */
 export interface ActionsResponse {
   status: number;
@@ -162,13 +179,16 @@ export interface ActionsResponse {
  * content, apply the batch with the world's own seed (R-7), persist, log, store the response.
  * A rejection changes nothing, so its 409 is stored and committed in the same transaction,
  * under the same lock: a retry, even after the state has moved on, gets the same 409.
+ * R-19: the TAPs' clientElapsedMs are capped to the time since the last TAP batch (or since
+ * the world was created) before anything else; the capped batch is what is applied, logged and
+ * stored, so replay stays exact. The column moves only when a batch holding a TAP succeeds.
  * Stored bodies are the jsonb round-trip of what was built, and the first answer is read back from the insert, so a replay is byte-for-byte equal.
  */
 export async function applyActions(
   db: Db,
   content: ContentStore,
   playerId: string,
-  actions: Action[],
+  requested: Action[],
   idempotencyKey: string,
   nowMs: number,
   render: (result: { world: World; content: IndexedContent; summary: ResolveSummary }) => unknown,
@@ -190,6 +210,12 @@ export async function applyActions(
       [playerId, idempotencyKey],
     );
     if (seen.length > 0) return { status: seen[0]!.status, body: seen[0]!.response };
+    const [clock] = await tx.query<{ since_ms: number }>(
+      `select round(extract(epoch from coalesce(last_tap_flush_at, created_at)) * 1000)::float8 as since_ms
+         from player_worlds where id = $1`,
+      [world.id],
+    );
+    const { actions, hasTap } = capTaps(requested, nowMs - clock!.since_ms);
     // Under the lock, through tx: the locked row's version is the one that counts.
     const pinned = await content.get(world.contentVersion, tx);
     const resolved = resolve(world.state, pinned, nowMs - world.state.lastResolvedAt);
@@ -206,12 +232,13 @@ export async function applyActions(
     const [updated] = await tx.query<{ state_version: string }>(
       `update player_worlds
           set state = $2::jsonb, state_version = state_version + 1,
-              last_resolved_at = to_timestamp($3 / 1000.0)
+              last_resolved_at = to_timestamp($3 / 1000.0),
+              last_tap_flush_at = case when $4 then to_timestamp($5 / 1000.0) else last_tap_flush_at end
         where id = $1
         returning state_version::text as state_version`,
       // R-6: last_resolved_at mirrors the state's own clock. action_log.created_at below is
       // the request time from clock(); the two agree today, but they mean different things.
-      [world.id, toWire(batch.state), batch.state.lastResolvedAt],
+      [world.id, toWire(batch.state), batch.state.lastResolvedAt, hasTap, nowMs],
     );
     await tx.query(
       `insert into action_log (player_id, world_id, actions, idempotency_key, created_at)

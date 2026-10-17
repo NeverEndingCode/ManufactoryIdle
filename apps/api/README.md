@@ -88,7 +88,15 @@ It is returned once; only its sha256 is stored.
       -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
       -d '{"guestToken":"'"$TOKEN"'"}'
 
-Errors: 400 malformed body, 401 missing or unknown token, 404 no world, 409 an action
+Rate limits are per instance and in memory: 30 calls burst, 3 per second per player on
+`/api/world` and `/api/actions` (after auth; a replayed idempotency key still counts), and
+5 per hour per IP on `POST /api/guests`. Over the limit: `429 {"error":"rate-limited"}` with
+`Retry-After` in whole seconds. The guest limit keys on `request.ip`; behind a reverse proxy
+set Fastify's `trustProxy`, or every guest shares the proxy's bucket. TAP `clientElapsedMs`
+is capped server-side to the time since the last TAP batch (or world creation), and the capped
+actions are what the action log stores.
+
+Errors: 400 malformed body, 429 rate-limited, 401 missing or unknown token, 404 no world, 409 an action
 was rejected (body: `failedAction`, `index`, `reason`). Claim errors are listed under
 the auth model above.
 

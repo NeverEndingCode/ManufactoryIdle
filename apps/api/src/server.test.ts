@@ -18,7 +18,7 @@ import { pgliteDb } from "./db/pglite.js";
 import { migrate } from "./db/migrate.js";
 import type { Db } from "./db/db.js";
 import { openContentStore, type ContentStore } from "./content.js";
-import { buildServer, guestAuth } from "./server.js";
+import { buildServer, guestAuth, type ServerDeps } from "./server.js";
 
 const SLICE = fileURLToPath(
   new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
@@ -79,9 +79,12 @@ afterEach(async () => {
   await db?.close();
 });
 
-async function server(dir: string = SLICE): Promise<{ app: FastifyInstance; store: ContentStore }> {
+async function server(
+  dir: string = SLICE,
+  limits?: ServerDeps["limits"],
+): Promise<{ app: FastifyInstance; store: ContentStore }> {
   const store = await openContentStore(db, dir);
-  const app = buildServer({ db, content: store, clock, auth: guestAuth(db) });
+  const app = buildServer({ db, content: store, clock, auth: guestAuth(db), limits });
   apps.push(app);
   return { app, store };
 }
@@ -597,5 +600,166 @@ describe("replay", () => {
     expect(row.state_version).toBe("3");
     expect(serializeWorld(state)).toBe(serializeWorld(deserializeWorld(JSON.stringify(row.state))));
     expect(serializeWorld(state)).not.toBe(serializeWorld(initial));
+  });
+});
+
+describe("rate limits", () => {
+  const getWorld = (app: FastifyInstance, token: string) =>
+    app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+
+  it("30 quick calls pass, the 31st is 429 with Retry-After, and it refills with the clock", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    for (let i = 0; i < 30; i++) expect((await getWorld(app, token)).statusCode).toBe(200);
+    const limited = await getWorld(app, token);
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toEqual({ error: "rate-limited" });
+    expect(limited.headers["retry-after"]).toBe("1");
+    now += 334; // 3 per second: one token back after 1/3 s
+    expect((await getWorld(app, token)).statusCode).toBe(200);
+    expect((await getWorld(app, token)).statusCode).toBe(429);
+  });
+
+  it("/api/actions shares the player's bucket, and a replayed key still counts", async () => {
+    const { app } = await server(SLICE, { player: { capacity: 2, refillPerSec: 1 } });
+    const token = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const body = { idempotencyKey: "k", baseVersion: 0, actions: [BUY_MINER] };
+    expect((await postActions(app, token, body)).statusCode).toBe(200);
+    expect((await postActions(app, token, body)).statusCode).toBe(200);
+    expect((await postActions(app, token, body)).statusCode).toBe(429);
+    expect((await getWorld(app, token)).statusCode).toBe(429);
+  });
+
+  it("buckets are per player", async () => {
+    const { app } = await server(SLICE, { player: { capacity: 1, refillPerSec: 1 } });
+    const a = await createGuest(app);
+    const b = await createGuest(app);
+    expect((await getWorld(app, a)).statusCode).toBe(200);
+    expect((await getWorld(app, a)).statusCode).toBe(429);
+    expect((await getWorld(app, b)).statusCode).toBe(200);
+  });
+
+  it("an unauthenticated call is 401, not 429, and takes no token", async () => {
+    const { app } = await server(SLICE, { player: { capacity: 1, refillPerSec: 1 } });
+    const token = await createGuest(app);
+    for (let i = 0; i < 3; i++) {
+      expect((await app.inject({ method: "GET", url: "/api/world" })).statusCode).toBe(401);
+    }
+    expect((await getWorld(app, token)).statusCode).toBe(200);
+  });
+
+  it("POST /api/guests allows 5 per hour per IP by default", async () => {
+    const { app } = await server();
+    for (let i = 0; i < 5; i++) await createGuest(app);
+    const limited = await app.inject({ method: "POST", url: "/api/guests" });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toEqual({ error: "rate-limited" });
+    expect(limited.headers["retry-after"]).toBe("720");
+    now += 720_000;
+    expect((await app.inject({ method: "POST", url: "/api/guests" })).statusCode).toBe(201);
+  });
+
+  it("the guest limit is keyed on the client IP", async () => {
+    const { app } = await server(SLICE, { guestsPerIp: { capacity: 1, refillPerSec: 0.001 } });
+    const from = (remoteAddress: string) =>
+      app.inject({ method: "POST", url: "/api/guests", remoteAddress });
+    expect((await from("10.0.0.1")).statusCode).toBe(201);
+    expect((await from("10.0.0.1")).statusCode).toBe(429);
+    expect((await from("10.0.0.2")).statusCode).toBe(201);
+  });
+});
+
+describe("the server-side tap ceiling", () => {
+  const tap = (clientElapsedMs: number, count = 10_000): Action => ({
+    type: "TAP",
+    count,
+    clientElapsedMs,
+  });
+  const stacksOf = async (): Promise<number> =>
+    deserializeWorld(JSON.stringify((await onlyWorld()).state)).tapStacks;
+  const flushMs = async (): Promise<number | null> =>
+    (
+      await db.query<{ ms: number | null }>(
+        "select round(extract(epoch from last_tap_flush_at) * 1000)::float8 as ms from player_worlds",
+      )
+    )[0]!.ms;
+  const maxStacks = (store: ContentStore) => store.current.content.bundle.tap.maxStacks;
+
+  it("1. a TAP claiming 60,000 ms two seconds after creation applies at most 40 taps and logs 2,000 ms", async () => {
+    const { app, store } = await server();
+    const token = await createGuest(app);
+    now = T0 + 2_000;
+    const res = await postActions(app, token, {
+      idempotencyKey: "t1",
+      baseVersion: 0,
+      actions: [tap(60_000)],
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(await stacksOf()).toBe(Math.min(40, maxStacks(store)));
+    expect((await logRows())[0]!.actions).toEqual([tap(2_000)]);
+    expect(await flushMs()).toBe(now);
+  });
+
+  it("2. later batches get only the time since the last flush", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    const logged: Action[][] = [];
+    for (const [i, at] of [2_000, 3_000, 4_000].entries()) {
+      now = T0 + at;
+      const res = await postActions(app, token, {
+        idempotencyKey: `t${i}`,
+        baseVersion: i,
+        actions: [tap(60_000)],
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    for (const row of await logRows()) logged.push(row.actions);
+    expect(logged).toEqual([[tap(2_000)], [tap(1_000)], [tap(1_000)]]);
+  });
+
+  it("the budget is spent in order across a batch's TAPs, and never goes negative", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 1_000;
+    const res = await postActions(app, token, {
+      idempotencyKey: "multi",
+      baseVersion: 0,
+      actions: [tap(600), tap(600), tap(600)],
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await logRows())[0]!.actions).toEqual([tap(600), tap(400), tap(0)]);
+  });
+
+  it("3. a batch without a TAP leaves the column alone", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const res = await postActions(app, token, {
+      idempotencyKey: "n",
+      baseVersion: 0,
+      actions: [BUY_MINER],
+    });
+    expect(res.statusCode).toBe(200);
+    expect(await flushMs()).toBeNull();
+  });
+
+  it("a rejected batch leaves the column alone, and a replayed key does not move it", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 5_000;
+    const rejected = await postActions(app, token, {
+      idempotencyKey: "r",
+      baseVersion: 0,
+      actions: [tap(100), BUY_1000_MINERS],
+    });
+    expect(rejected.statusCode).toBe(409);
+    expect(await flushMs()).toBeNull();
+    const ok = { idempotencyKey: "ok", baseVersion: 0, actions: [tap(100)] };
+    await postActions(app, token, ok);
+    const first = await flushMs();
+    now += 10_000;
+    await postActions(app, token, ok);
+    expect(await flushMs()).toBe(first);
   });
 });
