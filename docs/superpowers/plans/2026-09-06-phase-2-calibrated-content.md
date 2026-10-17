@@ -1,6 +1,6 @@
 # Phase 2 — Calibrated content
 
-**Phase 2 status: complete (2026-10-16).** The calibrator, `derived.yaml`, and the CI pacing and smoke gates have shipped; the close-out is `2026-10-16-phase-2-closeout.md`. Phase 3 (server) continues in `docs/superpowers/specs/2026-10-16-phase-3-server-design.md`. The "Still to do" and "Carried forward" lists below carry a verdict on every item.
+**Phase 2 status: complete (2026-10-16).** The calibrator, `derived.yaml`, and the CI pacing and smoke gates have shipped; the close-out is `2026-10-16-phase-2-closeout.md`. Phase 3 (server) continues in `docs/superpowers/specs/2026-10-16-phase-3-server-design.md` (on branch `phase-3a-api`, PR #18, until it merges). The "Still to do" and "Carried forward" lists below carry a verdict on every item.
 
 **Goal (spec F.2):** the B.5 vertical slice, the calibration script, all eleven validator
 checks, and CI pacing gates. **Ends in:** a game that is *paced*.
@@ -950,7 +950,7 @@ in place rather than deleted.*
      slowly. `SET_RESERVE` and `REORDER_PRIORITY` (still emitted by nothing) are exactly
      the levers a real player would use here.
    - **Add content per tier**, so a tier has more to ask for than one item's cap allows.
-2. **DONE.** A full ten-tier calibration takes about 3 minutes; the gate runs in 2m19s locally (since the `resolve` fix above). **Make a ten-tier run affordable before attempting another.** *(Superseded: since the
+2. **DONE.** A full ten-tier calibration at one fixed r_eff scale (`--max-tier 10 --scales 0.5 --no-refine`, measured 2026-10-16 in PR #17's recalibration) takes about 3 minutes; a full r_eff scan is still about an hour; the gate runs in 2m19s locally (since the `resolve` fix above). **Make a ten-tier run affordable before attempting another.** *(Superseded: since the
    `resolve` fix a full ten-tier calibration takes ~1 hour.)* At ten hours a scale an
    eleven-scale scan is a week. A clearing probe has to simulate the whole 700-game-day
    run, so the cost is structural: either the scan gets far smaller, or the deep tiers

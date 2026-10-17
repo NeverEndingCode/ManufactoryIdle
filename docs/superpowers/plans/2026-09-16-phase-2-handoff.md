@@ -639,7 +639,8 @@ runs themselves are independent:
 - **`pnpm test` through turbo produced an empty output file twice.** Per-package
   `npx vitest run` is what to trust.
 - The sim suite is ~10 min and `calibrate.test.ts` is ~99% of it; 6 of its 71 tests are
-  86% of that. A full ten-tier calibration is ~1 hour.
+  86% of that. A full ten-tier calibration with an r_eff scan is ~1 hour; at one fixed scale
+  (`--scale 0.5`, measured 2026-10-16) it is ~3 minutes.
 
 ## Commands
 
