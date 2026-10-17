@@ -12,7 +12,6 @@ import type { Db } from "./db/db.js";
 import type { ContentStore } from "./content.js";
 import { actionsBodySchema } from "./http/actions-schema.js";
 import {
-  ActionRejectedError,
   WorldNotFoundError,
   applyActions,
   claimGuest,
@@ -97,11 +96,6 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.setErrorHandler(async (error, request, reply) => {
     if (accounts && (await accounts.handleError(error, request, reply))) return reply;
     if (error instanceof WorldNotFoundError) return reply.code(404).send({ error: "no world" });
-    if (error instanceof ActionRejectedError) {
-      return reply
-        .code(409)
-        .send({ failedAction: error.action, index: error.index, reason: error.reason });
-    }
     const {
       statusCode: status,
       validation,
