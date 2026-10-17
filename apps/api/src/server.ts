@@ -157,14 +157,18 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         if (playerId !== null) request.playerId = playerId;
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const { actions, idempotencyKey } = request.body;
-      const {
-        world,
-        content: pinned,
-        summary,
-      } = await applyActions(db, content, request.playerId!, actions, idempotencyKey, clock());
-      return { ...worldView(world, pinned), summary };
+      const { status, body } = await applyActions(
+        db,
+        content,
+        request.playerId!,
+        actions,
+        idempotencyKey,
+        clock(),
+        ({ world, content: pinned, summary }) => ({ ...worldView(world, pinned), summary }),
+      );
+      return reply.code(status).send(body);
     },
   );
 

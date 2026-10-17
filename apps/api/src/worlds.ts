@@ -162,10 +162,19 @@ export async function viewWorld(
   return { world: { ...world, state: resolved.state }, content: pinned };
 }
 
+/** What a client is told about a batch: the status and the exact JSON body. */
+export interface ActionsResponse {
+  status: number;
+  body: unknown;
+}
+
 /**
- * Spec D.2, steps 2-9: lock the row, resolve on the pinned content, apply the batch with
- * the world's own seed (R-7), persist, log. A rejection throws ActionRejectedError, which
- * rolls the whole transaction back.
+ * Spec D.2, steps 2-9: lock the row, look up the idempotency key (a seen key returns the
+ * stored response and applies nothing; the key wins over the body), resolve on the pinned
+ * content, apply the batch with the world's own seed (R-7), persist, log, store the response.
+ * A rejection rolls the transaction back; its 409 is then stored in a small transaction of
+ * its own so a retry gets the same 409. Stored bodies are the jsonb round-trip of what was
+ * built, and the first answer is read back from the insert, so a replay is byte-for-byte equal.
  */
 export async function applyActions(
   db: Db,
@@ -174,41 +183,65 @@ export async function applyActions(
   actions: Action[],
   idempotencyKey: string,
   nowMs: number,
-): Promise<{ world: World; content: IndexedContent; summary: ResolveSummary }> {
-  return db.transaction(async (tx) => {
-    const world = await loadMainWorld(tx, playerId, true);
-    // Under the lock, through tx: the locked row's version is the one that counts.
-    const pinned = await content.get(world.contentVersion, tx);
-    const resolved = resolve(world.state, pinned, nowMs - world.state.lastResolvedAt);
-    const batch = applyBatch(resolved.state, pinned, actions, resolved.state.seed);
-    if (batch.rejected) {
-      throw new ActionRejectedError(batch.failedIndex, actions[batch.failedIndex]!, batch.reason);
-    }
-    const [updated] = await tx.query<{ state_version: string }>(
-      `update player_worlds
-          set state = $2::jsonb, state_version = state_version + 1,
-              last_resolved_at = to_timestamp($3 / 1000.0)
-        where id = $1
-        returning state_version::text as state_version`,
-      // R-6: last_resolved_at mirrors the state's own clock. action_log.created_at below is
-      // the request time from clock(); the two agree today, but they mean different things.
-      [world.id, toWire(batch.state), batch.state.lastResolvedAt],
+  render: (result: { world: World; content: IndexedContent; summary: ResolveSummary }) => unknown,
+): Promise<ActionsResponse> {
+  const store = async (tx: Db, status: number, body: unknown): Promise<ActionsResponse> => {
+    const [row] = await tx.query<{ response: unknown; status: number }>(
+      `insert into idempotency (player_id, key, response, status, created_at)
+       values ($1, $2, $3::jsonb, $4, to_timestamp($5 / 1000.0))
+       on conflict (player_id, key) do update set key = idempotency.key
+       returning response, status`,
+      [playerId, idempotencyKey, JSON.stringify(body), status, nowMs],
     );
-    await tx.query(
-      `insert into action_log (player_id, world_id, actions, idempotency_key, created_at)
-       values ($1, $2, $3::jsonb, $4, to_timestamp($5 / 1000.0))`,
-      [playerId, world.id, JSON.stringify(actions), idempotencyKey, nowMs],
+    return { status: row!.status, body: row!.response };
+  };
+  try {
+    return await db.transaction(async (tx) => {
+      const world = await loadMainWorld(tx, playerId, true);
+      const seen = await tx.query<{ response: unknown; status: number }>(
+        "select response, status from idempotency where player_id = $1 and key = $2",
+        [playerId, idempotencyKey],
+      );
+      if (seen.length > 0) return { status: seen[0]!.status, body: seen[0]!.response };
+      // Under the lock, through tx: the locked row's version is the one that counts.
+      const pinned = await content.get(world.contentVersion, tx);
+      const resolved = resolve(world.state, pinned, nowMs - world.state.lastResolvedAt);
+      const batch = applyBatch(resolved.state, pinned, actions, resolved.state.seed);
+      if (batch.rejected) {
+        throw new ActionRejectedError(batch.failedIndex, actions[batch.failedIndex]!, batch.reason);
+      }
+      const [updated] = await tx.query<{ state_version: string }>(
+        `update player_worlds
+            set state = $2::jsonb, state_version = state_version + 1,
+                last_resolved_at = to_timestamp($3 / 1000.0)
+          where id = $1
+          returning state_version::text as state_version`,
+        // R-6: last_resolved_at mirrors the state's own clock. action_log.created_at below is
+        // the request time from clock(); the two agree today, but they mean different things.
+        [world.id, toWire(batch.state), batch.state.lastResolvedAt],
+      );
+      await tx.query(
+        `insert into action_log (player_id, world_id, actions, idempotency_key, created_at)
+         values ($1, $2, $3::jsonb, $4, to_timestamp($5 / 1000.0))`,
+        [playerId, world.id, JSON.stringify(actions), idempotencyKey, nowMs],
+      );
+      await tx.query("update players set last_seen_at = to_timestamp($2 / 1000.0) where id = $1", [
+        playerId,
+        nowMs,
+      ]);
+      const body = render({
+        world: { ...world, state: batch.state, stateVersion: Number(updated!.state_version) },
+        content: pinned,
+        summary: resolved.summary,
+      });
+      return store(tx, 200, body);
+    });
+  } catch (err) {
+    if (!(err instanceof ActionRejectedError)) throw err;
+    return db.transaction((tx) =>
+      store(tx, 409, { failedAction: err.action, index: err.index, reason: err.reason }),
     );
-    await tx.query("update players set last_seen_at = to_timestamp($2 / 1000.0) where id = $1", [
-      playerId,
-      nowMs,
-    ]);
-    return {
-      world: { ...world, state: batch.state, stateVersion: Number(updated!.state_version) },
-      content: pinned,
-      summary: resolved.summary,
-    };
-  });
+  }
 }
 
 /**

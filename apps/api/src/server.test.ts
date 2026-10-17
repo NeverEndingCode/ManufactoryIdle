@@ -382,7 +382,71 @@ describe("POST /api/actions", () => {
       actions: [{ ...BUY_MINER, lane: "x".repeat(64) }],
     });
     expect(at64.statusCode).toBe(409);
-    expect(db.transactions).toBe(txBefore + 1);
+    // A 409 opens two: the rolled-back batch, then the small one that stores the rejection.
+    expect(db.transactions).toBe(txBefore + 2);
+  });
+});
+
+describe("POST /api/actions idempotency", () => {
+  const body = (key: string, actions: Action[] = [BUY_MINER]) => ({
+    idempotencyKey: key,
+    baseVersion: 0,
+    actions,
+  });
+
+  it("the same key twice replays the stored response and applies once", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const first = await postActions(app, token, body("k-dup"));
+    expect(first.statusCode).toBe(200);
+    now = T0 + 20 * MINUTE;
+    const second = await postActions(app, token, body("k-dup"));
+    expect(second.statusCode).toBe(200);
+    expect(second.body).toBe(first.body);
+    expect((await onlyWorld()).state_version).toBe("1");
+    expect(await logRows()).toHaveLength(1);
+    expect(await lastSeenMs()).toEqual([T0 + 10 * MINUTE]);
+  });
+
+  it("two players using the same key do not interfere", async () => {
+    const { app } = await server();
+    const a = await createGuest(app);
+    const b = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const ra = await postActions(app, a, body("shared"));
+    const rb = await postActions(app, b, body("shared"));
+    expect(ra.statusCode).toBe(200);
+    expect(rb.statusCode).toBe(200);
+    expect(await logRows()).toHaveLength(2);
+    const versions = await db.query<{ state_version: string }>(
+      "select state_version::text as state_version from player_worlds",
+    );
+    expect(versions.map((v) => v.state_version)).toEqual(["1", "1"]);
+  });
+
+  it("a replayed 409 is the same 409 and persists nothing", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const first = await postActions(app, token, body("k-409", [BUY_MINER, BUY_1000_MINERS]));
+    expect(first.statusCode).toBe(409);
+    const second = await postActions(app, token, body("k-409", [BUY_MINER, BUY_1000_MINERS]));
+    expect(second.statusCode).toBe(409);
+    expect(second.body).toBe(first.body);
+    expect(await logRows()).toEqual([]);
+    expect((await onlyWorld()).state_version).toBe("0");
+  });
+
+  it("the key wins: a different body under a seen key gets the stored response", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const first = await postActions(app, token, body("k-win"));
+    const second = await postActions(app, token, body("k-win", [BUY_1000_MINERS]));
+    expect(second.statusCode).toBe(200);
+    expect(second.body).toBe(first.body);
+    expect(await logRows()).toHaveLength(1);
   });
 });
 
