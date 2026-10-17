@@ -126,12 +126,12 @@ export function bisectMonotone(f: (x: number) => number, options: BisectOptions)
   if (floor !== undefined) {
     // One run at the floor answers "does even the minimum overshoot?". If it does, the
     // walk down below would only measure inputs that are no better, a run apiece. If it
-    // does not, the probe is spent and the walk proceeds as before: the bracket stays
-    // tight around the answer instead of stretching to the floor.
+    // does not -- under target, or even a hit -- the probe is spent and the walk proceeds
+    // unchanged, so it returns exactly what it always did: a hit at the floor must not
+    // pre-empt a larger factor that the walk would have found first.
     if (x <= floor) return { x, y: hiY, evaluations: counter.n, converged: false };
     const floorY = evaluate(floor);
-    if (hit(floorY)) return { x: floor, y: floorY, evaluations: counter.n, converged: true };
-    if (floorY > target) return { x: floor, y: floorY, evaluations: counter.n, converged: false };
+    if (!hit(floorY) && floorY > target) return { x: floor, y: floorY, evaluations: counter.n, converged: false };
   }
   for (let i = 0; i < maxExpansions; i += 1) {
     lo = x / 4;
@@ -1098,6 +1098,10 @@ export function calibrate(options: CalibrateOptions): CalibrationResult {
  * Solving every tier at once would be a dozen knobs against ten numbers, and the
  * answer would be arbitrary rather than derived.
  */
+function amountsFloor(amounts: number[]): number | undefined {
+  return amounts.length === 0 ? undefined : 1 / Math.max(...amounts);
+}
+
 function calibrateAmounts(options: AmountOptions): AmountResult {
   const policy = options.policy ?? "greedy";
   const seed = options.seed ?? 42;
@@ -1240,9 +1244,10 @@ function calibrateAmounts(options: AmountOptions): AmountResult {
         // Past this the two candidate factors round to the same whole-unit
         // requirement, so another split costs a simulated run and buys nothing.
         minBracketRatio: 1e-4,
-        // Every amount of this tier is a whole number of at least 1, so below
-        // 1 / (largest amount) they are all 1 and every factor measures the same.
-        floor: 1 / Math.max(...working.milestones.find((m) => m.tier === tier)!.requires.map((r) => r.amount)),
+        // Amounts are max(1, round(amount * factor)). At factor 1 / (largest amount)
+        // every amount rounds to 1 or less, so all become 1, and no smaller factor
+        // changes anything.
+        floor: amountsFloor(working.milestones.find((m) => m.tier === tier)!.requires.map((r) => r.amount)),
       },
     );
 

@@ -306,6 +306,17 @@ describe("the amounts search when even the minimum overshoots (ruling C-3)", () 
   }, 300_000);
 });
 
+describe("bisectMonotone's floor (ruling C-3)", () => {
+  // The floor probe may only end a search that overshoots at the minimum. A floor that
+  // merely hits must not pre-empt the larger factor the downward walk finds first.
+  it("returns the walk's factor when both the floor and a higher probe hit", () => {
+    const f = (x: number): number => (x <= 0.3 ? 0.25 : 1);
+    const result = bisectMonotone(f, { target: 0.25, tolerance: 0.05, seed: 1, floor: 0.01 });
+    expect(result.x).toBe(0.25);
+    expect(result.converged).toBe(true);
+  });
+});
+
 describe("a requirement nobody could ever deliver", () => {
   // Ruling R7 pays deliveries from liquid stock, so a requirement above what storage
   // and Quantum Storage can hold at maximum level can never be met -- not slowly, not

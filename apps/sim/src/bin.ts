@@ -30,13 +30,15 @@ const USAGE = `usage:
   by running the simulator (spec B.7): it scans r_eff, then bisects each tier's
   delivery amounts underneath the winner. --no-solve-reff holds the authored r_eff
   (scale 1.0), not the scale derived.yaml was solved at; use --scale <s> for that.
-  It solves amounts only. --scale <s> is --scales <s> --no-refine. --scales replaces the coarse r_eff
-  grid, which matters because cost rises steeply with the scale: measured on the
-  slice, 0.5 took 417s and 4.0 took 7,774s. It prints what it found;
+  It solves amounts only. --scale <s> is --scales <s> --no-refine. --scales
+  replaces the coarse r_eff grid, which matters because cost rises steeply with the
+  scale: measured on the slice, 0.5 took 417s and 4.0 took 7,774s. It prints what
+  it found;
   --write emits it to <dir>/derived.yaml, which the loader lays over the authored
   files. --max-tier N with --write is refused when N is below the bundle's highest
   tier, because it would drop the solved tiers above N; add --merge to keep their
-  existing amounts (their observed values become null). Expect it to take a while: every step of every search is a real run.
+  existing amounts (their observed values become null). Expect it to take a while:
+  every step of every search is a real run.
 `;
 
 function parseUntilTier(value: string | undefined): number {
