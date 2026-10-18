@@ -224,6 +224,16 @@ tests build a server on PGlite with a fake clock and inject requests with Fastif
 
 ## PR 3b — accounts
 
+**Status:** implemented, with plan rulings R-16 (accounts optional at runtime), R-17 (the lazy-creation race) and R-18 (claimed or unknown token → 404).
+
+- **Ruling R-24: password-reset mail never goes through a third party.** SuperTokens'
+  default EmailPassword delivery POSTs the user's email and the reset link, with its live
+  token, to `api.supertokens.io`, which contradicts self-hosting. The API configures
+  `emailDelivery` explicitly: the SDK's SMTP service when `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_FROM` are all set, otherwise a service that
+  sends nothing and logs only `password reset email not sent: SMTP not configured` (no
+  address, no token). *Cost if wrong:* resets need SMTP configured before they work.
+
 - **The SuperTokens core:** EmailPassword, plus Discord and GitHub third-party providers.
   The providers are configured only when their client id and secret env vars are set
   (**Ruling R-12:** no credentials in the repo, so dev and CI run EmailPassword only).

@@ -3,7 +3,9 @@ import { fileURLToPath } from "node:url";
 import { pgDb } from "./db/pg.js";
 import { migrate } from "./db/migrate.js";
 import { openContentStore } from "./content.js";
-import { buildServer, guestAuth } from "./server.js";
+import { buildServer } from "./server.js";
+import { identityAuth, noSessions } from "./identity.js";
+import { superTokensFromEnv } from "./auth/supertokens.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -20,6 +22,16 @@ if (!Number.isInteger(port) || port < 0 || port >= 65536) {
 }
 const host = process.env.HOST ?? "127.0.0.1";
 
+// R-16: accounts are optional; without a SuperTokens core the API is guest-only.
+let accounts: ReturnType<typeof superTokensFromEnv>;
+try {
+  accounts = superTokensFromEnv(process.env);
+} catch (err) {
+  console.error((err as Error).message);
+  process.exit(1);
+}
+if (!accounts) console.log("accounts disabled (SUPERTOKENS_CONNECTION_URI unset)");
+
 const db = pgDb(databaseUrl);
 await migrate(db);
 const content = await openContentStore(db, contentDir);
@@ -27,7 +39,13 @@ const app = buildServer({
   db,
   content,
   clock: Date.now,
-  auth: guestAuth(db),
+  auth: identityAuth({
+    db,
+    content,
+    clock: Date.now,
+    verifySession: accounts?.verifySession ?? noSessions,
+  }),
+  ...(accounts ? { accounts, verifySession: accounts.verifySession } : {}),
   logger: { level: process.env.LOG_LEVEL ?? "info" },
 });
 
