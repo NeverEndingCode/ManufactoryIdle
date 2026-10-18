@@ -272,8 +272,23 @@ export interface Schedule {
  * The boundary search is `resolve`'s own, so on the advanced state the reported
  * boundary is the first fill/drain/timer/milestone `resolve` would fire, up to
  * floating-point rounding.
+ *
+ * Delegates to `scheduleDetail`, which also returns the advanced state and its solve.
  */
 export function schedule(state: WorldState, content: IndexedContent): Schedule {
+  return scheduleDetail(state, content).schedule;
+}
+
+/** `schedule` plus the state it advanced to and the solve its rates came from (W-8). */
+export interface ScheduleDetail {
+  schedule: Schedule;
+  /** The state schedule() advanced past internal unpins; its lastResolvedAt === schedule.atMs. */
+  state: WorldState;
+  /** solve(state, content) of that advanced state: the rates schedule.items came from. */
+  solution: Solution;
+}
+
+export function scheduleDetail(state: WorldState, content: IndexedContent): ScheduleDetail {
   let current = state;
   let solution = solve(current, content);
   let next = nextDiscontinuity(content, current, solution, current.lastResolvedAt);
@@ -293,9 +308,13 @@ export function schedule(state: WorldState, content: IndexedContent): Schedule {
   );
   const atMs = current.lastResolvedAt;
   return {
-    atMs,
-    items,
-    nextBoundaryAtMs: Number.isFinite(next.dtMs) ? atMs + next.dtMs : null,
+    schedule: {
+      atMs,
+      items,
+      nextBoundaryAtMs: Number.isFinite(next.dtMs) ? atMs + next.dtMs : null,
+    },
+    state: current,
+    solution,
   };
 }
 
