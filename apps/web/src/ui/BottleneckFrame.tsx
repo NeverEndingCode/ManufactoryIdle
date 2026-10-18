@@ -4,13 +4,8 @@ import type { ReactNode } from "react";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
-import {
-  affordability,
-  BOTTLENECK_BUY_LABEL,
-  className,
-  type BottleneckModel,
-  type BuyMachine,
-} from "./derive.js";
+import { BOTTLENECK_BUY_LABEL, className, type BottleneckModel, type BuyMachine } from "./derive.js";
+import { affordability } from "./quote.js";
 import styles from "./BottleneckFrame.module.css";
 import { useTick } from "./use-tick.js";
 
@@ -34,8 +29,9 @@ export function BottleneckFrame({
       <div className={styles.label}>bottleneck</div>
       {children}
       <p className={styles.advice}>{model.text}</p>
-      {model.buy !== null && (
-        <BuyButton buy={model.buy} snapshot={snapshot} store={store} pending={pending} />
+      {/* Task 3 renders the storage, QS and reserve actions. */}
+      {model.action?.type === "BUY_MACHINE" && (
+        <BuyButton buy={model.action} snapshot={snapshot} store={store} pending={pending} />
       )}
     </div>
   );

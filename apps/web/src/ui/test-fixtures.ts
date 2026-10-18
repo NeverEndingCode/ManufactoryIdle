@@ -8,8 +8,10 @@ import {
   deserializeWorld,
   indexContent,
   initialWorld,
+  liquidCap,
   schedule,
   serializeWorld,
+  withInstalled,
   type ContentBundle,
   type IndexedContent,
   type WorldState,
@@ -64,4 +66,26 @@ export function freshState(slice: Slice): WorldState {
 /** An engine fixture world (packages/engine/src/resolve/fixtures). */
 export function fixtureState(file: string): WorldState {
   return deserializeWorld(readFileSync(join(FIXTURES, file), "utf8"));
+}
+
+/**
+ * STARVED_PIPE (4b Task 2 test 8): tier 5, six coal Constructors all on `make_concrete`.
+ * Concrete and steel beam sit at their liquid cap in `stored`, so `make_concrete` idles
+ * (clock 0) and `make_steel_beam` is not starved; `make_steel_pipe` has none: starved.
+ */
+export function starvedPipeState(slice: Slice): WorldState {
+  let w: WorldState = { ...freshState(slice), tier: 5 };
+  w = withInstalled(w, "coal", "constructor", 1, 6);
+  w = {
+    ...w,
+    assignment: { ...w.assignment, make_concrete: 6, make_steel_beam: 0, make_steel_pipe: 0 },
+  };
+  return {
+    ...w,
+    stored: {
+      ...w.stored,
+      concrete: liquidCap(slice.content, w, "concrete"),
+      steel_beam: liquidCap(slice.content, w, "steel_beam"),
+    },
+  };
 }

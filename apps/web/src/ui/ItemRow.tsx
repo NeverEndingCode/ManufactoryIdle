@@ -1,10 +1,10 @@
 // F.1's three-line row: name and net rate; the storage bar with shown / cap; the QS and BOUND
 // chips. Then the satisfaction meter, or the split bar on a contested item.
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { D, format } from "@manufactory/engine";
+import { format } from "@manufactory/engine";
 import { shownStock, storageFraction, storageTransition } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
-import { stateClass, type RowModel } from "./derive.js";
+import { rateText, stateClass, type RowModel } from "./derive.js";
 import styles from "./ItemRow.module.css";
 import { useTick, useTickSource } from "./use-tick.js";
 
@@ -13,10 +13,6 @@ export interface ItemRowProps {
   snapshot: Snapshot;
   /** The client clock (store.now), stable across renders. */
   now: () => number;
-}
-
-export function rateText(net: number): string {
-  return `${net > 0 ? "+" : ""}${format(D(net), "hybrid")}/s`;
 }
 
 export function ItemRow({ row, snapshot, now }: ItemRowProps) {
