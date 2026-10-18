@@ -1,0 +1,259 @@
+/* The priority list (the MVP's .pri rows): hairlines, not cards (W-17). Every control is at
+   least 44 px (W-20). Nothing scrolls sideways at 320 px: the first line wraps, the name
+   ellipsizes, the advanced line wraps under it (W-19). */
+.panel {
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-bottom: 6px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-1);
+  font-weight: var(--fw-strong);
+}
+
+.seg {
+  display: flex;
+  gap: 4px;
+}
+
+.segBtn {
+  min-height: 44px;
+  padding: 6px 11px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 7px;
+  background: none;
+  color: var(--t2);
+  font-size: var(--fs-2);
+  cursor: pointer;
+}
+
+.segBtn.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--fw-strong);
+}
+
+.confirm {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 9px;
+  background: var(--s2);
+}
+
+.warnText {
+  margin: 0 0 8px;
+  color: var(--t1);
+  font-size: var(--fs-2);
+}
+
+.confirmButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  position: relative;
+  min-width: 0;
+  padding: 6px 0;
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--bg);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The ghost: the dragged row rides on the pointer (an inline translateY), above the rest. */
+.row[data-dragging] {
+  z-index: 2;
+  opacity: 0.9;
+  box-shadow: 0 0 0 var(--hairline) var(--line2);
+}
+
+.row[data-drop="before"] {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.row[data-drop="after"] {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.handle {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--t3);
+  font-size: var(--fs-1);
+  cursor: grab;
+  touch-action: none;
+}
+
+.handle:active {
+  cursor: grabbing;
+}
+
+.name {
+  overflow: hidden;
+  flex: 1 1 6em;
+  min-width: 0;
+  color: var(--t1);
+  font-size: var(--fs-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dots {
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-1);
+  cursor: pointer;
+}
+
+.chip {
+  padding: 3px 9px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 7px;
+  color: var(--t2);
+  font-size: var(--fs-3);
+  white-space: nowrap;
+}
+
+.state-fed {
+  color: var(--state-fed);
+}
+
+.state-throttled {
+  color: var(--state-throttled);
+}
+
+.state-paused,
+.state-idle {
+  color: var(--state-paused);
+}
+
+.moves {
+  display: flex;
+  gap: 2px;
+}
+
+.step {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--t3);
+  font-size: var(--fs-3);
+  cursor: pointer;
+}
+
+.step:hover {
+  color: var(--t1);
+}
+
+.step[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pause {
+  padding: 6px 10px;
+}
+
+.advanced {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 4px 0 2px 52px;
+  min-width: 0;
+}
+
+.modeChip {
+  min-height: 44px;
+  padding: 6px 11px;
+  border: var(--hairline) solid var(--accent);
+  border-radius: 7px;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-3);
+  cursor: pointer;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--t2);
+  font-size: var(--fs-3);
+}
+
+.number {
+  width: 5.5em;
+  min-height: 44px;
+  padding: 4px 6px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 7px;
+  background: var(--s1);
+  color: var(--t1);
+  font: inherit;
+}
+
+.reserve {
+  flex: 1 1 10em;
+}
+
+.reserve input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  accent-color: var(--accent);
+}
+
+.pct {
+  min-width: 3em;
+  text-align: right;
+}
+
+.keys {
+  margin: 8px 0 0;
+  color: var(--t3);
+  font-size: var(--fs-3);
+}

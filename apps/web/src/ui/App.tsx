@@ -1,6 +1,6 @@
 // The shell: the header, the notices, then the W-19 panes (Q-7). The lanes pane (tabs and the
-// visible lane), the detail pane (the drawer, or a hint), the priority slot (Task 4) and the
-// dock slot (Task 5). The store is created and started outside React (main.tsx).
+// visible lane), the detail pane (the drawer, or a hint), the priority list and the dock slot
+// (Task 5). The store is created and started outside React (main.tsx).
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ItemId, LaneId } from "@manufactory/engine";
 import type { GameStore } from "../sync/store.js";
@@ -11,6 +11,7 @@ import layout from "./Layout.module.css";
 import { LaneView } from "./LaneView.js";
 import styles from "./LaneView.module.css";
 import { Notices } from "./Notices.js";
+import { PriorityList } from "./PriorityList.js";
 import { usePanes } from "./use-panes.js";
 import { createTickSource, TickContext } from "./use-tick.js";
 
@@ -53,6 +54,7 @@ export function App({ store }: { store: GameStore }) {
   const panes = usePanes();
   const [shown, setShown] = useState<View>("factory");
   const [openItem, setOpenItem] = useState<ItemId | null>(null);
+  const [focusEntry, setFocusEntry] = useState<string | null>(null);
 
   const viewRefs = useRef(new Map<View, HTMLButtonElement>());
   /** Set when the player opens a drawer; the drawer's mount takes it, so a remount (a view
@@ -79,6 +81,14 @@ export function App({ store }: { store: GameStore }) {
       null;
     back?.focus();
     setOpenItem(null);
+  };
+
+  /** §13.1: a split bar goes to its item's entry in the priority list. */
+  const showEntry = (itemId: ItemId) => {
+    const entry = s?.state.priority.find((e) => e.kind === "item" && e.itemId === itemId);
+    if (entry === undefined) return;
+    if (panes < 3) setShown("priority");
+    setFocusEntry(entry.id);
   };
 
   const onViewKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -195,6 +205,7 @@ export function App({ store }: { store: GameStore }) {
                   pending={view.pending}
                   openItem={openItem}
                   onOpen={toggle}
+                  onSplit={showEntry}
                 />
               </div>
             )}
@@ -217,7 +228,15 @@ export function App({ store }: { store: GameStore }) {
               )}
             </div>
             {(panes === 3 || shown === "priority") && (
-              <div id="pane-priority" className={layout.priority} data-priority-slot />
+              <div id="pane-priority" className={layout.priority} data-priority-slot>
+                <PriorityList
+                  store={store}
+                  snapshot={s}
+                  pending={view.pending}
+                  focusEntry={focusEntry}
+                  onFocused={() => setFocusEntry(null)}
+                />
+              </div>
             )}
             <div className={layout.dock} data-dock-slot />
           </div>

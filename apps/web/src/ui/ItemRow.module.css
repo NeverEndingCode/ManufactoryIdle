@@ -118,6 +118,19 @@
   background: var(--state-paused);
 }
 
+.splitButton {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .splitWrap {
   margin-top: 8px;
 }

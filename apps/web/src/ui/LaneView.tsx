@@ -18,6 +18,8 @@ export interface LaneViewProps {
   /** The item whose drawer is open, if any. */
   openItem?: ItemId | null;
   onOpen?: (itemId: ItemId) => void;
+  /** A split bar's tap: go to the item's priority entry. */
+  onSplit?: (itemId: ItemId) => void;
 }
 
 export function LaneView({
@@ -28,6 +30,7 @@ export function LaneView({
   pending,
   openItem = null,
   onOpen,
+  onSplit,
 }: LaneViewProps) {
   const rows = useMemo(() => laneRows(snapshot, laneId), [snapshot, laneId]);
   const now = useCallback(() => store.now(), [store]);
@@ -48,6 +51,7 @@ export function LaneView({
               now={now}
               onOpen={onOpen}
               expanded={openItem === row.itemId}
+              onSplit={onSplit}
             />
           );
           return (

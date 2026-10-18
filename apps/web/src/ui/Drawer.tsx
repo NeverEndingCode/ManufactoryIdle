@@ -39,6 +39,7 @@ import {
 } from "./machines.js";
 import { Projection } from "./Projection.js";
 import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
+import { usePendingMap, usePendingSetting } from "./use-pending.js";
 import { useTick } from "./use-tick.js";
 
 export type DrawerVerb = "buy" | "dismantle" | "upgrade" | "storage" | "qs" | "recipe" | "assign";
@@ -92,6 +93,8 @@ interface Ctx {
   now: () => number;
   busy(verb: DrawerVerb): boolean;
   send(actions: Action[], verb: DrawerVerb): Promise<Outcome>;
+  /** Q-10's hold owner: the store, so a held setting survives a tab switch or a close. */
+  owner: object;
 }
 
 export function Drawer({
@@ -122,6 +125,7 @@ export function Drawer({
     now: () => store.now(),
     busy: (verb) => pending.some((b) => b.label === drawerLabel(itemId, verb)),
     send: (actions, verb) => store.send(actions, drawerLabel(itemId, verb)),
+    owner: store,
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -175,41 +179,6 @@ export function Drawer({
       {tab === "assign" && sec !== null && <AssignSection ctx={ctx} sec={sec} />}
     </section>
   );
-}
-
-// ---- Q-10: optimistic settings, held in the component -------------------------------------
-
-/** Each key shows its latest requested value until THAT request's promise settles; then the
- * server's value (the new one after adoption, the old one after a rejection). */
-function usePendingMap<V>() {
-  const [held, setHeld] = useState<ReadonlyMap<string, { value: V; token: number }>>(
-    () => new Map(),
-  );
-  const seq = useRef(0);
-  return {
-    shown(key: string, server: V): V {
-      const h = held.get(key);
-      return h === undefined ? server : h.value;
-    },
-    run(entries: readonly (readonly [string, V])[], send: () => Promise<Outcome>): void {
-      const token = ++seq.current;
-      setHeld((m) => {
-        const next = new Map(m);
-        for (const [k, value] of entries) next.set(k, { value, token });
-        return next;
-      });
-      const release = () =>
-        setHeld((m) => {
-          const next = new Map(m);
-          for (const [k] of entries) if (next.get(k)?.token === token) next.delete(k);
-          return next;
-        });
-      send().then(release, (err: unknown) => {
-        console.error(err);
-        release();
-      });
-    },
-  };
 }
 
 // ---- shared pieces ---------------------------------------------------------------------------
@@ -270,7 +239,7 @@ function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<I
  * native `disabled`, so a focused button that turns busy keeps focus and Escape still reaches
  * the drawer.
  */
-function Guarded({
+export function Guarded({
   off,
   onPress,
   className = "btn",
@@ -539,9 +508,12 @@ function DismantleSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
 function RecipeSection({ ctx }: { ctx: Ctx }) {
   const s = ctx.snapshot;
   const { recipes, itemId } = ctx.model;
-  const pend = usePendingMap<RecipeId | null>();
   const server = recipes.find((c) => c.active)?.recipeId ?? null;
-  const shown = pend.shown("recipe", server);
+  const pend = usePendingSetting<RecipeId | null>(server, {
+    owner: ctx.owner,
+    key: drawerLabel(itemId, "recipe"),
+  });
+  const shown = pend.shown;
   const [focus, setFocus] = useState<RecipeId | null>(null);
   /** Only the words: whether a choice is selectable is the model's (`select`). */
   const reasonOf = (c: (typeof recipes)[number]): string | null =>
@@ -583,7 +555,7 @@ function RecipeSection({ ctx }: { ctx: Ctx }) {
                   // The active choice has no `select`; choosing it back while another is
                   // pending re-selects it.
                   const action = c.select ?? select(c.recipeId);
-                  pend.run([["recipe", c.recipeId]], () => ctx.send([action], "recipe"));
+                  pend.run(c.recipeId, () => ctx.send([action], "recipe"));
                 }}
               />
               <span>{c.name}</span>
@@ -659,8 +631,9 @@ function StorageSection({ ctx }: { ctx: Ctx }) {
 
 function AssignSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
   const s = ctx.snapshot;
-  const pend = usePendingMap<number>();
-  const shownOf = (recipeId: RecipeId, server: number) => pend.shown(recipeId, server);
+  const pend = usePendingMap<number>(ctx.owner);
+  const keyOf = (recipeId: RecipeId) => `${drawerLabel(ctx.model.itemId, "assign")}:${recipeId}`;
+  const shownOf = (recipeId: RecipeId, server: number) => pend.shown(keyOf(recipeId), server);
   const delta = sec.assign.reduce(
     (acc, r) => acc + shownOf(r.recipeId, r.assigned) - r.assigned,
     0,
@@ -674,7 +647,7 @@ function AssignSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
   const assign = (actions: Action[]) =>
     pend.run(
       actions.flatMap((a) =>
-        a.type === "ASSIGN_MACHINES" ? [[a.recipeId, a.count] as const] : [],
+        a.type === "ASSIGN_MACHINES" ? [[keyOf(a.recipeId), a.count] as const] : [],
       ),
       () => ctx.send(actions, "assign"),
     );

@@ -17,9 +17,11 @@ export interface ItemRowProps {
   onOpen?: (itemId: ItemId) => void;
   /** This item's drawer is open. */
   expanded?: boolean;
+  /** §13.1: tapping the split bar goes to this item's entry in the priority list. */
+  onSplit?: (itemId: ItemId) => void;
 }
 
-export function ItemRow({ row, snapshot, now, onOpen, expanded = false }: ItemRowProps) {
+export function ItemRow({ row, snapshot, now, onOpen, expanded = false, onSplit }: ItemRowProps) {
   const top = (
     <>
       <span className={styles.name}>{row.name}</span>
@@ -60,7 +62,21 @@ export function ItemRow({ row, snapshot, now, onOpen, expanded = false }: ItemRo
           )}
         </div>
       )}
-      {row.split === null ? <SatisfactionMeter row={row} /> : <SplitBar split={row.split} />}
+      {row.split === null ? (
+        <SatisfactionMeter row={row} />
+      ) : onSplit === undefined ? (
+        <SplitBar split={row.split} />
+      ) : (
+        <button
+          type="button"
+          className={styles.splitButton}
+          aria-label={`${row.name} split: show in the priority list`}
+          data-split
+          onClick={() => onSplit(row.itemId)}
+        >
+          <SplitBar split={row.split} />
+        </button>
+      )}
     </div>
   );
 }

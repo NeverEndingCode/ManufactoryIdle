@@ -674,4 +674,36 @@ describe("Drawer", () => {
     fireEvent.click(reserve);
     expect(store.send).toHaveBeenCalledTimes(2);
   });
+
+  it("18. a held recipe survives an action-tab switch and a drawer close (Q-10)", async () => {
+    const t8 = fakeStore(tier8);
+    let settle!: (o: Outcome) => void;
+    t8.send.mockImplementationOnce(() => new Promise<Outcome>((r) => (settle = r)));
+    mount(t8);
+    fireEvent.click(screen.getByRole("tab", { name: /Oil/ }));
+    let p = open("plastic");
+    pick(p, "Recipe");
+    fireEvent.click(within(p).getByRole("radio", { name: /^Residual Plastic/ }));
+    const residual = () =>
+      (
+        within(drawer("plastic")!).getByRole("radio", {
+          name: /^Residual Plastic/,
+        }) as HTMLInputElement
+      ).checked;
+    // Another action tab, then back: the radio still holds.
+    pick(p, "Storage");
+    pick(drawer("plastic")!, "Recipe");
+    expect(residual()).toBe(true);
+    // Close and reopen: still held.
+    fireEvent.keyDown(drawer("plastic")!, { key: "Escape" });
+    expect(drawer("plastic")).toBeNull();
+    p = open("plastic");
+    pick(p, "Recipe");
+    expect(residual()).toBe(true);
+    await act(async () => {
+      settle({ kind: "rejected", body: { failedAction: null, index: 0, reason: "no" } } as never);
+      await Promise.resolve();
+    });
+    expect(residual()).toBe(false);
+  });
 });
