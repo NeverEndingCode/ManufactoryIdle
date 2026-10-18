@@ -44,13 +44,14 @@ describe("devServer", () => {
 
   it("keeps a guest across restarts on the same pgliteDir", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mi-pglite-"));
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
     const first = await open({ pgliteDir: dir });
     const created = await first.app.inject({ method: "POST", url: "/api/guests" });
     const token = (created.json() as { guestToken: string }).guestToken;
     await first.close();
 
     const second = await open({ pgliteDir: dir });
+    // Registered last, so it runs after both PGlite instances have closed.
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
     const res = await second.app.inject({
       method: "GET",
       url: "/api/world",

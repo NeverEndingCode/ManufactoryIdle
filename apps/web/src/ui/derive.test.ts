@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import type { Solution } from "@manufactory/engine";
+import { withInstalled, type Solution } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import { fixtureState, freshState, loadSlice, snapshotOf, type Slice } from "./test-fixtures.js";
 import {
@@ -169,17 +169,37 @@ describe("bottleneckRow, the power kind (P-2)", () => {
     display: { ...fresh.display, solution: { ...fresh.display.solution, bottleneck } },
   });
 
-  it("a generator frames its primary output", () => {
+  it("a generator frames its first stock input, never __power__", () => {
     const b = bottleneckRow(
       withBottleneck({
         kind: "power",
         limitingTarget: "power",
-        generatorRecipeId: "collect_biomass",
+        generatorRecipeId: "burn_biomass",
         machinesToClear: 3,
       }),
     )!;
     expect([b.laneId, b.itemId]).toEqual(["power", "biomass"]);
-    expect(b.buy).toMatchObject({ count: 3, recipeId: "collect_biomass" });
+    expect(b.buy).toMatchObject({ count: 3, machineClass: "biomass_burner", recipeId: "burn_biomass" });
+    expect(b.text).toMatch(/^Power is limited by burn biomass\. 3 more \S.* clear it\.$/);
+    expect(JSON.stringify(b)).not.toContain("__power__");
+  });
+
+  it("a real engine power bottleneck frames a real row, marks its tab, and buys", () => {
+    let w = { ...freshState(slice), tier: 0 };
+    w = withInstalled(w, "iron", "miner", 1, 400);
+    w = withInstalled(w, "power", "biomass_burner", 1, 0); // no generator installed: the engine says "buy one"
+    w = { ...w, assignment: { ...w.assignment, mine_iron_ore: 400 } };
+    const snap = snapshotOf(slice, w);
+    expect(snap.display.solution.bottleneck).toMatchObject({
+      kind: "power",
+      generatorRecipeId: "burn_biomass",
+    });
+    const b = bottleneckRow(snap)!;
+    expect(b.itemId).toBe("biomass");
+    expect(b.laneId).toBe("power");
+    expect(b.buy).toMatchObject({ type: "BUY_MACHINE", recipeId: "burn_biomass" });
+    expect(laneRows(snap, "power").some((r) => r.itemId === b.itemId)).toBe(true);
+    expect(JSON.stringify(b)).not.toContain("__power__");
   });
 
   it("no generator: no row, a notice", () => {

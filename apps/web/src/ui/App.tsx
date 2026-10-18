@@ -22,6 +22,7 @@ export function App({ store }: { store: GameStore }) {
 
   /** WAI-ARIA tabs, automatic activation: the arrows, Home and End focus and select. */
   const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return; // browser history, OS shortcuts
     const i = lanes.findIndex((l) => l.id === laneId);
     if (i === -1 || lanes.length === 0) return;
     const to =

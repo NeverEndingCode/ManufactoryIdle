@@ -199,10 +199,11 @@ field existed lack it and are not backfilled.
 
 ## Package exports and the dev server
 
-`package.json` has an `exports` map, `./server` and `./testing`, and no `main`: a bare
+`package.json` has an `exports` map, `./server`, `./testing` and `./bundle`, and no `main`: a bare
 `import "@manufactory/api"` does not resolve, because `src/main.ts` starts a process when
 imported. `./testing` re-exports the pieces tests need (`pgliteDb`, `migrate`,
-`openContentStore`, `guestAuth`, `identityAuth`, `noSessions`, `Db`).
+`openContentStore`, `guestAuth`, `identityAuth`, `noSessions`, `Db`). `./bundle` is test-only,
+for the web client's jsdom tests, which cannot load the server.
 
     pnpm --filter @manufactory/api dev
 

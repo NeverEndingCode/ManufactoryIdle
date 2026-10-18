@@ -9,6 +9,7 @@ import {
   itemStateTag,
   liquidCap,
   machineCostRange,
+  POWER_ITEM,
   type Action,
   type Dec,
   type ItemId,
@@ -188,12 +189,19 @@ function recipeRow(
   if (!recipe) return null;
   const n = Math.max(1, machinesToClear);
   const more = `${n} more ${className(s, recipe.machineClass, n)} ${clears(n)}.`;
+  const generator = recipe.primaryOutput === POWER_ITEM;
+  const limiter = generator ? recipe.def.name : itemName(s, recipe.primaryOutput);
   const text = isPowerTarget(s, limitingTarget)
-    ? `Power is limited by ${itemName(s, recipe.primaryOutput).toLowerCase()}. ${more}`
+    ? `Power is limited by ${limiter.toLowerCase()}. ${more}`
     : `Limiting ${targetName(s, limitingTarget)}. ${more}`;
+  // A generator's primary output is the power pseudo-item, which has no row: frame its fuel.
+  const itemId =
+    generator
+      ? (recipe.inputPerSecond.keys().next().value ?? null)
+      : recipe.primaryOutput;
   return {
-    laneId: recipe.lane,
-    itemId: recipe.primaryOutput,
+    laneId: itemId === null ? null : (s.content.items.get(itemId)?.lane ?? null),
+    itemId,
     text,
     buy: machineBuy(s, recipeId, machinesToClear),
   };

@@ -71,4 +71,39 @@ describe("classify (W-11)", () => {
     expect(await classify(json(401, { error: "unauthorized" }))).toEqual({ kind: "unauthorized" });
     expect(await classify(json(404, { error: "no world" }))).toEqual({ kind: "no-world" });
   });
+
+  it("408 and 425 retry", async () => {
+    expect(await classify(json(408, {}))).toEqual({ kind: "retry" });
+    expect(await classify(json(425, {}))).toEqual({ kind: "retry" });
+  });
+
+  it("403 is a client bug", async () => {
+    expect(await classify(json(403, { error: "forbidden" }))).toEqual({
+      kind: "client-bug",
+      status: 403,
+      body: { error: "forbidden" },
+    });
+  });
+
+  it("1xx and 3xx retry", async () => {
+    // Response can't be built with a 1xx status.
+    const informational = { status: 103, headers: new Headers(), text: async () => "" } as Response;
+    expect(await classify(informational)).toEqual({ kind: "retry" });
+    expect(await classify(new Response(null, { status: 302, headers: { location: "/x" } }))).toEqual({
+      kind: "retry",
+    });
+  });
+
+  it("a 2xx that is not JSON retries", async () => {
+    expect(await classify(new Response("<html>ok</html>", { status: 200 }))).toEqual({
+      kind: "retry",
+    });
+  });
+
+  it("a 503 with a bad Retry-After counts as 1 s", async () => {
+    expect(await classify(json(503, {}, { "retry-after": "later" }))).toMatchObject({
+      kind: "paused",
+      retryAfterMs: 1_000,
+    });
+  });
 });

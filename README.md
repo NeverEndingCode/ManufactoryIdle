@@ -17,7 +17,13 @@ guards, cleanup job and admin content migrate (3c); see
 (including a real-Postgres job for the API), and local infra (Postgres + SuperTokens via
 Docker Compose) are in place, with the test suite, lint, typecheck and
 `pnpm content:check` all green. `pnpm --filter @manufactory/api dev` and
-`pnpm --filter @manufactory/web dev` run the game locally on PGlite with no Docker.
+`pnpm --filter @manufactory/web dev` run the game locally on PGlite with no Docker. Local play needs two terminals:
+
+    pnpm --filter @manufactory/api dev    # the API, on port 8787
+    pnpm --filter @manufactory/web dev    # the client; then open http://localhost:5173
+
+The Vite dev server proxies the API; if the API listens elsewhere (`PORT=9000`), start the
+client with `API_PORT=9000`.
 
 There is deliberately no test count here. It was wrong three times before it was removed —
 run `pnpm test` for the number, which is the only place it cannot go stale.

@@ -7,7 +7,7 @@ export type Outcome =
   | { kind: "rejected"; body: RejectionBody }
   /** 429 / 503: pause the outbox and polling (one shared bucket), then resend with the same key. */
   | { kind: "paused"; retryAfterMs: number; banner: "accounts-unavailable" | null }
-  /** A network error (fetch threw) or a 5xx: unknown whether it committed, resend with the same key. */
+  /** A network error (fetch threw), a 5xx, 408, 425, a 1xx or 3xx, or a non-JSON 2xx: unknown whether it committed, resend with the same key. */
   | { kind: "retry" }
   /** 400, or any other unexpected 4xx: drop, log, re-sync, a generic toast. */
   | { kind: "client-bug"; status: number; body: unknown }
@@ -64,7 +64,11 @@ export async function classify(res: Response | null): Promise<Outcome> {
       return { kind: "unauthorized" };
     case 404:
       return { kind: "no-world" };
+    // Timeouts and "too early": transient, the same request may succeed.
+    case 408:
+    case 425:
+      return { kind: "retry" };
   }
-  if (status >= 500 || status < 200) return { kind: "retry" };
+  if (status >= 500 || status < 200 || (status >= 300 && status < 400)) return { kind: "retry" };
   return { kind: "client-bug", status, body: await bodyOf(res) };
 }

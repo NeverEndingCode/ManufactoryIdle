@@ -423,6 +423,7 @@ component.
   real API from its first render", in tests.
 - The API needs an `exports` map (`./server`, `./testing`: `pgliteDb`, `migrate`,
   `openContentStore`, `guestAuth`, `identityAuth`), because importing `main.ts` starts a server.
+  A third, `./bundle`, is test-only, for the web client's jsdom tests.
   `@manufactory/api` becomes a `devDependency` of `apps/web`.
 
 *Cost if wrong:* PGlite adds about a second per sync test file; that's fine at this size.

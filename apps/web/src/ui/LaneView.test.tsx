@@ -139,6 +139,16 @@ describe("LaneView", () => {
     expectOn(/Iron/);
   });
 
+  it("2c. lane tabs leave modified arrows to the browser", async () => {
+    const user = userEvent.setup();
+    mount(fakeStore(tier8));
+    await user.tab();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    expect(screen.getByRole("tab", { name: /Iron/ }).getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("{Control>}{ArrowRight}{/Control}");
+    expect(screen.getByRole("tab", { name: /Iron/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("3. meters carry aria-valuenow per snapshot; the 4 Hz tick moves only the text", () => {
     const store = fakeStore(fresh);
     const { container } = mount(store);
