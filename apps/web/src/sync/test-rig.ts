@@ -169,8 +169,10 @@ export interface TestRig {
   clock: FakeClientClock;
   serverNow(): number;
   fetch: RigFetch;
-  /** clock.advance(ms); the server's clock follows the client's, timer by timer. */
+  /** clock.advance(ms); the server's clock follows the client's, timer by timer. Rejects once
+   * close() has been called, so a test body that outlives its test (a timeout) stops there. */
   advance(ms: number): Promise<void>;
+  /** Idempotent. */
   close(): Promise<void>;
 }
 
@@ -193,6 +195,7 @@ export async function makeRig(
   });
   await app.ready();
   const fetch = injectFetch(app);
+  let closed = false;
   return {
     app,
     db,
@@ -200,6 +203,7 @@ export async function makeRig(
     serverNow,
     fetch,
     async advance(ms) {
+      if (closed) throw new Error("rig.advance() after rig.close(): this test has already ended");
       // settleWith is usually some idle(), which would wait forever on a held response.
       if (clock.settleWith && fetch.activeHolds > 0) {
         throw new Error(
@@ -209,6 +213,8 @@ export async function makeRig(
       await clock.advance(ms);
     },
     async close() {
+      if (closed) return;
+      closed = true;
       await app.close();
       await db.close();
     },

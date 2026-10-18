@@ -34,7 +34,10 @@ interface Logged {
   body?: ActionsRequest;
 }
 
-let rig: TestRig;
+/** The current test's rig, for the helpers and afterEach. Test bodies use the rig that
+ * setup() or freshRig() returned, never this: a body that outlives its test (a timeout) would
+ * otherwise drive the next test's clock and database. */
+let live: TestRig;
 let stores: GameStore[] = [];
 let log: Logged[] = [];
 /** When set, the next GET /api/world answers 429 with this Retry-After, without the server. */
@@ -61,13 +64,13 @@ function resetKnobs() {
 afterEach(async () => {
   for (const s of stores) s.stop();
   stores = [];
-  await rig.close();
+  await live.close();
 });
 
 function storeFor(tokens: TokenStorage): GameStore {
   const fetch: FetchLike = async (url, init) => {
     const method = (init?.method ?? "GET").toUpperCase();
-    const entry: Logged = { method, url, at: rig.clock.now() };
+    const entry: Logged = { method, url, at: live.clock.now() };
     if (typeof init?.body === "string") entry.body = JSON.parse(init.body) as ActionsRequest;
     log.push(entry);
     if (method === "GET" && url === "/api/world" && fakeGet429 !== null) {
@@ -81,17 +84,17 @@ function storeFor(tokens: TokenStorage): GameStore {
     if (url.startsWith("/api/content/")) {
       if (failContent) return new Response('{"error":"unknown content"}', { status: 404 });
       if (repin !== null && url === `/api/content/${repin.to}`) {
-        return rig.fetch(`/api/content/${repin.from}`, init);
+        return live.fetch(`/api/content/${repin.from}`, init);
       }
     }
     if (method === "GET" && url === "/api/world") {
       if (dropGets > 0) {
         dropGets -= 1;
-        await rig.fetch(url, init);
+        await live.fetch(url, init);
         throw new TypeError("network");
       }
       if (corruptGets > 0 || repin !== null) {
-        const res = await rig.fetch(url, init);
+        const res = await live.fetch(url, init);
         const body = (await res.json()) as Record<string, unknown>;
         if (corruptGets > 0) {
           corruptGets -= 1;
@@ -101,35 +104,71 @@ function storeFor(tokens: TokenStorage): GameStore {
         return new Response(JSON.stringify(body), { status: res.status });
       }
     }
-    return rig.fetch(url, init);
+    return live.fetch(url, init);
   };
-  const store = new GameStore({ fetch, clock: rig.clock, tokens });
+  const store = new GameStore({ fetch, clock: live.clock, tokens });
   stores.push(store);
-  rig.clock.settleWith = async () => {
+  live.clock.settleWith = async () => {
     for (const s of stores) await s.idle();
   };
   return store;
 }
 
-async function setup(opts: Parameters<typeof makeRig>[0] = {}) {
-  rig = await makeRig(opts);
+/** A new rig, with the knobs reset, that afterEach closes. */
+async function freshRig(opts: Parameters<typeof makeRig>[0] = {}): Promise<TestRig> {
+  live = await makeRig(opts);
   resetKnobs();
+  return live;
+}
+
+async function setup(opts: Parameters<typeof makeRig>[0] = {}) {
+  const rig = await freshRig(opts);
   const tokens = memoryTokenStorage();
   const store = storeFor(tokens);
   await store.start();
   await store.idle();
-  return { store, tokens };
+  return { store, tokens, rig };
 }
 
 const gets = () => log.filter((c) => c.method === "GET" && c.url === "/api/world");
 const posts = () => log.filter((c) => c.method === "POST" && c.url === "/api/actions");
 const version = (s: GameStore) => s.getView().snapshot!.stateVersion;
 
+/** The reinforced-full fixture (tier 8, on the EPSILON cycle) into the guest's row, rebased to
+ * the server's clock, then one GET to adopt it. */
+async function loadEpsilonFixture(rig: TestRig, store: GameStore) {
+  const state = deserializeWorld(
+    readFileSync(new URL("slice-tier-8-reinforced-full.world.json", FIXTURES), "utf8"),
+  );
+  const delta = rig.serverNow() - state.lastResolvedAt;
+  const rebased = {
+    ...state,
+    lastResolvedAt: state.lastResolvedAt + delta,
+    timers: state.timers.map((t) => ({ ...t, fireAt: t.fireAt + delta })),
+  };
+  await rig.db.query(
+    "update player_worlds set state = $1::jsonb, last_resolved_at = to_timestamp($2 / 1000.0)",
+    [serializeWorld(rebased), rebased.lastResolvedAt],
+  );
+  await rig.advance(MIN_REPOLL_MS);
+  store.onFocus();
+  await store.idle();
+  expect(store.getView().snapshot!.state.tier).toBe(8);
+}
+
+/** The gaps between the GETs from index `from` on. */
+function gapsSince(from: number): number[] {
+  const at = gets()
+    .slice(from)
+    .map((g) => g.at);
+  return at.slice(1).map((t, i) => t - at[i]!);
+}
+
 async function dbRow() {
-  const [w] = await rig.db.query<{ state_version: string }>(
+  const [w] = await live.db.query<{ state_version: string }>(
     "select state_version::text from player_worlds",
   );
-  const [l] = await rig.db.query<{ n: string }>("select count(*)::text as n from action_log");
+  const [l] = await live.db.query<{ n: string }>("select count(*)::text as n from action_log");
   return { stateVersion: Number(w!.state_version), logRows: Number(l!.n) };
 }
 
@@ -160,7 +199,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("2a. refetches at the boundary + 250 ms, not before", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     const s = store.getView().snapshot!;
     expect(s.schedule.nextBoundaryAtMs! - s.schedule.atMs).toBe(4_000_000);
     await rig.advance(3_999_000);
@@ -173,7 +212,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("2b. a null boundary costs zero requests, apart from the plateau guard", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     store.setVisible(false);
     await rig.advance(4 * HOUR);
     store.setVisible(true);
@@ -193,7 +232,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("3. a GET that lands after a POST is not adopted", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(10 * 60_000);
     const release = rig.fetch.hold("GET", "/api/world");
     store.onFocus();
@@ -206,36 +245,13 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
     expect(version(store)).toBe(1);
   });
 
-  it("4. backs off on the EPSILON cycle, 5 s doubling to 40 s, and an action resets it", async () => {
-    const { store } = await setup();
-    /** The reinforced-full fixture into the guest's row, rebased to the server's clock. */
-    const loadFixture = async () => {
-      const state = deserializeWorld(
-        readFileSync(new URL("slice-tier-8-reinforced-full.world.json", FIXTURES), "utf8"),
-      );
-      const delta = rig.serverNow() - state.lastResolvedAt;
-      const rebased = {
-        ...state,
-        lastResolvedAt: state.lastResolvedAt + delta,
-        timers: state.timers.map((t) => ({ ...t, fireAt: t.fireAt + delta })),
-      };
-      await rig.db.query(
-        "update player_worlds set state = $1::jsonb, last_resolved_at = to_timestamp($2 / 1000.0)",
-        [serializeWorld(rebased), rebased.lastResolvedAt],
-      );
-      await rig.advance(MIN_REPOLL_MS);
-      store.onFocus();
-      await store.idle();
-      expect(store.getView().snapshot!.state.tier).toBe(8);
-    };
-    const gapsSince = (from: number) => {
-      const at = gets()
-        .slice(from)
-        .map((g) => g.at);
-      return at.slice(1).map((t, i) => t - at[i]!);
-    };
-
-    await loadFixture();
+  // Two tests, not one, each with a 60 s budget: every GET here re-resolves the tier-8
+  // fixture through the EPSILON cycle from its persisted point (real engine work, about 0.6 s
+  // on a fast machine and four times that on a loaded CI runner). One test making all twelve
+  // GETs took 32 s in CI and timed out at 30 s.
+  it("4a. backs off on the EPSILON cycle, 5 s doubling to 40 s", async () => {
+    const { store, rig } = await setup();
+    await loadEpsilonFixture(rig, store);
     const first = gets().length - 1;
     for (let i = 0; i < 1_800; i++) await rig.advance(100);
     await store.idle();
@@ -246,11 +262,14 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
     // 40 s. The cycle ends before a sixth short snapshot, so the 60 s cap (pinned in
     // refetch.test.ts) isn't reached here.
     expect(gaps.slice(1, 6)).toEqual([5_000, 5_000, 10_000, 20_000, 40_000]);
+  }, 60_000);
 
-    // A fresh cycle: build the streak until a 10 s gap (the next would be 20 s), then act.
-    await loadFixture();
-    const second = gets().length - 1;
-    while (!gapsSince(second).includes(10_000)) await rig.advance(100);
+  it("4b. an action resets the EPSILON-cycle backoff to 5 s", async () => {
+    const { store, rig } = await setup();
+    // Build the streak until a 10 s gap (the next would be 20 s), then act.
+    await loadEpsilonFixture(rig, store);
+    const first = gets().length - 1;
+    while (!gapsSince(first).includes(10_000)) await rig.advance(100);
     const sentAt = rig.clock.now();
     const entries = store.getView().snapshot!.state.priority.map((e) => e.id);
     expect((await store.send([{ type: "REORDER_PRIORITY", entries }], "reorder")).kind).toBe(
@@ -261,10 +280,10 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
     await store.idle();
     expect(gets().length).toBe(before + 1);
     expect(gets()[before]!.at - sentAt).toBe(5_000);
-  });
+  }, 60_000);
 
   it("5. a lost response is retried with the same key and replayed", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(60_000);
     rig.fetch.dropNextResponse = true;
     const sent = store.send([BUY_CONSTRUCTOR], "buy");
@@ -299,7 +318,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("6. a 429 pauses the outbox and polling, then the same key succeeds", async () => {
-    const { store, tokens } = await setup({
+    const { store, tokens, rig } = await setup({
       limits: { player: { capacity: 2, refillPerSec: 0.5 } },
     });
     await rig.advance(10 * 60_000);
@@ -325,7 +344,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("6b. a Retry-After: 0 on a GET still waits 1 s", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(MIN_REPOLL_MS);
     fakeGet429 = "0";
     store.onFocus();
@@ -341,7 +360,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("7. a 409 drops its batch, shows the reason, re-syncs once; the next batch still sends", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(60_000);
     const tooMany = store.send([BUY_TOO_MANY], "buy 1000");
     const one = store.send([BUY_CONSTRUCTOR], "buy 1");
@@ -363,7 +382,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("8. a 401 on a guest token: guest-expired, polling stops, newFactory recovers", async () => {
-    const { store, tokens } = await setup();
+    const { store, tokens, rig } = await setup();
     const oldToken = tokens.get();
     await rig.db.query("delete from idempotency");
     await rig.db.query("delete from players"); // worlds, logs and sessions cascade
@@ -386,7 +405,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("9. past the plateau: one GET, a notice, no more polling; an action resumes", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     const persisted = store.getView().snapshot!.persistedAtMs!;
     store.setVisible(false);
     await rig.advance(persisted + OFFLINE_CAP_MS + 1_000 - rig.serverNow());
@@ -412,7 +431,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("10. a hidden tab crosses a boundary without a GET; visible again, one GET", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     store.setVisible(false);
     await rig.advance(4_001_000);
     await store.idle();
@@ -426,7 +445,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("11. a failed boundary GET backs off 1 s, then 2 s; it never re-fires from the past boundary", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(3_999_000);
     dropGets = 2;
     await rig.advance(10_000);
@@ -438,7 +457,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("12. stop() with requests in flight leaves no timers; start() resumes and send() works", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(60_000);
 
     // A GET in flight at stop(): its response lands and is ignored.
@@ -473,8 +492,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("13. two start() calls make one guest", async () => {
-    rig = await makeRig();
-    resetKnobs();
+    await freshRig();
     const store = storeFor(memoryTokenStorage());
     await Promise.all([store.start(), store.start()]);
     await store.idle();
@@ -483,8 +501,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("14. a content load that keeps failing backs off 1, 2, 4 s and shows offline", async () => {
-    rig = await makeRig();
-    resetKnobs();
+    const rig = await freshRig();
     failContent = true;
     const store = storeFor(memoryTokenStorage());
     await store.start();
@@ -504,7 +521,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("15. a successful POST cancels a pending GET retry", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(60_000);
     dropGets = 1;
     store.onFocus();
@@ -518,8 +535,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("16. storage that fails mid-session raises the ephemeral-token banner", async () => {
-    rig = await makeRig();
-    resetKnobs();
+    const rig = await freshRig();
     let writes = 0;
     const map = new Map<string, string>();
     const flaky = {
@@ -549,7 +565,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("17. guest-expired drops the queued batches: they never reach a new world", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.db.query("delete from idempotency");
     await rig.db.query("delete from players");
     const tap: Action = { type: "TAP", count: 1, clientElapsedMs: 1_000 };
@@ -565,7 +581,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("18. a body makeSnapshot can't read defers a retry", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(MIN_REPOLL_MS);
     corruptGets = 1;
     store.onFocus();
@@ -579,7 +595,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("19. a checksum change mid-session loads the new bundle before adopting (W-5)", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     const before = store.getView().snapshot!;
     const to = before.contentChecksum.replace(/^./, (c) => (c === "f" ? "e" : "f"));
     repin = { from: before.contentChecksum, to };
@@ -594,7 +610,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
   });
 
   it("20. rig.advance fails fast while a hold is active, instead of hanging", async () => {
-    const { store } = await setup();
+    const { store, rig } = await setup();
     await rig.advance(MIN_REPOLL_MS);
     const release = rig.fetch.hold("GET", "/api/world");
     store.onFocus();
@@ -602,5 +618,11 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
     release();
     await store.idle();
     expect(gets()).toHaveLength(1);
+  });
+
+  it("21. a closed rig refuses to advance, so a timed-out test can't drive the next test's", async () => {
+    const { rig } = await setup();
+    await rig.close();
+    await expect(rig.advance(1)).rejects.toThrow(/after rig.close/);
   });
 });
