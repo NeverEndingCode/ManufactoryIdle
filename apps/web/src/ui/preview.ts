@@ -4,7 +4,6 @@
 import {
   applyBatch,
   D,
-  DECIMAL_ZERO,
   format,
   scheduleDetail,
   type Action,
@@ -19,7 +18,7 @@ import {
 } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import { rateText } from "./derive.js";
-import { creditFor, isSpend, quote } from "./quote.js";
+import { creditedState, creditFor, isSpend, quote } from "./quote.js";
 
 export interface RateDelta {
   itemId: ItemId;
@@ -30,12 +29,16 @@ export interface RateDelta {
 export type Preview =
   | {
       ok: true;
-      credit: Map<ItemId, Dec>;
       effects: Effect[];
+      /** The shortfall Q-1 credits, as creditFor reports it. */
+      credit: Map<ItemId, Dec>;
       /** applyBatch's state: what the server would hold right after the batch. */
       state: WorldState;
-      /** scheduleDetail(state).solution. */
+      /** scheduleDetail(state).solution: the solve of `detailState`, not of `state`. */
       solution: Solution;
+      /** scheduleDetail's state: `state` advanced past any internal unpins, which is the
+       * state `solution` and every "after" rate come from. */
+      detailState: WorldState;
       /** |after − before| > 1e-9 · max(1, |before|), largest relative change first. */
       deltas: RateDelta[];
       power: { before: PowerReport; after: PowerReport };
@@ -49,19 +52,6 @@ const MAX_RATE_LINES = 4;
 
 const memo = new WeakMap<Snapshot, Map<string, Preview>>();
 
-function own<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
-  return Object.hasOwn(record, key) ? record[key] : undefined;
-}
-
-function withCredit(state: WorldState, credit: ReadonlyMap<ItemId, Dec>): WorldState {
-  if (credit.size === 0) return state;
-  const bound = new Map<ItemId, Dec>(Object.entries(state.bound));
-  for (const [itemId, amount] of credit) {
-    bound.set(itemId, (own(state.bound, itemId) ?? DECIMAL_ZERO).plus(amount));
-  }
-  return { ...state, bound: Object.fromEntries(bound) };
-}
-
 function relativeChange(d: RateDelta): number {
   return Math.abs(d.after - d.before) / Math.max(Math.abs(d.before), RATE_TOLERANCE);
 }
@@ -69,12 +59,15 @@ function relativeChange(d: RateDelta): number {
 function compute(s: Snapshot, actions: readonly Action[]): Preview {
   const base = s.display.state;
   const spend = actions.find(isSpend);
-  const credit = spend === undefined ? new Map<ItemId, Dec>() : creditFor(base, quote(s.content, base, spend));
-  const r = applyBatch(withCredit(base, credit), s.content, actions, base.seed);
+  const q = spend === undefined ? null : quote(s.content, base, spend);
+  const credit = q === null ? new Map<ItemId, Dec>() : creditFor(base, q);
+  const credited = q === null || credit.size === 0 ? base : creditedState(base, q);
+  const r = applyBatch(credited, s.content, actions, base.seed);
   if (r.rejected) return { ok: false, reason: r.reason };
 
   const before = s.display.solution;
-  const after = scheduleDetail(r.state, s.content).solution;
+  const detail = scheduleDetail(r.state, s.content);
+  const after = detail.solution;
   const deltas: RateDelta[] = [];
   for (const itemId of s.content.stockItemIds) {
     const b = before.itemRates.get(itemId)?.net ?? 0;
@@ -91,14 +84,15 @@ function compute(s: Snapshot, actions: readonly Action[]): Preview {
     effects: r.effects,
     state: r.state,
     solution: after,
+    detailState: detail.state,
     deltas,
     power: { before: before.power, after: after.power },
     bottleneck: { before: before.bottleneck, after: after.bottleneck },
   };
 }
 
-/** base = s.display.state; credit = creditFor(base, quote(base, spend)); applyBatch with the
- * credit in bound; scheduleDetail. At most one SpendAction in `actions` (throws otherwise).
+/** base = s.display.state; credit = creditFor(base, quote(base, spend)); applyBatch on
+ * creditedState (each short item drained exactly); scheduleDetail. At most one SpendAction in `actions` (throws otherwise).
  * Memoised per (snapshot, JSON.stringify(actions)). */
 export function preview(s: Snapshot, actions: readonly Action[]): Preview {
   if (actions.filter(isSpend).length > 1) {

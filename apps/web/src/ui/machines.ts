@@ -1,5 +1,6 @@
 // The item drawer's model (Q-4, Q-6): pure, once per (snapshot, itemId). Every D.1 machine
 // verb for the lane-class of the item's active recipe, the recipe choice, and storage and QS.
+// Everything reads s.display.state, the state s.display.solution was solved from.
 import {
   assignedTotal,
   bestUnlockedMark,
@@ -139,15 +140,15 @@ export function ladderProgress(
   machineClass: MachineClassId,
 ): LadderProgress | null {
   const cls = s.content.machineClasses.get(machineClass);
-  const best = bestUnlockedMark(s.content, machineClass, s.state.tier);
+  const best = bestUnlockedMark(s.content, machineClass, s.display.state.tier);
   const bestDef = best === null ? undefined : getMark(s.content, machineClass, best);
   if (!cls || !bestDef) return null;
   const { interval, step } = cls.ladder;
-  const input = ladderInput(s.content, s.state, lane, machineClass);
+  const input = ladderInput(s.content, s.display.state, lane, machineClass);
   const steps = Math.floor(input / interval);
   const nextAt = (steps + 1) * interval;
   const more = Math.ceil((nextAt - input) / bestDef.rateMultiplier);
-  const multiplier = ladderMultiplier(s.content, s.state, lane, machineClass);
+  const multiplier = ladderMultiplier(s.content, s.display.state, lane, machineClass);
   const nextMultiplier = softcap(powIntNumber(step, steps + 1), s.content.bundle.softcaps.ladder);
   const text = `${more} more ${classLabel(s, machineClass, more)} → ×${format(D(nextMultiplier / multiplier), "hybrid")}`;
   return { input, nextAt, more, multiplier, nextMultiplier, text };
@@ -159,15 +160,15 @@ function markRows(s: Snapshot, lane: LaneId, machineClass: MachineClassId): Mark
   return [...cls.marks]
     .sort((a, b) => a.mark - b.mark)
     .map((m) => {
-      const owned = installedAt(s.state, lane, machineClass, m.mark);
+      const owned = installedAt(s.display.state, lane, machineClass, m.mark);
       const next = getMark(s.content, machineClass, m.mark + 1);
-      const canUpgrade = next !== undefined && next.unlockTier <= s.state.tier && owned > 0;
+      const canUpgrade = next !== undefined && next.unlockTier <= s.display.state.tier && owned > 0;
       const to = canUpgrade ? Math.floor((owned * m.rateMultiplier) / next.rateMultiplier) : 0;
       return {
         mark: m.mark,
         name: m.name,
         owned,
-        unlocked: m.unlockTier <= s.state.tier,
+        unlocked: m.unlockTier <= s.display.state.tier,
         upgrade: canUpgrade ? { type: "UPGRADE_MARK", lane, machineClass, fromMark: m.mark } : null,
         consolidation: canUpgrade ? { from: owned, to, toMark: next.mark } : null,
         upgradeBlocked:
@@ -208,17 +209,17 @@ function machineSection(s: Snapshot, itemId: ItemId): MachineSection | null {
   const recipe = recipeId === undefined ? undefined : s.content.recipes.get(recipeId);
   if (recipeId === undefined || !recipe) return null;
   const { lane, machineClass } = recipe;
-  const pool = installedMachines(s.state, lane, machineClass);
+  const pool = installedMachines(s.display.state, lane, machineClass);
   return {
     lane,
     machineClass,
     className: s.content.machineClasses.get(machineClass)?.name ?? machineClass,
-    recipeId: isLiveRecipe(s.content, recipeId, s.state.tier, s.state.activeRecipe)
+    recipeId: isLiveRecipe(s.content, recipeId, s.display.state.tier, s.display.state.activeRecipe)
       ? recipeId
       : null,
     pool,
-    unassigned: pool - assignedTotal(s.content, s.state, lane, machineClass),
-    bestMark: bestUnlockedMark(s.content, machineClass, s.state.tier),
+    unassigned: pool - assignedTotal(s.content, s.display.state, lane, machineClass),
+    bestMark: bestUnlockedMark(s.content, machineClass, s.display.state.tier),
     marks: markRows(s, lane, machineClass),
     ladder: ladderProgress(s, lane, machineClass),
     assign: assignRows(s, lane, machineClass),
@@ -234,7 +235,7 @@ function recipeChoices(s: Snapshot, itemId: ItemId): RecipeChoice[] {
   return ids.map((recipeId) => {
     const r = s.content.recipes.get(recipeId)!;
     const isActive = recipeId === active;
-    const selectable = !isActive && !r.inCycle && r.def.unlockTier <= s.state.tier;
+    const selectable = !isActive && !r.inCycle && r.def.unlockTier <= s.display.state.tier;
     return {
       recipeId,
       name: r.def.name,
@@ -263,7 +264,7 @@ function levelSection<A>(
 }
 
 function storageSection(s: Snapshot, itemId: ItemId): LevelSection<BuyStorage> {
-  const st = s.state;
+  const st = s.display.state;
   const at = (level: number): WorldState => ({
     ...st,
     storageLevel: Object.fromEntries([...Object.entries(st.storageLevel), [itemId, level]]),
@@ -277,7 +278,7 @@ function storageSection(s: Snapshot, itemId: ItemId): LevelSection<BuyStorage> {
 }
 
 function qsSection(s: Snapshot, itemId: ItemId, lane: LaneId): LevelSection<BuyQs> {
-  const st = s.state;
+  const st = s.display.state;
   const at = (level: number): WorldState => ({
     ...st,
     qsLevel: Object.fromEntries([...Object.entries(st.qsLevel), [lane, level]]),

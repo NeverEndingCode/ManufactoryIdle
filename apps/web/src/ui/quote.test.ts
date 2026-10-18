@@ -86,6 +86,7 @@ describe("quote (Q-3)", () => {
       { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 9, count: 1 },
       { type: "BUY_MACHINE", lane: "iron", machineClass: "nope", mark: 1, count: 1 },
       { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 0 },
+      { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1, recipeId: "make_wire" },
       { type: "DISMANTLE", lane: "iron", machineClass: "constructor", mark: 1, count: 999 },
       { type: "UPGRADE_MARK", lane: "iron", machineClass: "constructor", fromMark: 3 },
       { type: "BUY_STORAGE", itemId: "iron_plate", levels: 99 },
@@ -93,6 +94,14 @@ describe("quote (Q-3)", () => {
       const q = quote(slice.content, base, a);
       expect([q.cost.size, q.refund.size]).toEqual([0, 0]);
     }
+  });
+
+  it("a locked mark quotes empty maps, as the reducer rejects it", () => {
+    const locked = { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 3, count: 1 } as const;
+    const base = fresh.display.state;
+    expect(apply(base, slice.content, locked, base.seed)).toMatchObject({ rejected: true });
+    const q = quote(slice.content, base, locked);
+    expect([q.cost.size, q.refund.size]).toEqual([0, 0]);
   });
 
   it("creditFor is empty when the stock covers the cost", () => {

@@ -2,11 +2,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   apply,
   D,
+  itemStateTag,
   liquid,
   scheduleDetail,
   solve,
   type Action,
   type Dec,
+  withInstalled,
   type WorldState,
 } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
@@ -64,6 +66,9 @@ describe("preview (W-13, Q-1)", () => {
     const left = liquid(p.state, "iron_ingot").plus(dec(p.state.bound, "iron_ingot"));
     expect(left.lte(21.31 * 1e-9)).toBe(true);
     expect(dec(p.state.bound, "iron_ingot").eq(0)).toBe(true);
+    // Exactly drained, as the real buy at the moment it becomes affordable: EMPTY, not FLOWING.
+    expect(liquid(p.state, "iron_ingot").eq(0)).toBe(true);
+    expect(itemStateTag(slice.content, p.state, "iron_ingot")).toBe("EMPTY");
     for (const id of slice.content.stockItemIds) {
       if (id === "iron_ingot") continue;
       for (const field of ["stored", "quantum", "bound"] as const) {
@@ -77,6 +82,33 @@ describe("preview (W-13, Q-1)", () => {
     expect(byItem.get("iron_ingot")!.after).toBeCloseTo(0, 6);
     expect(p.power.before.demandMw).toBeCloseTo(22, 6);
     expect(p.power.after.demandMw).toBeCloseTo(26, 6);
+  });
+
+  it("3. two Constructors: the after rates are an exactly drained state's, ingot-clamped", () => {
+    // Three constructors want 1.5 ingot/s against the smelters' 1/s.
+    const two = { ...P3_BUY, count: 2 };
+    const p = preview(fresh, [two]);
+    if (!p.ok) throw new Error(p.reason);
+    expect(liquid(p.state, "iron_ingot").eq(0)).toBe(true);
+    expect(itemStateTag(slice.content, p.state, "iron_ingot")).toBe("EMPTY");
+
+    const base = fresh.display.state;
+    let ref = withInstalled(base, "iron", "constructor", 1, 3);
+    ref = {
+      ...ref,
+      assignment: { ...ref.assignment, make_iron_plate: 3 },
+      stored: { ...ref.stored, iron_ingot: D(0) },
+      quantum: { ...ref.quantum, iron_ingot: D(0) },
+      bound: { ...ref.bound, iron_ingot: D(0) },
+    };
+    const want = scheduleDetail(ref, slice.content).solution;
+    for (const id of ["iron_ingot", "iron_plate"]) {
+      expect(p.solution.itemRates.get(id)?.net ?? 0).toBe(want.itemRates.get(id)?.net ?? 0);
+    }
+    expect(p.solution.itemRates.get("iron_ingot")!.net).toBeCloseTo(0, 9);
+    // Unclamped, three constructors would make 1/s; the ingot holds them to 2/3 of that.
+    expect(p.solution.itemRates.get("iron_plate")!.net).toBeLessThan(0.9);
+    expect(p.detailState.lastResolvedAt).toBeGreaterThanOrEqual(p.state.lastResolvedAt);
   });
 
   it("deltas are ordered by relative change, largest first", () => {

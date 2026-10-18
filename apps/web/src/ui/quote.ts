@@ -5,11 +5,13 @@ import {
   DECIMAL_ZERO,
   getMark,
   installedAt,
+  isLiveRecipe,
   levelCostRange,
   liquid,
   liquidCap,
   machineCostRange,
   MAX_ACTION_COUNT,
+  SPEND_RESIDUAL_TOLERANCE,
   type Action,
   type Dec,
   type IndexedContent,
@@ -71,6 +73,18 @@ export function quote(content: IndexedContent, state: WorldState, action: Action
       const { lane, machineClass, mark, count } = action;
       const def = getMark(content, machineClass, mark);
       if (!def || !content.lanes.has(lane) || !validCount(count)) return none();
+      if (def.unlockTier > state.tier) return none();
+      if (action.recipeId !== undefined) {
+        const recipe = content.recipes.get(action.recipeId);
+        if (
+          !recipe ||
+          recipe.lane !== lane ||
+          recipe.machineClass !== machineClass ||
+          !isLiveRecipe(content, action.recipeId, state.tier, state.activeRecipe)
+        ) {
+          return none();
+        }
+      }
       const owned = installedAt(state, lane, machineClass, mark);
       return { cost: machineCostRange(content, machineClass, mark, owned, count), refund: new Map() };
     }
@@ -119,25 +133,67 @@ export function quote(content: IndexedContent, state: WorldState, action: Action
 }
 
 /** Q-1: per cost item, max(0, cost − liquid − bound − refund). Only positive credits appear.
- * Decimal keeps ~15 digits, so `liquid + (bound + credit)` can land a few ULPs under the cost
- * and fail the reducer's canAffordBuild: the credit is then raised by the smallest relative
- * step, doubling, that passes. Measured on a fresh world's first Constructor: 4e-15 × cost. */
+ * This is the shortfall the UI reports; creditedState is what the preview applies. */
 export function creditFor(state: WorldState, q: Quote): Map<ItemId, Dec> {
   const out = new Map<ItemId, Dec>();
   for (const [itemId, cost] of q.cost) {
     const bound = own(state.bound, itemId) ?? DECIMAL_ZERO;
     const refund = q.refund.get(itemId) ?? DECIMAL_ZERO;
     const short = cost.minus(liquid(state, itemId).plus(bound).plus(refund));
-    if (short.lte(DECIMAL_ZERO)) continue;
+    if (short.gt(DECIMAL_ZERO)) out.set(itemId, short);
+  }
+  return out;
+}
+
+function setField(
+  state: WorldState,
+  field: "stored" | "quantum" | "bound",
+  itemId: ItemId,
+  value: Dec,
+): WorldState {
+  return {
+    ...state,
+    [field]: Object.fromEntries([...Object.entries(state[field]), [itemId, value]]),
+  };
+}
+
+/**
+ * The state the preview applies (Q-1): the purchase at the moment it becomes affordable,
+ * which drains each short item to exactly zero. A short item with no refund in that item
+ * gets stored = quantum = 0 and bound = cost, so the reducer's gate sums to exactly the
+ * cost and its spend leaves exactly 0 (EMPTY, as the real buy would). Adding the shortfall
+ * to bound instead rounds: Decimal keeps ~15 digits, so liquid + (bound + short) can land a
+ * few ULPs under the cost, and any bump past it leaves a residue that reads FLOWING.
+ *
+ * A short item that the action also refunds (UPGRADE_MARK) can't be zeroed, because the
+ * refund lands first. It falls back to adding the shortfall to bound, raised by the smallest
+ * doubling relative step that covers the cost. It throws if no step within
+ * SPEND_RESIDUAL_TOLERANCE does.
+ */
+export function creditedState(state: WorldState, q: Quote): WorldState {
+  let next = state;
+  for (const [itemId, short] of creditFor(state, q)) {
+    const cost = q.cost.get(itemId)!;
+    const refund = q.refund.get(itemId) ?? DECIMAL_ZERO;
+    if (refund.lte(DECIMAL_ZERO)) {
+      next = setField(next, "stored", itemId, DECIMAL_ZERO);
+      next = setField(next, "quantum", itemId, DECIMAL_ZERO);
+      next = setField(next, "bound", itemId, cost);
+      continue;
+    }
+    const bound = own(state.bound, itemId) ?? DECIMAL_ZERO;
     const covers = (credit: Dec) =>
       liquid(state, itemId).plus(bound.plus(credit)).plus(refund).gte(cost);
     let credit = short;
-    for (let step = 1e-15; !covers(credit) && step < 1e-9; step *= 2) {
+    for (let step = 1e-15; !covers(credit); step *= 2) {
+      if (step > SPEND_RESIDUAL_TOLERANCE) {
+        throw new Error(`creditedState: no credit covers the cost of "${itemId}"`);
+      }
       credit = short.plus(cost.times(step));
     }
-    out.set(itemId, credit);
+    next = setField(next, "bound", itemId, bound.plus(credit));
   }
-  return out;
+  return next;
 }
 
 export type Affordability =
