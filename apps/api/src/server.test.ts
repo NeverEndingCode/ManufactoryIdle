@@ -19,6 +19,7 @@ import { migrate } from "./db/migrate.js";
 import type { Db } from "./db/db.js";
 import { openContentStore, type ContentStore } from "./content.js";
 import { buildServer, guestAuth, type ServerDeps } from "./server.js";
+import { replayWorld } from "./worlds.js";
 
 const SLICE = fileURLToPath(
   new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
@@ -583,20 +584,15 @@ describe("replay", () => {
       expect(res.statusCode, res.body).toBe(200);
     }
 
-    // Rebuild the start from the recorded columns only, never from a stored state.
+    // replayWorld rebuilds the start from the recorded columns only, never from a stored state.
     const row = await onlyWorld();
     const content = await store.get(row.initial_content_version);
     const initial = initialWorld(content, row.initial_seed, row.created_at_ms);
 
     const log = await logRows();
     expect(log.map((r) => r.created_at_ms)).toEqual(steps.map(([at]) => T0 + at));
-    let state = initial;
-    for (const row of log) {
-      const resolved = resolve(state, content, row.created_at_ms - state.lastResolvedAt);
-      const batch = applyBatch(resolved.state, content, row.actions, resolved.state.seed);
-      if (batch.rejected) throw new Error(`replay rejected: ${batch.reason}`);
-      state = batch.state;
-    }
+    const [world] = await db.query<{ id: string }>("select id from player_worlds");
+    const state = await replayWorld(db, store, world!.id);
     expect(row.state_version).toBe("3");
     expect(serializeWorld(state)).toBe(serializeWorld(deserializeWorld(JSON.stringify(row.state))));
     expect(serializeWorld(state)).not.toBe(serializeWorld(initial));

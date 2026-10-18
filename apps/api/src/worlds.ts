@@ -241,9 +241,10 @@ export async function applyActions(
       [world.id, toWire(batch.state), batch.state.lastResolvedAt, hasTap, nowMs],
     );
     await tx.query(
-      `insert into action_log (player_id, world_id, actions, idempotency_key, created_at)
-       values ($1, $2, $3::jsonb, $4, to_timestamp($5 / 1000.0))`,
-      [playerId, world.id, JSON.stringify(actions), idempotencyKey, nowMs],
+      `insert into action_log (player_id, world_id, actions, idempotency_key, content_version, created_at)
+       values ($1, $2, $3::jsonb, $4, $5, to_timestamp($6 / 1000.0))`,
+      // R-21: the version the batch ran on, read under the row lock.
+      [playerId, world.id, JSON.stringify(actions), idempotencyKey, world.contentVersion, nowMs],
     );
     await tx.query("update players set last_seen_at = to_timestamp($2 / 1000.0) where id = $1", [
       playerId,
@@ -256,6 +257,66 @@ export async function applyActions(
     });
     return store(tx, 200, body);
   });
+}
+
+/** Options for replayWorld. */
+export interface ReplayOptions {
+  /** Replay only log rows whose id is at most this (a bigint as text); default: all of them. */
+  throughLogId?: string;
+}
+
+/**
+ * Spec 16.3 with R-20/R-21: rebuilds a world from its replay base (or, when there is none, its
+ * recorded start: initialWorld on initial_content_version, initial_seed, created_at) plus its
+ * action_log in id order. Each row resolves to its own created_at, then applies its batch with
+ * the state's seed, both on that row's content_version: exactly what applyActions did. A row
+ * that would now be rejected throws, since replay can only diverge if the log or base is wrong.
+ * Inside a transaction pass its `tx`.
+ */
+export async function replayWorld(
+  db: Db,
+  content: ContentStore,
+  worldId: string,
+  opts: ReplayOptions = {},
+): Promise<WorldState> {
+  const [start] = await db.query<{
+    base: unknown;
+    initial_content_version: string;
+    initial_seed: number;
+    created_at_ms: number;
+  }>(
+    `select replay_base_state as base, initial_content_version, initial_seed,
+            round(extract(epoch from created_at) * 1000)::float8 as created_at_ms
+       from player_worlds where id = $1`,
+    [worldId],
+  );
+  if (!start) throw new Error(`no world ${worldId}`);
+  let state =
+    start.base !== null
+      ? deserializeWorld(JSON.stringify(start.base))
+      : initialWorld(
+          await content.get(start.initial_content_version, db),
+          start.initial_seed,
+          start.created_at_ms,
+        );
+  const rows = await db.query<{ id: string; actions: Action[]; content_version: string; at_ms: number }>(
+    `select id::text as id, actions, content_version,
+            round(extract(epoch from created_at) * 1000)::float8 as at_ms
+       from action_log
+      where world_id = $1 and ($2::bigint is null or id <= $2::bigint)
+      order by id`,
+    [worldId, opts.throughLogId ?? null],
+  );
+  for (const row of rows) {
+    const pinned = await content.get(row.content_version, db);
+    const resolved = resolve(state, pinned, row.at_ms - state.lastResolvedAt);
+    const batch = applyBatch(resolved.state, pinned, row.actions, resolved.state.seed);
+    if (batch.rejected) {
+      throw new Error(`replay of world ${worldId} rejected at log row ${row.id}: ${batch.reason}`);
+    }
+    state = batch.state;
+  }
+  return state;
 }
 
 /**

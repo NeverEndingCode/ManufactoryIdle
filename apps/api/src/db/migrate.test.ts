@@ -128,6 +128,42 @@ describe("failing migration", () => {
   });
 });
 
+describe("002 backfills action_log.content_version", () => {
+  it("existing rows take their world's version, and the column is then not null", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mig-"));
+    try {
+      const src = (f: string) => new URL(`../../migrations/${f}`, import.meta.url);
+      await copyFile(src("001-initial.sql"), join(dir, "001-initial.sql"));
+      await migrate(db, dir);
+      const pid = crypto.randomUUID();
+      const wid = crypto.randomUUID();
+      await db.query("insert into players (id, guest_token) values ($1, 'g')", [pid]);
+      await db.query(
+        "insert into content_versions (version, checksum, bundle) values ('v1', 'c', '{}'), ('v2', 'c', '{}')",
+      );
+      await db.query(
+        `insert into player_worlds (id, player_id, content_version, state, last_resolved_at, schema_version,
+                                    initial_seed, created_at, initial_content_version)
+         values ($1, $2, 'v2', '{}', now(), 1, 0, now(), 'v1')`,
+        [wid, pid],
+      );
+      await db.query("insert into action_log (player_id, world_id, actions) values ($1, $2, '[]')", [
+        pid,
+        wid,
+      ]);
+      await copyFile(src("002-anticheat.sql"), join(dir, "002-anticheat.sql"));
+      expect(await migrate(db, dir)).toEqual(["002-anticheat.sql"]);
+      const rows = await db.query<{ content_version: string }>("select content_version from action_log");
+      expect(rows).toEqual([{ content_version: "v2" }]);
+      await expect(
+        db.query("insert into action_log (player_id, world_id, actions) values ($1, $2, '[]')", [pid, wid]),
+      ).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("transaction", () => {
   it("rolls back on throw", async () => {
     await migrate(db);
