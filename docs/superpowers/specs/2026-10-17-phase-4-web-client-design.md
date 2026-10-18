@@ -506,3 +506,12 @@ Each recommended answer below was adopted as a ruling (2026-10-17): 1 and 2 shap
 - No offline play: no service worker, and nothing is computed without the server.
 - No new game rules, actions or schema.
 - No production hosting, PWA install, notifications, statistics, or Specs 2–4's screens.
+
+## Errata found while planning 4a (2026-10-18)
+
+Each corrects a claim above against the code; the 4a plan (`docs/superpowers/plans/2026-10-17-phase-4a-web-shell.md`) carries the ruling.
+
+- **W-8, satisfaction.** `Solution.entries` cannot give satisfaction: every item entry has `requested: Infinity`. Satisfaction is production / consumption from `allocations` (plan P-1).
+- **W-1 item 1 and W-18, one bottleneck frame per lane.** The engine reports a single, global bottleneck, so the client shows at most one frame in the whole factory (plan P-2). Per-lane frames would need an engine change; deferred.
+- **OQ1 and W-9, the plateau.** Past `persistedAtMs + offlineCapMs`, `GET /api/world` still returns non-zero rates and a fresh boundary, so following the boundary would poll forever. Once past the plateau the client stops boundary polling and shows the notice (plan P-4). `persistedAtMs` is the stored state's `lastResolvedAt`, so no migration (P-5); idempotent replays of responses stored before 4a lack it, and the client tolerates its absence.
+- **W-23, `PGLITE_DIR`.** `pgliteDb` takes no data directory today; 4a gives it one (P-15).
