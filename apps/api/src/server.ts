@@ -1,5 +1,6 @@
 // buildServer takes its dependencies (db, content, a clock, an auth resolver) so tests
 // run it on PGlite with a fake clock through inject(), with no network (spec 3a layout).
+import { createHash, timingSafeEqual } from "node:crypto";
 import Fastify, {
   type FastifyBaseLogger,
   type FastifyInstance,
@@ -12,12 +13,15 @@ import type { Db } from "./db/db.js";
 import type { ContentStore } from "./content.js";
 import { actionsBodySchema } from "./http/actions-schema.js";
 import { TokenBucket, type BucketConfig } from "./http/token-bucket.js";
+import type { TrustProxy } from "./http/trust-proxy.js";
+import { AccountsUnavailableError } from "./identity.js";
 import {
   WorldNotFoundError,
   applyActions,
   claimGuest,
   createGuest,
   hashGuestToken,
+  migrateWorld,
   viewWorld,
   type World,
 } from "./worlds.js";
@@ -57,6 +61,11 @@ export interface ServerDeps {
     /** Per client IP (`request.ip`) on POST /api/guests. Default 5 per hour. */
     guestsPerIp?: BucketConfig;
   };
+  /** ADMIN_TOKEN: enables POST /api/admin/migrate-world (D.6) behind `Authorization: Admin
+   * <token>`. Omitted or empty: the route does not exist (404), so it is not advertised. */
+  adminToken?: string;
+  /** Fastify's `trustProxy` (TRUST_PROXY in main.ts). Omitted: false, request.ip is the peer. */
+  trustProxy?: TrustProxy;
   /** Fastify `logger` options, or a pino-compatible instance. Omitted: no logging. */
   logger?: FastifyServerOptions["logger"] | FastifyBaseLogger;
 }
@@ -76,12 +85,24 @@ function worldView(world: World, content: IndexedContent) {
     state: JSON.parse(serializeWorld(world.state)) as unknown,
     schedule: schedule(world.state, content),
     stateVersion: world.stateVersion,
-    contentVersion: world.contentVersion,
+    // R-22: the pinned bundle's checksum. Not state.contentVersion, the bundle's authored label.
+    contentChecksum: world.contentVersion,
   };
 }
 
+const sha256 = (text: string): Buffer => createHash("sha256").update(text).digest();
+
+/** `Authorization: Admin <token>` against the expected token's sha256, in constant time.
+ * Both sides are hashed first so timingSafeEqual always compares equal-length buffers and
+ * the comparison leaks neither the token nor its length. */
+function isAdmin(header: string | undefined, expected: Buffer): boolean {
+  const match = /^admin\s+(\S.*)$/i.exec(header ?? "");
+  const same = timingSafeEqual(sha256(match?.[1] ?? ""), expected);
+  return match !== null && same;
+}
+
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const { db, content, clock, auth, verifySession, accounts, logger } = deps;
+  const { db, content, clock, auth, verifySession, accounts, logger, adminToken } = deps;
   const playerBucket = new TokenBucket(
     deps.limits?.player ?? { capacity: 30, refillPerSec: 3 },
     clock,
@@ -91,7 +112,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     clock,
   );
   // Behind a reverse proxy, request.ip is the proxy's address unless Fastify's `trustProxy`
-  // option is set; main.ts must set it for such a deployment, or every guest shares one bucket.
+  // option is set (TRUST_PROXY in main.ts), or every guest shares one bucket.
   async function limited(bucket: TokenBucket, key: string, reply: FastifyReply): Promise<boolean> {
     const taken = bucket.take(key);
     if (taken.ok) return false;
@@ -104,6 +125,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // Fastify's Ajv defaults would strip unknown properties (removeAdditional) and coerce
     // "1" to 1 (coerceTypes); both would turn a malformed action into an accepted one.
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
+    trustProxy: deps.trustProxy ?? false,
   });
 
   async function requirePlayer(request: FastifyRequest, reply: FastifyReply) {
@@ -121,6 +143,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   accounts?.register(app);
 
   app.setErrorHandler(async (error, request, reply) => {
+    // The accounts core is down: say so, and never fall back to the request's guest token.
+    if (error instanceof AccountsUnavailableError) {
+      app.log.warn({ err: error.cause }, "accounts core unavailable");
+      return reply
+        .code(503)
+        .header("retry-after", "5")
+        .send({ error: "accounts-unavailable" });
+    }
     if (accounts && (await accounts.handleError(error, request, reply))) return reply;
     if (error instanceof WorldNotFoundError) return reply.code(404).send({ error: "no world" });
     const {
@@ -143,7 +173,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return reply.code(500).send({ error: "internal error" });
   });
 
-  app.get("/api/health", async () => ({ ok: true, contentVersion: content.current.version }));
+  app.get("/api/health", async () => ({ ok: true, contentChecksum: content.current.version }));
 
   app.post("/api/guests", async (request, reply) => {
     if (await limited(guestBucket, request.ip, reply)) return reply;
@@ -229,6 +259,47 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return worldView(world, pinned);
     },
   );
+
+  if (adminToken !== undefined && adminToken !== "") {
+    const expected = sha256(adminToken);
+    // Spec D.6. Auth runs in preValidation, so a bad token is a 401 even with a malformed body.
+    app.post<{ Body: { playerId: string; toVersion: string } }>(
+      "/api/admin/migrate-world",
+      {
+        schema: {
+          body: {
+            type: "object",
+            required: ["playerId", "toVersion"],
+            additionalProperties: false,
+            properties: {
+              playerId: {
+                type: "string",
+                pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              },
+              toVersion: { type: "string", minLength: 1, maxLength: 128 },
+            },
+          },
+        },
+        preValidation: async (request, reply) => {
+          if (!isAdmin(request.headers.authorization, expected)) {
+            return reply.code(401).header("www-authenticate", "Admin").send({ error: "unauthorized" });
+          }
+        },
+      },
+      async (request, reply) => {
+        const { playerId, toVersion } = request.body;
+        const result = await migrateWorld(db, content, playerId, toVersion, clock());
+        if (!result.migrated) {
+          return reply
+            .code(400)
+            .send("detail" in result ? { error: result.reason, detail: result.detail } : { error: result.reason });
+        }
+        const { migrated: _migrated, ...body } = result;
+        request.log.info({ playerId, ...body }, "admin migrate-world");
+        return { playerId, ...body };
+      },
+    );
+  }
 
   return app;
 }

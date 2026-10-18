@@ -7,7 +7,12 @@ import { migrate } from "./db/migrate.js";
 import type { Db } from "./db/db.js";
 import { openContentStore, type ContentStore } from "./content.js";
 import { buildServer } from "./server.js";
-import { identityAuth, noSessions, type SessionVerifier } from "./identity.js";
+import {
+  AccountsUnavailableError,
+  identityAuth,
+  noSessions,
+  type SessionVerifier,
+} from "./identity.js";
 import { claimGuest, createPlayerWithWorld } from "./worlds.js";
 
 const SLICE = fileURLToPath(
@@ -286,6 +291,44 @@ describe("accounts disabled (R-16)", () => {
 });
 
 describe("a failing session check", () => {
+  it("answers 503 accounts-unavailable when the accounts core is unreachable, never the guest", async () => {
+    // The SuperTokens wrapper tags core-connection failures as AccountsUnavailableError
+    // (src/auth/supertokens.ts); this fake verifier throws the tagged error directly.
+    const down: SessionVerifier = async () => {
+      throw new AccountsUnavailableError(new Error("connect ECONNREFUSED 127.0.0.1:3567"));
+    };
+    const outage = buildServer({
+      db,
+      content: store,
+      clock: () => now,
+      auth: identityAuth({ db, content: store, clock: () => now, verifySession: down }),
+      verifySession: down,
+    });
+    try {
+      const created = await outage.inject({ method: "POST", url: "/api/guests" });
+      const token = (created.json() as { guestToken: string }).guestToken;
+      for (const req of [
+        { method: "GET" as const, url: "/api/world", headers: { authorization: `Guest ${token}` } },
+        {
+          method: "POST" as const,
+          url: "/api/actions",
+          headers: { authorization: `Guest ${token}` },
+          payload: { idempotencyKey: "k", baseVersion: 0, actions: [BUY_MINER] },
+        },
+        { method: "POST" as const, url: "/api/auth/claim", payload: { guestToken: token } },
+      ]) {
+        const res = await outage.inject(req);
+        expect(res.statusCode, req.url).toBe(503);
+        expect(res.json()).toEqual({ error: "accounts-unavailable" });
+        expect(res.headers["retry-after"]).toBe("5");
+      }
+      expect(await db.query("select 1 from action_log")).toHaveLength(0);
+      expect(await db.query("select 1 from sessions")).toHaveLength(0);
+    } finally {
+      await outage.close();
+    }
+  });
+
   it("does not fall back to the guest token", async () => {
     const throwing = buildServer({
       db,

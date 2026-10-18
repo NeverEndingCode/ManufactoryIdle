@@ -14,7 +14,7 @@ import { SMTPService } from "supertokens-node/recipe/emailpassword/emaildelivery
 import * as Session from "supertokens-node/recipe/session";
 import * as ThirdParty from "supertokens-node/recipe/thirdparty";
 import type { ProviderInput } from "supertokens-node/recipe/thirdparty/types";
-import type { SessionVerifier } from "../identity.js";
+import { AccountsUnavailableError, type SessionVerifier } from "../identity.js";
 
 export type Env = Record<string, string | undefined>;
 export type Log = (message: string) => void;
@@ -175,7 +175,21 @@ export function superTokensFromEnv(
       const reply = replies.get(request);
       if (!reply) throw new Error("verifySession: request did not pass the onRequest hook");
       // An invalid or expired token throws (TRY_REFRESH_TOKEN); handleError renders the 401.
-      const session = await Session.getSession(request, reply, { sessionRequired: false });
+      // Anything else getSession throws is not a SuperTokens error but a failure to talk to
+      // the core: the SDK's querier throws plain Errors when no core answers ("No SuperTokens
+      // core available to query", after retrying refused connections), a core non-200, or
+      // the fetch error itself. The SDK has no typed error for these, so rather than match
+      // its message strings, every non-SuperTokens error is tagged as an outage here: the
+      // API answers 503 and never falls back to the guest token. Our own invariant error
+      // above is thrown outside this try, so it stays a 500. (A failed JWKS fetch is not one
+      // of these: the SDK reports it as TRY_REFRESH_TOKEN, a 401, before this sees it.)
+      let session: Awaited<ReturnType<typeof Session.getSession>>;
+      try {
+        session = await Session.getSession(request, reply, { sessionRequired: false });
+      } catch (err) {
+        if (supertokens.Error.isErrorFromSuperTokens(err)) throw err;
+        throw new AccountsUnavailableError(err);
+      }
       return session === undefined ? null : session.getUserId();
     },
   };

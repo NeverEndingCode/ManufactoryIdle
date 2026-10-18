@@ -144,7 +144,7 @@ describe("step 2: the replay base (R-20)", () => {
     expect(serializeWorld(await replayWorld(db, content, worldId))).toBe(stored);
 
     // Cutoff T0 + 15 days: the first two rows go.
-    expect(await compactActionLog(db, content, T0 + 45 * DAY)).toBe(2);
+    expect(await compactActionLog(db, content, T0 + 45 * DAY)).toEqual({ compacted: 2, failed: [] });
     expect(await count("select 1 from action_log where world_id = $1", [worldId])).toBe(2);
     const [base] = await db.query<{ state: unknown; at_ms: number }>(
       `select replay_base_state as state,
@@ -157,7 +157,7 @@ describe("step 2: the replay base (R-20)", () => {
     expect(serializeWorld(await replayWorld(db, content, worldId))).toBe(stored);
 
     // A second cleanup builds on the base, not the recorded start.
-    expect(await compactActionLog(db, content, T0 + 80 * DAY)).toBe(2);
+    expect(await compactActionLog(db, content, T0 + 80 * DAY)).toEqual({ compacted: 2, failed: [] });
     expect(await count("select 1 from action_log where world_id = $1", [worldId])).toBe(0);
     expect(serializeWorld(await replayWorld(db, content, worldId))).toBe(stored);
   });
@@ -165,7 +165,7 @@ describe("step 2: the replay base (R-20)", () => {
   it("leaves a world with no old rows untouched", async () => {
     const { playerId, worldId } = await accountAt(T0);
     await act(playerId, [BUY_MINER], T0 + 10 * MINUTE);
-    expect(await compactActionLog(db, content, T0 + 10 * DAY)).toBe(0);
+    expect(await compactActionLog(db, content, T0 + 10 * DAY)).toEqual({ compacted: 0, failed: [] });
     const [row] = await db.query<{ s: unknown; a: unknown }>(
       "select replay_base_state as s, replay_base_at as a from player_worlds where id = $1",
       [worldId],
@@ -185,8 +185,59 @@ describe("step 2: the replay base (R-20)", () => {
        values ($1, $2, '[]'::jsonb, $3, to_timestamp($4 / 1000.0))`,
       [playerId, worldId, content.current.version, T0 + 11 * MINUTE],
     );
-    expect(await compactActionLog(db, content, T0 + 45 * DAY)).toBe(1);
+    expect(await compactActionLog(db, content, T0 + 45 * DAY)).toEqual({ compacted: 1, failed: [] });
     expect(await count("select 1 from action_log where world_id = $1", [worldId])).toBe(2);
+  });
+});
+
+describe("step 2, one world at a time", () => {
+  it("a world whose replay throws is skipped and reported; the others still compact", async () => {
+    const good = [await accountAt(T0), await accountAt(T0)];
+    for (const w of good) await act(w.playerId, [BUY_MINER], T0 + 10 * MINUTE);
+    const stored = await Promise.all(good.map((w) => storedWire(w.worldId)));
+    const poisoned = await accountAt(T0);
+    // A logged batch the engine rejects, so replaying this world throws.
+    const tooMany: Action = { ...BUY_MINER, count: 1000 } as Action;
+    await db.query(
+      `insert into action_log (player_id, world_id, actions, content_version, created_at)
+       values ($1, $2, $3::jsonb, $4, to_timestamp($5 / 1000.0))`,
+      [poisoned.playerId, poisoned.worldId, JSON.stringify([tooMany]), content.current.version, T0 + 11 * MINUTE],
+    );
+    const logged: unknown[][] = [];
+    const result = await compactActionLog(db, content, T0 + 45 * DAY, (...args) => void logged.push(args));
+
+    expect(result.compacted).toBe(2);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]!.worldId).toBe(poisoned.worldId);
+    expect(result.failed[0]!.error).toMatch(/rejected/);
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged[0])).toContain(poisoned.worldId);
+    for (const [i, w] of good.entries()) {
+      expect(await count("select 1 from action_log where world_id = $1", [w.worldId])).toBe(0);
+      expect(serializeWorld(await replayWorld(db, content, w.worldId))).toBe(stored[i]);
+    }
+    expect(await count("select 1 from action_log where world_id = $1", [poisoned.worldId])).toBe(1);
+    const [base] = await db.query<{ s: unknown; a: unknown }>(
+      "select replay_base_state as s, replay_base_at as a from player_worlds where id = $1",
+      [poisoned.worldId],
+    );
+    expect(base).toEqual({ s: null, a: null });
+  });
+
+  it("commits each world in its own transaction, so no world's lock is held for the whole job", async () => {
+    const worlds = [await accountAt(T0), await accountAt(T0)];
+    for (const w of worlds) await act(w.playerId, [BUY_MINER], T0 + 10 * MINUTE);
+    let transactions = 0;
+    const counting: Db = {
+      query: (sql, params) => db.query(sql, params),
+      transaction: (fn) => {
+        transactions += 1;
+        return db.transaction(fn);
+      },
+      close: () => db.close(),
+    };
+    expect((await compactActionLog(counting, content, T0 + 45 * DAY)).compacted).toBe(2);
+    expect(transactions).toBe(2);
   });
 });
 
@@ -248,7 +299,7 @@ describe("runCleanup", () => {
     ]);
     const stored = await storedWire(kept.worldId);
     const report = await runCleanup(db, content, T0 + 60 * DAY);
-    expect(report).toEqual({ guests: 1, logRows: 1, idempotency: 1, sessions: 1 });
+    expect(report).toEqual({ guests: 1, logRows: 1, logFailures: [], idempotency: 1, sessions: 1 });
     expect(await count("select 1 from players where id = $1", [stale.playerId])).toBe(0);
     expect(serializeWorld(await replayWorld(db, content, kept.worldId))).toBe(stored);
   });

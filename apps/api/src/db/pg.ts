@@ -45,14 +45,26 @@ function wrap(q: Queryable, pool: pg.Pool | null): Db {
   };
 }
 
+export interface PgDbOptions {
+  /** Pool size. Default 10. */
+  max?: number;
+  /** Sets every connection's search_path to this one schema (the integration tests use a
+   * fresh schema per test). A plain identifier; anything else throws. Default: the server's. */
+  schema?: string;
+}
+
 /** Production adapter over a pg.Pool. */
-export function pgDb(connectionString: string): Db {
+export function pgDb(connectionString: string, opts: PgDbOptions = {}): Db {
+  if (opts.schema !== undefined && !/^[a-z_][a-z0-9_]*$/.test(opts.schema)) {
+    throw new Error(`pgDb: schema must be a lowercase identifier, got ${JSON.stringify(opts.schema)}`);
+  }
   const pool = new pg.Pool({
     connectionString,
+    ...(opts.schema !== undefined ? { options: `-c search_path=${opts.schema}` } : {}),
     // Bounded, so a burst of requests queues here instead of exhausting Postgres's
     // max_connections; a request that cannot get a connection fails after 10 s rather
     // than hanging, and idle connections are returned after 30 s.
-    max: 10,
+    max: opts.max ?? 10,
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 30_000,
     // Server-side per-statement cap: a runaway query (or one stuck behind a lock)

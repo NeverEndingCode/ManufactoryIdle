@@ -18,8 +18,10 @@ export const SESSION_IDLE_MS = 30 * MINUTE;
 /**
  * Step 1: deletes guest players whose last_seen_at is more than 30 days before now. Worlds,
  * their logs and sessions go by cascade; idempotency rows have no foreign key, so they are
- * deleted here. An account player is never deleted. The delete re-checks last_seen_at under
- * the row lock, so a guest who acts meanwhile is kept. Returns the number of players deleted.
+ * deleted here. An account player is never deleted. A guest who acts meanwhile is kept: this
+ * relies on READ COMMITTED, under which Postgres re-evaluates the delete's where clause against
+ * the newest committed row after waiting for a concurrent update's lock, so a moved last_seen_at
+ * no longer matches. Returns the number of players deleted.
  */
 export async function deleteStaleGuests(db: Db, nowMs: number): Promise<number> {
   return db.transaction(async (tx) => {
@@ -35,51 +37,76 @@ export async function deleteStaleGuests(db: Db, nowMs: number): Promise<number> 
   });
 }
 
+/** The result of step 2: log rows deleted, and the worlds skipped because their compaction threw. */
+export interface CompactResult {
+  compacted: number;
+  failed: { worldId: string; error: string }[];
+}
+
 /**
- * Step 2 (R-20): for each world with log rows older than 30 days, under the world's row lock,
- * replays those rows onto its replay base (or recorded start), stores the result as the new
- * base, and deletes them, all in one transaction. The rows deleted are the longest old prefix
- * of the log in id order, so the kept rows are always a suffix and base + kept log still
- * replays the world exactly. replay_base_at is the last deleted row's created_at, which is also
- * the base state's lastResolvedAt. Returns the number of log rows deleted.
+ * Step 2 (R-20): for each world with log rows older than 30 days, in its own transaction and
+ * under the world's row lock, replays those rows onto its replay base (or recorded start),
+ * stores the result as the new base, and deletes them; the base update and the delete commit
+ * together. The rows deleted are the longest old prefix of the log in id order, so the kept
+ * rows are always a suffix and base + kept log still replays the world exactly. replay_base_at
+ * is the last deleted row's created_at, which is also the base state's lastResolvedAt.
+ *
+ * One transaction per world, so a world's lock is held only for its own compaction, and a
+ * world whose replay throws (a bad log row, content that no longer loads) is rolled back,
+ * logged by id and message, and reported in `failed`, while the others still compact.
  */
-export async function compactActionLog(db: Db, content: ContentStore, nowMs: number): Promise<number> {
+export async function compactActionLog(
+  db: Db,
+  content: ContentStore,
+  nowMs: number,
+  log: (message: string, detail: { worldId: string; error: string }) => void = console.error,
+): Promise<CompactResult> {
   const cutoffMs = nowMs - LOG_RETENTION_MS;
-  return db.transaction(async (tx) => {
-    const worlds = await tx.query<{ world_id: string }>(
-      `select distinct world_id from action_log where created_at < to_timestamp($1 / 1000.0)
-        order by world_id`,
-      [cutoffMs],
-    );
-    let deleted = 0;
-    for (const { world_id: worldId } of worlds) {
-      // The lock applyActions takes, so no batch lands between the replay and the delete.
-      await tx.query("select 1 from player_worlds where id = $1 for update", [worldId]);
-      const [edge] = await tx.query<{ through: string | null; at_ms: number | null }>(
-        `select l.id::text as through, round(extract(epoch from l.created_at) * 1000)::float8 as at_ms
-           from action_log l
-          where l.world_id = $1 and l.created_at < to_timestamp($2 / 1000.0)
-            and l.id < coalesce((select min(m.id) from action_log m
-                                  where m.world_id = $1 and m.created_at >= to_timestamp($2 / 1000.0)),
-                                9223372036854775807)
-          order by l.id desc limit 1`,
-        [worldId, cutoffMs],
-      );
-      if (!edge?.through) continue;
-      const base = await replayWorld(tx, content, worldId, { throughLogId: edge.through });
-      await tx.query(
-        `update player_worlds set replay_base_state = $2::jsonb, replay_base_at = to_timestamp($3 / 1000.0)
-          where id = $1`,
-        [worldId, serializeWorld(base), edge.at_ms],
-      );
-      const rows = await tx.query(
-        "delete from action_log where world_id = $1 and id <= $2::bigint returning id",
-        [worldId, edge.through],
-      );
-      deleted += rows.length;
+  // Read outside any transaction, so this is only a candidate set: a world may have acted or
+  // been deleted since. Each world's transaction takes its lock and re-derives the edge, so a
+  // stale candidate compacts what is actually old now, or nothing.
+  const worlds = await db.query<{ world_id: string }>(
+    `select distinct world_id from action_log where created_at < to_timestamp($1 / 1000.0)
+      order by world_id`,
+    [cutoffMs],
+  );
+  const result: CompactResult = { compacted: 0, failed: [] };
+  for (const { world_id: worldId } of worlds) {
+    try {
+      result.compacted += await db.transaction(async (tx) => {
+        // The lock applyActions takes, so no batch lands between the replay and the delete.
+        const locked = await tx.query("select 1 from player_worlds where id = $1 for update", [worldId]);
+        if (locked.length === 0) return 0; // deleted since the candidate read
+        const [edge] = await tx.query<{ through: string | null; at_ms: number | null }>(
+          `select l.id::text as through, round(extract(epoch from l.created_at) * 1000)::float8 as at_ms
+             from action_log l
+            where l.world_id = $1 and l.created_at < to_timestamp($2 / 1000.0)
+              and l.id < coalesce((select min(m.id) from action_log m
+                                    where m.world_id = $1 and m.created_at >= to_timestamp($2 / 1000.0)),
+                                  9223372036854775807)
+            order by l.id desc limit 1`,
+          [worldId, cutoffMs],
+        );
+        if (!edge?.through) return 0;
+        const base = await replayWorld(tx, content, worldId, { throughLogId: edge.through });
+        await tx.query(
+          `update player_worlds set replay_base_state = $2::jsonb, replay_base_at = to_timestamp($3 / 1000.0)
+            where id = $1`,
+          [worldId, serializeWorld(base), edge.at_ms],
+        );
+        const rows = await tx.query(
+          "delete from action_log where world_id = $1 and id <= $2::bigint returning id",
+          [worldId, edge.through],
+        );
+        return rows.length;
+      });
+    } catch (err) {
+      const failure = { worldId, error: err instanceof Error ? err.message : String(err) };
+      log("cleanup: action_log compaction failed for a world; its rows are kept", failure);
+      result.failed.push(failure);
     }
-    return deleted;
-  });
+  }
+  return result;
 }
 
 /** Step 3: deletes idempotency rows older than 24 hours. Returns the number deleted. */
@@ -116,17 +143,19 @@ export async function closeIdleSessions(db: Db, nowMs: number): Promise<number> 
 export interface CleanupReport {
   guests: number;
   logRows: number;
+  /** Worlds whose compaction threw; their log rows and base were left as they were. */
+  logFailures: CompactResult["failed"];
   idempotency: number;
   sessions: number;
 }
 
-/** Runs the four steps in order, each in its own transaction. */
+/** Runs the four steps in order, each in its own transaction (step 2, one per world). */
 export async function runCleanup(db: Db, content: ContentStore, nowMs: number): Promise<CleanupReport> {
   const guests = await deleteStaleGuests(db, nowMs);
-  const logRows = await compactActionLog(db, content, nowMs);
+  const { compacted: logRows, failed: logFailures } = await compactActionLog(db, content, nowMs);
   const idempotency = await pruneIdempotency(db, nowMs);
   const sessions = await closeIdleSessions(db, nowMs);
-  return { guests, logRows, idempotency, sessions };
+  return { guests, logRows, logFailures, idempotency, sessions };
 }
 
 async function main(): Promise<void> {

@@ -190,3 +190,44 @@ describe("transaction", () => {
     expect(await db.query("select * from players")).toHaveLength(1);
   });
 });
+
+describe("the migrate lock", () => {
+  it("takes pg_advisory_xact_lock inside every migration transaction (PGlite has it)", async () => {
+    const seen: { sql: string; inTx: boolean }[] = [];
+    const spy = (inner: Db, inTx: boolean): Db => ({
+      query: (sql, params) => {
+        seen.push({ sql, inTx });
+        return inner.query(sql, params);
+      },
+      transaction: (fn) => inner.transaction((tx) => fn(spy(tx, true))),
+      close: () => inner.close(),
+    });
+    await migrate(spy(db, false));
+    const ddl = seen.filter((q) => /create table (if not exists )?\w/i.test(q.sql));
+    expect(ddl.length).toBeGreaterThan(0);
+    for (const q of ddl) expect(q.inTx, q.sql.slice(0, 60)).toBe(true);
+    const tx = seen.filter((q) => q.inTx);
+    const locks = tx.filter((q) => /pg_advisory_xact_lock/.test(q.sql));
+    // One for the bookkeeping table, then one per migration file.
+    expect(locks).toHaveLength(3);
+  });
+
+  it("re-checks under the lock: a migration another instance applied meanwhile is skipped", async () => {
+    // Deterministic stand-in for two instances booting at once: just before this migrate's
+    // first transaction, another migrate runs to completion.
+    let raced = false;
+    const racing: Db = {
+      query: (sql, params) => db.query(sql, params),
+      transaction: async (fn) => {
+        if (!raced) {
+          raced = true;
+          expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql"]);
+        }
+        return db.transaction(fn);
+      },
+      close: () => db.close(),
+    };
+    expect(await migrate(racing)).toEqual([]);
+    expect(await db.query("select * from schema_migrations")).toHaveLength(2);
+  });
+});
