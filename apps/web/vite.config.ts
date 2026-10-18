@@ -9,5 +9,6 @@ export default defineConfig({
   plugins: [react()],
   build: { target: "es2022", sourcemap: true },
   server: { port: 5173, proxy },
-  preview: { port: 4173, proxy },
+  // "localhost" can resolve to ::1 only; Playwright (and its webServer probe) use 127.0.0.1.
+  preview: { host: "127.0.0.1", port: 4173, proxy },
 });

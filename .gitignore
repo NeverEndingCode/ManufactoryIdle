@@ -7,3 +7,5 @@ build/
 .env.*
 !.env.example
 .DS_Store
+apps/web/playwright-report/
+apps/web/test-results/

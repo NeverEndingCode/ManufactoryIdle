@@ -9,12 +9,15 @@ for years.
 
 ## Status
 
-**Phases 0 to 3 complete.** Phase 3, the server: guest play over HTTP (3a), optional
-accounts with SuperTokens (3b), and the anti-cheat guards, cleanup job and admin content
-migrate (3c); see [`apps/api/README.md`](apps/api/README.md). The monorepo, its packages
-(`rational`, `content`, `engine`, `sim`) and the `apps/api` server, CI (including a
-real-Postgres job for the API), and local infra (Postgres + SuperTokens via Docker Compose)
-are in place, with the test suite, lint, typecheck and `pnpm content:check` all green.
+**Phases 0 to 3 complete; Phase 4, the web client, in progress.** Phase 3, the server:
+guest play over HTTP (3a), optional accounts with SuperTokens (3b), and the anti-cheat
+guards, cleanup job and admin content migrate (3c); see
+[`apps/api/README.md`](apps/api/README.md). The monorepo, its packages (`rational`,
+`content`, `engine`, `sim`), the `apps/api` server and the `apps/web` client, CI
+(including a real-Postgres job for the API), and local infra (Postgres + SuperTokens via
+Docker Compose) are in place, with the test suite, lint, typecheck and
+`pnpm content:check` all green. `pnpm --filter @manufactory/api dev` and
+`pnpm --filter @manufactory/web dev` run the game locally on PGlite with no Docker.
 
 There is deliberately no test count here. It was wrong three times before it was removed —
 run `pnpm test` for the number, which is the only place it cannot go stale.
@@ -42,7 +45,7 @@ The original spec is decomposed into four, of which the engine core is the first
 | 1 | Engine + simulator | A playable game in the terminal — **done** |
 | 2 | Calibrated content | A game that is *paced* — **done** |
 | 3 | Server + authority | A game with a backend — **done** |
-| 4 | Web client | A game other people can play |
+| 4 | Web client | A game other people can play — **in progress** (4a: web shell and lane view) |
 
 ## Design pillars
 
