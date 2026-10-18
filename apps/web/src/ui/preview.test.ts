@@ -84,7 +84,7 @@ describe("preview (W-13, Q-1)", () => {
     expect(p.power.after.demandMw).toBeCloseTo(26, 6);
   });
 
-  it("3. two Constructors: the after rates are an exactly drained state's, ingot-clamped", () => {
+  it("3b. two Constructors: the after rates are an exactly drained state's, ingot-clamped", () => {
     // Three constructors want 1.5 ingot/s against the smelters' 1/s.
     const two = { ...P3_BUY, count: 2 };
     const p = preview(fresh, [two]);

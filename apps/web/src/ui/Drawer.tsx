@@ -2,14 +2,23 @@
 // storage and its lane's Quantum Storage, over one pure model (drawerModel). Spends are
 // pessimistic (W-13): a button is busy while its own batch is pending, and the numbers move
 // only with snapshots. Settings (recipe, assignment) are optimistic in the control (Q-10).
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type KeyboardEvent,
+} from "react";
 import {
   D,
   DECIMAL_ZERO,
   format,
   type Action,
+  type Dec,
   type ItemId,
   type RecipeId,
+  type WorldState,
 } from "@manufactory/engine";
 import { shownStock } from "../sync/interpolate.js";
 import type { Outcome } from "../sync/errors.js";
@@ -29,7 +38,7 @@ import {
   type MachineSection,
 } from "./machines.js";
 import { Projection } from "./Projection.js";
-import { affordability, maxAffordableCount, quote, type Quote } from "./quote.js";
+import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
 import { useTick } from "./use-tick.js";
 
 export type DrawerVerb = "buy" | "dismantle" | "upgrade" | "storage" | "qs" | "recipe" | "assign";
@@ -45,6 +54,9 @@ export interface DrawerProps {
   onClose(): void;
   /** Under 600 px: a bottom sheet, role="dialog" (Q-7). */
   sheet?: boolean;
+  /** Called on mount: true when the player just opened this drawer, so the title takes focus.
+   * A remount for any other reason (a view switch) must not steal focus. Default: always. */
+  claimFocus?: () => boolean;
 }
 
 type Tab = "buy" | "upgrade" | "dismantle" | "recipe" | "storage" | "assign";
@@ -82,7 +94,15 @@ interface Ctx {
   send(actions: Action[], verb: DrawerVerb): Promise<Outcome>;
 }
 
-export function Drawer({ store, snapshot, itemId, pending, onClose, sheet = false }: DrawerProps) {
+export function Drawer({
+  store,
+  snapshot,
+  itemId,
+  pending,
+  onClose,
+  sheet = false,
+  claimFocus,
+}: DrawerProps) {
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
   const model = drawerModel(snapshot, itemId);
   const tabs = tabsOf(model);
@@ -90,8 +110,10 @@ export function Drawer({ store, snapshot, itemId, pending, onClose, sheet = fals
   const tab = tabs.includes(picked) ? picked : tabs[0]!;
   const title = useRef<HTMLHeadingElement>(null);
 
+  const claim = useRef(claimFocus);
+  claim.current = claimFocus;
   useEffect(() => {
-    title.current?.focus();
+    if (claim.current === undefined || claim.current()) title.current?.focus();
   }, [itemId]);
 
   const ctx: Ctx = {
@@ -192,10 +214,6 @@ function usePendingMap<V>() {
 
 // ---- shared pieces ---------------------------------------------------------------------------
 
-function own<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
-  return Object.hasOwn(record, key) ? record[key] : undefined;
-}
-
 function itemName(s: Snapshot, itemId: ItemId): string {
   return s.content.items.get(itemId)?.name ?? itemId;
 }
@@ -212,22 +230,31 @@ function spend(ctx: Ctx, actions: Action[], verb: DrawerVerb): void {
   ctx.send(actions, verb).catch((err: unknown) => console.error(err));
 }
 
-/** Each cost item, red when the shown stock + bound (+ the action's own refund) is short. */
-function CostList({ s, q, atMs }: { s: Snapshot; q: Quote; atMs: number }) {
+/** The state as of atMs for these cost items: the shown (interpolated) liquid stock in
+ * `stored`, none in `quantum`, so creditFor reads exactly what affordability() reads. */
+function stateAt(s: Snapshot, q: Quote, atMs: number): WorldState {
+  const stored = { ...s.state.stored };
+  const quantum = { ...s.state.quantum };
+  for (const itemId of q.cost.keys()) {
+    stored[itemId] = shownStock(s, itemId, atMs);
+    quantum[itemId] = DECIMAL_ZERO;
+  }
+  return { ...s.state, stored, quantum };
+}
+
+/** Each cost item, red exactly when the model's shortfall (creditFor) has it. */
+function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<ItemId, Dec> }) {
   if (q.cost.size === 0) return null;
   return (
     <ul aria-label="Cost" className={styles.cost}>
       {[...q.cost].map(([itemId, need]) => {
-        const have = shownStock(s, itemId, atMs)
-          .plus(own(s.state.bound, itemId) ?? DECIMAL_ZERO)
-          .plus(q.refund.get(itemId) ?? DECIMAL_ZERO);
-        const short = have.lt(need);
+        const isShort = short.has(itemId);
         return (
           <li
             key={itemId}
             data-cost={itemId}
-            data-short={short ? "" : undefined}
-            className={short ? styles["state-bottleneck"] : undefined}
+            data-short={isShort ? "" : undefined}
+            className={isShort ? styles["state-bottleneck"] : undefined}
           >
             <span>{itemName(s, itemId)}</span>
             <span className="num">{format(need, "hybrid")}</span>
@@ -235,6 +262,33 @@ function CostList({ s, q, atMs }: { s: Snapshot; q: Quote; atMs: number }) {
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * A button that stays focusable when it is off: aria-disabled plus a click guard, never the
+ * native `disabled`, so a focused button that turns busy keeps focus and Escape still reaches
+ * the drawer.
+ */
+function Guarded({
+  off,
+  onPress,
+  className = "btn",
+  ...rest
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onClick" | "disabled" | "type"> & {
+  off: boolean;
+  onPress(): void;
+}) {
+  return (
+    <button
+      type="button"
+      className={className}
+      {...rest}
+      aria-disabled={off}
+      onClick={() => {
+        if (!off) onPress();
+      }}
+    />
   );
 }
 
@@ -260,26 +314,26 @@ function Spend({
   const s = ctx.snapshot;
   const atMs = serverNow(s, ctx.now());
   const q = action === null ? null : quote(s.content, s.state, action);
+  // One shortfall for both the red cost and the button: they can never disagree.
+  const short = q === null ? new Map<ItemId, Dec>() : creditFor(stateAt(s, q, atMs), q);
   const a = action === null ? null : affordability(s, action, atMs);
   const busy = ctx.busy(verb);
-  const can = action !== null && a !== null && a.affordable;
+  const can = action !== null && short.size === 0;
   return (
     <div className={styles.spend}>
-      {q !== null && <CostList s={s} q={q} atMs={atMs} />}
+      {q !== null && <CostList s={s} q={q} short={short} />}
       <div className={styles.btnrow}>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy || !can}
+        <Guarded
+          off={busy || !can}
           aria-busy={busy}
           aria-label={ariaLabel}
-          onClick={() => {
+          onPress={() => {
             if (action !== null) spend(ctx, [action], verb);
           }}
         >
           {text}
-        </button>
-        {a !== null && !a.affordable && !busy && (
+        </Guarded>
+        {action !== null && a !== null && !a.affordable && !busy && (
           <span data-countdown aria-live="off" className={`${styles.muted} num`}>
             {a.inMs === null
               ? "not affordable on current rates"
@@ -419,10 +473,18 @@ function refundText(s: Snapshot, q: Quote): string {
 function DismantleSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
   const s = ctx.snapshot;
   const rows = sec.marks.filter((r) => r.owned > 0);
-  const [focus, setFocus] = useState<{ mark: number; count: number } | null>(null);
+  // The focused button, as (mark, ×1 or all); a mark no longer owned falls back to the first
+  // row, and "all" always means the current stock, so the projection is never stale.
+  const [focus, setFocus] = useState<{ mark: number; all: boolean } | null>(null);
   const busy = ctx.busy("dismantle");
-  const first = rows[0];
-  const shown = focus ?? (first === undefined ? null : { mark: first.mark, count: 1 });
+  const at = rows.find((r) => r.mark === focus?.mark) ?? rows[0];
+  const shown =
+    at === undefined
+      ? null
+      : {
+          mark: at.mark,
+          count: focus !== null && focus.mark === at.mark && focus.all ? at.owned : 1,
+        };
   return (
     <div className={styles.body}>
       <ul className={styles.list}>
@@ -436,30 +498,28 @@ function DismantleSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
                 {refundText(s, quote(s.content, s.state, one))}
               </p>
               <div className={styles.btnrow}>
-                <button
-                  type="button"
+                <Guarded
                   className="btn secondary"
-                  disabled={busy}
+                  off={busy}
                   aria-busy={busy}
-                  aria-label={`Dismantle 1 Mk${r.mark}`}
-                  onFocus={() => setFocus({ mark: r.mark, count: 1 })}
-                  onMouseEnter={() => setFocus({ mark: r.mark, count: 1 })}
-                  onClick={() => spend(ctx, [one], "dismantle")}
+                  aria-label={`Dismantle ×1 Mk${r.mark}`}
+                  onFocus={() => setFocus({ mark: r.mark, all: false })}
+                  onMouseEnter={() => setFocus({ mark: r.mark, all: false })}
+                  onPress={() => spend(ctx, [one], "dismantle")}
                 >
                   ×1
-                </button>
-                <button
-                  type="button"
+                </Guarded>
+                <Guarded
                   className="btn secondary"
-                  disabled={busy}
+                  off={busy}
                   aria-busy={busy}
                   aria-label={`Dismantle all ${r.owned} Mk${r.mark}`}
-                  onFocus={() => setFocus({ mark: r.mark, count: r.owned })}
-                  onMouseEnter={() => setFocus({ mark: r.mark, count: r.owned })}
-                  onClick={() => spend(ctx, [all], "dismantle")}
+                  onFocus={() => setFocus({ mark: r.mark, all: true })}
+                  onMouseEnter={() => setFocus({ mark: r.mark, all: true })}
+                  onPress={() => spend(ctx, [all], "dismantle")}
                 >
                   {`all ${r.owned}`}
-                </button>
+                </Guarded>
               </div>
             </li>
           );
@@ -483,12 +543,15 @@ function RecipeSection({ ctx }: { ctx: Ctx }) {
   const server = recipes.find((c) => c.active)?.recipeId ?? null;
   const shown = pend.shown("recipe", server);
   const [focus, setFocus] = useState<RecipeId | null>(null);
+  /** Only the words: whether a choice is selectable is the model's (`select`). */
   const reasonOf = (c: (typeof recipes)[number]): string | null =>
-    c.unlockTier > s.state.tier
-      ? `unlocks at tier ${c.unlockTier}`
-      : c.inCycle
-        ? "part of a recipe cycle"
-        : null;
+    c.select !== null || c.active
+      ? null
+      : c.unlockTier > s.state.tier
+        ? `unlocks at tier ${c.unlockTier}`
+        : c.inCycle
+          ? "part of a recipe cycle"
+          : "not selectable";
   const select = (recipeId: RecipeId): SelectRecipe => ({
     type: "SELECT_RECIPE",
     itemId,
@@ -513,13 +576,14 @@ function RecipeSection({ ctx }: { ctx: Ctx }) {
                 name={name}
                 value={c.recipeId}
                 checked={shown === c.recipeId}
-                disabled={reason !== null}
+                disabled={c.select === null && !c.active}
                 onFocus={() => setFocus(c.recipeId)}
                 onChange={() => {
                   if (shown === c.recipeId) return;
-                  pend.run([["recipe", c.recipeId]], () =>
-                    ctx.send([select(c.recipeId)], "recipe"),
-                  );
+                  // The active choice has no `select`; choosing it back while another is
+                  // pending re-selects it.
+                  const action = c.select ?? select(c.recipeId);
+                  pend.run([["recipe", c.recipeId]], () => ctx.send([action], "recipe"));
                 }}
               />
               <span>{c.name}</span>
@@ -648,27 +712,25 @@ function AssignSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
                 {status}
               </span>
               <span className={styles.stepper}>
-                <button
-                  type="button"
+                <Guarded
                   className="btn secondary"
                   aria-label={`One fewer on ${r.name}`}
-                  disabled={n <= 0}
-                  onClick={() => assign([one(r.recipeId, n - 1)])}
+                  off={n <= 0}
+                  onPress={() => assign([one(r.recipeId, n - 1)])}
                 >
                   −
-                </button>
+                </Guarded>
                 <span data-assigned className="num">
                   {n}
                 </span>
-                <button
-                  type="button"
+                <Guarded
                   className="btn secondary"
                   aria-label={`One more on ${r.name}`}
-                  disabled={free <= 0}
-                  onClick={() => assign([one(r.recipeId, n + 1)])}
+                  off={free <= 0}
+                  onPress={() => assign([one(r.recipeId, n + 1)])}
                 >
                   +
-                </button>
+                </Guarded>
               </span>
             </li>
           );

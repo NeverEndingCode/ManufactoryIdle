@@ -14,7 +14,7 @@
   bottom: var(--sheet-bottom, 0px);
   left: 0;
   z-index: 30;
-  max-height: 72vh;
+  max-height: var(--sheet-max, 60vh);
   overflow-y: auto;
   border-top: var(--hairline) solid var(--line2);
   border-radius: 12px 12px 0 0;

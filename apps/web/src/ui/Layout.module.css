@@ -4,6 +4,9 @@
    tab bar, the drawer as a bottom sheet above it. No column may push the page sideways. */
 .layout {
   --tabbar-h: 56px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* The sheet's tallest; the column reserves it while the sheet is open (vh, then dvh). */
+  --sheet-max: 60vh;
   display: grid;
   gap: 12px 20px;
   min-width: 0;
@@ -26,10 +29,21 @@
   grid-template-rows: auto 1fr;
 }
 
+@supports (height: 100dvh) {
+  .layout {
+    --sheet-max: 60dvh;
+  }
+}
+
 .layout[data-panes="1"] {
-  --sheet-bottom: var(--tabbar-h);
+  --sheet-bottom: calc(var(--tabbar-h) + var(--safe-bottom));
   grid-template-columns: minmax(0, 1fr);
-  padding-bottom: var(--tabbar-h);
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+}
+
+/* The open sheet must not cover the last rows: reserve its height below them. */
+.layout[data-panes="1"][data-sheet="open"] {
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--sheet-max));
 }
 
 .lanes,
@@ -46,11 +60,20 @@
   grid-area: auto;
 }
 
+/* Sticky, and scrollable on its own: a tall drawer never runs off the viewport. */
 .detail {
   position: sticky;
   top: 10px;
   align-self: start;
   grid-area: detail;
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
+}
+
+/* Below 600 px the drawer is a fixed sheet; its host takes no room of its own. */
+.sheetHost {
+  display: contents;
 }
 
 .hint {
@@ -75,7 +98,8 @@
   left: 0;
   z-index: 25;
   display: flex;
-  height: var(--tabbar-h);
+  height: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
   border-top: var(--hairline) solid var(--line);
   background: var(--bg);
 }

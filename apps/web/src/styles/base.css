@@ -106,13 +106,15 @@ button {
   color: var(--t1);
 }
 
-.btn[aria-busy="true"] {
-  cursor: progress;
-}
-
-.btn:disabled {
+/* aria-disabled: off but still focusable (the drawer's spends keep focus while busy). */
+.btn:disabled,
+.btn[aria-disabled="true"] {
   opacity: 0.45;
   cursor: default;
+}
+
+.btn[aria-busy="true"] {
+  cursor: progress;
 }
 
 /* W-9: a hidden tab pauses every animation. The property isn't inherited and "*" doesn't

@@ -1,7 +1,7 @@
 // The one framed row (P-2): the "bottleneck" label in text, the advice, and its one action:
 // the inline buy (P-3), or storage, Quantum Storage or a reserve (Q-5). Spends are pessimistic
 // (W-13): the button is busy until the batch's response lands. The reserve is a setting.
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
@@ -59,7 +59,8 @@ function spendText(s: Snapshot, a: FrameSpend): string {
   }
 }
 
-/** A setting, not a spend (W-13): always enabled, nothing to wait for. */
+/** A setting, not a spend (W-13): never busy and never natively disabled. While its own send
+ * is unsettled a second click is ignored, so a double tap can't send a duplicate. */
 function ReserveButton({
   reserve,
   snapshot,
@@ -70,12 +71,19 @@ function ReserveButton({
   store: Pick<GameStore, "send">;
 }) {
   const name = snapshot.content.items.get(reserve.itemId)?.name ?? reserve.itemId;
+  const [sending, setSending] = useState(false);
   return (
     <button
       type="button"
       className={`btn ${styles.buy}`}
+      aria-disabled={sending}
       onClick={() => {
-        store.send([reserve], BOTTLENECK_BUY_LABEL).catch((err: unknown) => console.error(err));
+        if (sending) return;
+        setSending(true);
+        store
+          .send([reserve], BOTTLENECK_BUY_LABEL)
+          .catch((err: unknown) => console.error(err))
+          .finally(() => setSending(false));
       }}
     >
       {`Reserve ${Math.round(reserve.percent * 100)}% of ${name}`}

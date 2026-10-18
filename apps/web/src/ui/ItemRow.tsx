@@ -35,7 +35,9 @@ export function ItemRow({ row, snapshot, now, onOpen, expanded = false }: ItemRo
           type="button"
           className={`${styles.top} ${styles.open}`}
           aria-expanded={expanded}
-          aria-controls="detail"
+          // Only a rendered id: #detail exists while this item's drawer is open.
+          aria-controls={expanded ? "detail" : undefined}
+          data-open-row
           onClick={() => onOpen(row.itemId)}
         >
           {top}
