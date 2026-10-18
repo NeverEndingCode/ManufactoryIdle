@@ -1,7 +1,7 @@
 // F.1's three-line row: name and net rate; the storage bar with shown / cap; the QS and BOUND
 // chips. Then the satisfaction meter, or the split bar on a contested item.
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { format } from "@manufactory/engine";
+import { format, type ItemId } from "@manufactory/engine";
 import { shownStock, storageFraction, storageTransition } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import { rateText, stateClass, type RowModel } from "./derive.js";
@@ -13,15 +13,34 @@ export interface ItemRowProps {
   snapshot: Snapshot;
   /** The client clock (store.now), stable across renders. */
   now: () => number;
+  /** §13.1: the first line opens the drawer for this item. */
+  onOpen?: (itemId: ItemId) => void;
+  /** This item's drawer is open. */
+  expanded?: boolean;
 }
 
-export function ItemRow({ row, snapshot, now }: ItemRowProps) {
+export function ItemRow({ row, snapshot, now, onOpen, expanded = false }: ItemRowProps) {
+  const top = (
+    <>
+      <span className={styles.name}>{row.name}</span>
+      <span className={`${styles.rate} num`}>{rateText(row.netPerSecond)}</span>
+    </>
+  );
   return (
     <div className={styles.row}>
-      <div className={styles.top}>
-        <span className={styles.name}>{row.name}</span>
-        <span className={`${styles.rate} num`}>{rateText(row.netPerSecond)}</span>
-      </div>
+      {onOpen === undefined ? (
+        <div className={styles.top}>{top}</div>
+      ) : (
+        <button
+          type="button"
+          className={`${styles.top} ${styles.open}`}
+          aria-expanded={expanded}
+          aria-controls="detail"
+          onClick={() => onOpen(row.itemId)}
+        >
+          {top}
+        </button>
+      )}
       <div className={styles.storage}>
         <StorageBar snapshot={snapshot} itemId={row.itemId} name={row.name} now={now} />
         <span className={`${styles.amount} num`}>

@@ -1,6 +1,6 @@
 // One lane's rows (W-19: only the visible lane renders). At most one row is framed (P-2).
 import { useCallback, useMemo } from "react";
-import type { LaneId } from "@manufactory/engine";
+import type { ItemId, LaneId } from "@manufactory/engine";
 import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
@@ -15,9 +15,20 @@ export interface LaneViewProps {
   laneId: LaneId;
   bottleneck: BottleneckModel | null;
   pending: readonly Batch[];
+  /** The item whose drawer is open, if any. */
+  openItem?: ItemId | null;
+  onOpen?: (itemId: ItemId) => void;
 }
 
-export function LaneView({ store, snapshot, laneId, bottleneck, pending }: LaneViewProps) {
+export function LaneView({
+  store,
+  snapshot,
+  laneId,
+  bottleneck,
+  pending,
+  openItem = null,
+  onOpen,
+}: LaneViewProps) {
   const rows = useMemo(() => laneRows(snapshot, laneId), [snapshot, laneId]);
   const now = useCallback(() => store.now(), [store]);
   return (
@@ -30,7 +41,15 @@ export function LaneView({ store, snapshot, laneId, bottleneck, pending }: LaneV
       <ul className={styles.rows}>
         {rows.map((row) => {
           const framed = bottleneck !== null && bottleneck.itemId === row.itemId;
-          const item = <ItemRow row={row} snapshot={snapshot} now={now} />;
+          const item = (
+            <ItemRow
+              row={row}
+              snapshot={snapshot}
+              now={now}
+              onOpen={onOpen}
+              expanded={openItem === row.itemId}
+            />
+          );
           return (
             <li key={row.itemId} className={styles.row} data-item={row.itemId} data-tag={row.tag}>
               {framed ? (

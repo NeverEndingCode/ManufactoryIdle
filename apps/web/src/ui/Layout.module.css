@@ -1,0 +1,111 @@
+/* Q-7 / W-19, on viewport width only. data-panes comes from usePanes (matchMedia), so the
+   CSS and the React switch can never disagree. > 1000 px: lanes | detail | priority.
+   600–1000 px: lanes (or priority, by the switch) | detail. < 600 px: one column, a bottom
+   tab bar, the drawer as a bottom sheet above it. No column may push the page sideways. */
+.layout {
+  --tabbar-h: 56px;
+  display: grid;
+  gap: 12px 20px;
+  min-width: 0;
+}
+
+.layout > * {
+  min-width: 0;
+}
+
+.layout[data-panes="3"] {
+  grid-template-areas: "lanes detail priority";
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.85fr);
+}
+
+.layout[data-panes="2"] {
+  grid-template-areas:
+    "switch detail"
+    "lanes detail";
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+}
+
+.layout[data-panes="1"] {
+  --sheet-bottom: var(--tabbar-h);
+  grid-template-columns: minmax(0, 1fr);
+  padding-bottom: var(--tabbar-h);
+}
+
+.lanes,
+.priority {
+  grid-area: lanes;
+}
+
+.layout[data-panes="3"] .priority {
+  grid-area: priority;
+}
+
+.layout[data-panes="1"] .lanes,
+.layout[data-panes="1"] .priority {
+  grid-area: auto;
+}
+
+.detail {
+  position: sticky;
+  top: 10px;
+  align-self: start;
+  grid-area: detail;
+}
+
+.hint {
+  margin: 0;
+  padding: 12px;
+  border: var(--hairline) dashed var(--line2);
+  border-radius: 9px;
+  color: var(--t3);
+  font-size: var(--fs-2);
+}
+
+.switch {
+  display: flex;
+  grid-area: switch;
+  gap: 6px;
+}
+
+.tabbar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 25;
+  display: flex;
+  height: var(--tabbar-h);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--bg);
+}
+
+.view {
+  min-height: 44px;
+  padding: 6px 13px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--t2);
+  font-size: var(--fs-2);
+  cursor: pointer;
+}
+
+.tabbar .view {
+  flex: 1;
+  border-radius: 0;
+}
+
+.view.on {
+  color: var(--accent);
+  font-weight: var(--fw-strong);
+}
+
+.switch .view.on {
+  background: var(--s2);
+}
+
+/* Task 5's power dock. */
+.dock:empty {
+  display: none;
+}

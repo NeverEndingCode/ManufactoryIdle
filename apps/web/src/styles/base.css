@@ -32,8 +32,9 @@ button {
   outline-offset: 2px;
 }
 
+/* Three panes above 1000 px (W-19): room for lanes, detail and priority side by side. */
 .app {
-  max-width: 1200px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 10px 12px 24px;
 }
@@ -103,6 +104,10 @@ button {
   border-color: var(--line2);
   background: none;
   color: var(--t1);
+}
+
+.btn[aria-busy="true"] {
+  cursor: progress;
 }
 
 .btn:disabled {
