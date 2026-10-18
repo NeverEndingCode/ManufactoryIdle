@@ -133,7 +133,11 @@ export default tseslint.config(
   {
     // Browser code: tests and the test rig run in Node against the API, so they're exempt.
     files: ["apps/web/src/**/*.{ts,tsx}"],
-    ignores: ["apps/web/src/**/*.test.{ts,tsx}", "apps/web/src/sync/test-rig.ts"],
+    ignores: [
+      "apps/web/src/**/*.test.{ts,tsx}",
+      "apps/web/src/sync/test-rig.ts",
+      "apps/web/src/ui/test-fixtures.ts",
+    ],
     rules: {
       "@typescript-eslint/no-restricted-imports": [
         "error",

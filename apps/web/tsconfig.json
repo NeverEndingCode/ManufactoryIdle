@@ -7,5 +7,10 @@
     "noEmit": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/sync/test-rig.ts"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/sync/test-rig.ts",
+    "src/ui/test-fixtures.ts"
+  ]
 }
