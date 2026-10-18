@@ -117,11 +117,20 @@ export class FakeClientClock implements ClientClock {
     this.#timers.delete(id);
   }
 
-  /** Moves time forward by `ms`, firing due timers in order (by due time, then creation),
-   * settling between each; a timer set by a timer fires too if it falls inside the window. */
+  /** Awaited after each timer fires (and once at the end), on top of one macrotask turn. Point
+   * it at the code under test's idle(), so the work a timer starts finishes, and sets its next
+   * timer, before time moves on. Without it a timer set after a slow response lands past the
+   * window. */
+  settleWith: (() => Promise<void>) | null = null;
+
+  /** Moves time forward by `ms`, firing due timers in order (by due time, then creation).
+   * Before each scan it settles (one macrotask turn, then settleWith), so a timer set by work
+   * already in flight, or by a timer, fires too if it falls inside the window. */
   async advance(ms: number): Promise<void> {
     const target = this.#now + ms;
     for (;;) {
+      await settle();
+      await this.settleWith?.();
       let due: [number, { at: number; fn: () => void }] | undefined;
       for (const entry of this.#timers) {
         if (entry[1].at > target) continue;
@@ -131,10 +140,10 @@ export class FakeClientClock implements ClientClock {
       this.#timers.delete(due[0]);
       this.#now = Math.max(this.#now, due[1].at);
       due[1].fn();
-      await settle();
     }
     this.#now = target;
     await settle();
+    await this.settleWith?.();
   }
 }
 
@@ -144,7 +153,7 @@ export interface TestRig {
   clock: FakeClientClock;
   serverNow(): number;
   fetch: RigFetch;
-  /** Server clock += ms, then clock.advance(ms). */
+  /** clock.advance(ms); the server's clock follows the client's, timer by timer. */
   advance(ms: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -155,24 +164,25 @@ export async function makeRig(
   const db = await pgliteDb();
   await migrate(db);
   const content = await openContentStore(db, opts.contentDir ?? SLICE_DIR);
-  let serverMs = SERVER_T0;
+  // The server's clock is the client's, shifted: a timer that fires mid-advance sees both
+  // clocks at its own due time, never a server clock already at the end of the window.
+  const clock = new FakeClientClock();
+  const serverNow = () => SERVER_T0 + (clock.now() - CLIENT_T0);
   const app = buildServer({
     db,
     content,
-    clock: () => serverMs,
+    clock: serverNow,
     auth: guestAuth(db),
     ...(opts.limits ? { limits: opts.limits } : {}),
   });
   await app.ready();
-  const clock = new FakeClientClock();
   return {
     app,
     db,
     clock,
-    serverNow: () => serverMs,
+    serverNow,
     fetch: injectFetch(app),
     async advance(ms) {
-      serverMs += ms;
       await clock.advance(ms);
     },
     async close() {
