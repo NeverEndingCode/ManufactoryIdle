@@ -1,0 +1,140 @@
+.row {
+  padding: 9px 0;
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.name {
+  overflow: hidden;
+  min-width: 0;
+  font-size: var(--fs-1);
+  font-weight: var(--fw-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rate {
+  flex: none;
+  color: var(--t2);
+  font-size: var(--fs-2);
+  white-space: nowrap;
+}
+
+.storage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.bar {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--s3);
+}
+
+/* W-7: the fill never changes width; JS sets --from, then one scaleX transition. */
+.fill {
+  position: absolute;
+  inset: 0;
+  background: var(--t2);
+  transform: scaleX(var(--from, 0));
+  transform-origin: left;
+}
+
+.amount {
+  flex: none;
+  color: var(--t3);
+  font-size: var(--fs-3);
+  white-space: nowrap;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.chip {
+  padding: 1px 6px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 4px;
+  color: var(--t2);
+  font-size: var(--fs-3);
+}
+
+.sat {
+  position: relative;
+  height: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--s3);
+}
+
+.satFill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+}
+
+.state-fed {
+  background: var(--state-fed);
+}
+
+.state-throttled {
+  background: var(--state-throttled);
+}
+
+.state-paused,
+.state-idle {
+  background: var(--state-paused);
+}
+
+.splitWrap {
+  margin-top: 8px;
+}
+
+.split {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.split > div {
+  flex-basis: 0;
+}
+
+.toneA {
+  background: var(--accent);
+}
+
+.toneB {
+  background: var(--t3);
+}
+
+.toneC {
+  background: var(--line2);
+}
+
+.splitLabels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-top: 5px;
+  color: var(--t2);
+  font-size: var(--fs-3);
+}

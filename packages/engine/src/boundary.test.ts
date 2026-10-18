@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+// Each case spawns `pnpm exec eslint`, which loads the whole repo config (React and
+// browser blocks included since Phase 4a): several seconds per case on a shared CI
+// runner, past vitest's 5 s default.
+const SPAWNS_ESLINT = { timeout: 30_000 };
+
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 function lint(file: string): { code: number; output: string } {
@@ -19,7 +24,7 @@ function lint(file: string): { code: number; output: string } {
   }
 }
 
-describe("engine import boundary", () => {
+describe("engine import boundary", SPAWNS_ESLINT, () => {
   it("rejects a forbidden import from inside packages/engine", () => {
     const file = join(repoRoot, "packages/engine/src/__boundary_probe.ts");
     writeFileSync(file, 'import { readFileSync } from "node:fs";\nexport const x = readFileSync;\n');
@@ -75,7 +80,7 @@ describe("engine import boundary", () => {
   });
 });
 
-describe("engine determinism guardrail (spec A.5)", () => {
+describe("engine determinism guardrail (spec A.5)", SPAWNS_ESLINT, () => {
   it("rejects a dynamic import", () => {
     const file = join(repoRoot, "packages/engine/src/__determinism_probe.ts");
     writeFileSync(

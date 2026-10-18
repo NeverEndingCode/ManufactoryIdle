@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
@@ -5,8 +6,9 @@ import { toCanonical } from "../numbers/decimal.js";
 import { indexContent } from "../graph/index-content.js";
 import { liquid } from "../economy/storage.js";
 import { initialWorld } from "../state/world.js";
+import { deserializeWorld } from "../state/serialize.js";
 import { solve } from "../solve/solve.js";
-import { EPSILON_MS, resolve, schedule } from "./index.js";
+import { EPSILON_MS, resolve, schedule, scheduleDetail } from "./index.js";
 
 const fixtureDir = fileURLToPath(new URL("../../../content/bundles/fixture", import.meta.url));
 const content = indexContent(loadBundleDir(fixtureDir));
@@ -85,5 +87,50 @@ describe("schedule", () => {
     const s = schedule(idle, content);
     for (const id of content.stockItemIds) expect(s.items[id]!.netPerSecond).toBe(0);
     expect(s.nextBoundaryAtMs).toBeNull();
+  });
+});
+
+const GOLDEN_FRESH_SLICE =
+  '{"atMs":0.000001,"items":{"iron_ore":{"stock":"9.799999999999999e-10","netPerSecond":1},"iron_ingot":{"stock":"4.799999999999999e-10","netPerSecond":0.5},"iron_plate":{"stock":"3.3333333333333326e-10","netPerSecond":0.3333333333333333},"iron_rod":{"stock":"0e0","netPerSecond":0},"screw":{"stock":"0e0","netPerSecond":0},"reinforced_iron_plate":{"stock":"0e0","netPerSecond":0},"rotor":{"stock":"0e0","netPerSecond":0},"modular_frame":{"stock":"0e0","netPerSecond":0},"smart_plating":{"stock":"0e0","netPerSecond":0},"heavy_modular_frame":{"stock":"0e0","netPerSecond":0},"biomass":{"stock":"0e0","netPerSecond":0},"copper_ore":{"stock":"0e0","netPerSecond":0},"copper_ingot":{"stock":"0e0","netPerSecond":0},"wire":{"stock":"0e0","netPerSecond":0},"cable":{"stock":"0e0","netPerSecond":0},"copper_sheet":{"stock":"0e0","netPerSecond":0},"limestone":{"stock":"0e0","netPerSecond":0},"concrete":{"stock":"0e0","netPerSecond":0},"coal":{"stock":"0e0","netPerSecond":0},"steel_ingot":{"stock":"0e0","netPerSecond":0},"steel_beam":{"stock":"0e0","netPerSecond":0},"steel_pipe":{"stock":"0e0","netPerSecond":0},"encased_industrial_beam":{"stock":"0e0","netPerSecond":0},"water":{"stock":"0e0","netPerSecond":0},"crude_oil":{"stock":"0e0","netPerSecond":0},"heavy_oil_residue":{"stock":"0e0","netPerSecond":0},"plastic":{"stock":"0e0","netPerSecond":0},"rubber":{"stock":"0e0","netPerSecond":0},"fuel":{"stock":"0e0","netPerSecond":0},"empty_canister":{"stock":"0e0","netPerSecond":0},"packaged_fuel":{"stock":"0e0","netPerSecond":0},"polymer_resin":{"stock":"0e0","netPerSecond":0}},"nextBoundaryAtMs":4000000.00000002}';
+
+const loadFixture = (name: string) =>
+  deserializeWorld(
+    readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), "utf8"),
+  );
+
+const detailWorlds = [
+  ["fresh fixture", () => initialWorld(content, 1, 0), content],
+  ["fresh slice", () => initialWorld(slice, 1, 0), slice],
+  ["slice tier 8", () => loadFixture("slice-tier-8.world.json"), slice],
+  ["slice tier 8 reinforced full", () => loadFixture("slice-tier-8-reinforced-full.world.json"), slice],
+] as const;
+
+describe("scheduleDetail", () => {
+  it.each(detailWorlds)("%s: schedule is byte-identical to schedule()", (_n, make, c) => {
+    const s = make();
+    expect(JSON.stringify(scheduleDetail(s, c).schedule)).toBe(JSON.stringify(schedule(s, c)));
+  });
+
+  it("keeps the fresh slice schedule byte-identical to the pre-refactor golden", () => {
+    expect(JSON.stringify(schedule(initialWorld(slice, 1, 0), slice))).toBe(GOLDEN_FRESH_SLICE);
+  });
+
+  it("returns the state advanced past the internal unpin", () => {
+    const initial = initialWorld(slice, 1, 0);
+    const detail = scheduleDetail(initial, slice);
+    expect(detail.state.lastResolvedAt).toBe(detail.schedule.atMs);
+    expect(detail.state).toEqual(resolve(initial, slice, EPSILON_MS).state);
+  });
+
+  it.each(detailWorlds)("%s: solution holds the rates schedule.items came from", (_n, make, c) => {
+    const detail = scheduleDetail(make(), c);
+    for (const id of c.stockItemIds) {
+      expect(detail.solution.itemRates.get(id)?.net ?? 0).toBe(detail.schedule.items[id]!.netPerSecond);
+    }
+  });
+
+  it("does not advance a world with nothing pinned", () => {
+    const tier8 = loadFixture("slice-tier-8.world.json");
+    expect(scheduleDetail(tier8, slice).state).toEqual(tier8);
   });
 });

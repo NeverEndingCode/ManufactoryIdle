@@ -1,0 +1,50 @@
+/* The frame keeps its colour and its label under reduced motion (W-18); only the border's
+   opacity pulses, so the row's text never fades. */
+.frame {
+  position: relative;
+  margin: 6px -6px;
+  padding: 8px 12px 12px;
+  border-radius: 9px;
+}
+
+.frame::before {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--state-bottleneck);
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+
+.frame .label {
+  color: var(--state-bottleneck);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-strong);
+  letter-spacing: 0.08em;
+}
+
+.frame .advice {
+  margin: 4px 0 10px;
+  color: var(--state-bottleneck);
+  font-size: var(--fs-2);
+}
+
+.buy {
+  max-width: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .frame::before {
+    animation: pulse var(--pulse-cycle) ease-in-out infinite;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}

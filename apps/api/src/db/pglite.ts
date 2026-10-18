@@ -25,9 +25,9 @@ function wrap(q: Queryable, root: PGlite | null, inTx: boolean): Db {
   };
 }
 
-/** In-memory PGlite database, for tests. */
-export async function pgliteDb(): Promise<Db> {
-  const pg = new PGlite();
+/** PGlite database: in memory for tests, or persisted under `dataDir` (the dev server). */
+export async function pgliteDb(dataDir?: string): Promise<Db> {
+  const pg = new PGlite(dataDir);
   await pg.waitReady;
   return wrap(pg, pg, false);
 }

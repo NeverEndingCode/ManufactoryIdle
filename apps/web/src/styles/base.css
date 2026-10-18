@@ -1,0 +1,121 @@
+/* Rows, not cards; hairlines; no shadows or gradients (W-17). */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--t1);
+  font-family: var(--sans);
+  font-size: var(--fs-1);
+  font-weight: var(--fw-regular);
+  line-height: 1.45;
+  overflow-x: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* W-20: a visible focus ring on every control. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 10px 12px 24px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px 12px;
+}
+
+.app-header h1 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--fs-1);
+  font-weight: var(--fw-strong);
+  letter-spacing: 0.14em;
+}
+
+.app-loading {
+  color: var(--t3);
+  font-size: var(--fs-2);
+}
+
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.notices:empty {
+  display: none;
+}
+
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 7px;
+  background: var(--s2);
+  color: var(--t2);
+  font-size: var(--fs-2);
+}
+
+.notice > span {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.btn {
+  min-height: 44px;
+  padding: 8px 13px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-strong);
+  cursor: pointer;
+}
+
+.btn.secondary {
+  border-color: var(--line2);
+  background: none;
+  color: var(--t1);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* W-9: a hidden tab pauses every animation. The property isn't inherited and "*" doesn't
+   match pseudo-elements, so they are named too (the frame's pulse is on ::before). */
+@media (prefers-reduced-motion: no-preference) {
+  :root.hidden-tab *,
+  :root.hidden-tab *::before,
+  :root.hidden-tab *::after {
+    animation-play-state: paused;
+  }
+}

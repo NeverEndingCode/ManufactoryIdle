@@ -1,0 +1,76 @@
+/* W-17: §13.0 as tokens, seeded from the MVP's :root. Dark is the default. The four state
+   colours are for state and frame rules only (tokens.test.ts checks it). */
+:root {
+  color-scheme: dark;
+  --bg: #14181d;
+  --s1: #1a1f26;
+  --s2: #212832;
+  --s3: #2a323d;
+  --line: #2c343f;
+  --line2: #3a444f;
+  --t1: #e4e9ef;
+  --t2: #98a3b0;
+  --t3: #69737f;
+  --accent: #f59042;
+  --on-accent: #14181d;
+  --state-fed: #57b96a;
+  --state-throttled: #dda12e;
+  --state-bottleneck: #e0594a;
+  --state-paused: #69737f;
+  --fs-1: 15px;
+  --fs-2: 13px;
+  --fs-3: 12px;
+  --fw-regular: 400;
+  --fw-strong: 600;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --hairline: 0.5px;
+  /* W-18: the bottleneck pulse, one named constant. */
+  --pulse-cycle: 2.6s;
+}
+
+/* The light set: by preference until 4c's settings toggle can set data-theme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --s1: #ffffff;
+    --s2: #eef1f4;
+    --s3: #dfe4ea;
+    --line: #d5dbe2;
+    --line2: #c2cad3;
+    --t1: #1a1f26;
+    --t2: #4d5865;
+    --t3: #6b7480;
+    --accent: #b85a12;
+    --on-accent: #ffffff;
+    --state-fed: #2e7d3e;
+    --state-throttled: #9a6a00;
+    --state-bottleneck: #c0392b;
+    --state-paused: #6b7480;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --s1: #ffffff;
+  --s2: #eef1f4;
+  --s3: #dfe4ea;
+  --line: #d5dbe2;
+  --line2: #c2cad3;
+  --t1: #1a1f26;
+  --t2: #4d5865;
+  --t3: #6b7480;
+  --accent: #b85a12;
+  --on-accent: #ffffff;
+  --state-fed: #2e7d3e;
+  --state-throttled: #9a6a00;
+  --state-bottleneck: #c0392b;
+  --state-paused: #6b7480;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}

@@ -2,9 +2,18 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/node_modules/**", "**/*.d.ts"] },
+  {
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/*.d.ts",
+      "**/playwright-report/**",
+      "**/test-results/**",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -105,6 +114,51 @@ export default tseslint.config(
         },
         { object: "Math", property: "exp", message: "Spec E.4: libm-dependent." },
         { object: "Math", property: "log", message: "Spec E.4: libm-dependent." },
+      ],
+    },
+  },
+  {
+    // The web client runs in a browser (W-3).
+    files: ["apps/web/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: { ...globals.browser },
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "error",
+    },
+  },
+  {
+    // Browser code: tests and the test rig run in Node against the API, so they're exempt.
+    files: ["apps/web/src/**/*.{ts,tsx}"],
+    ignores: [
+      "apps/web/src/**/*.test.{ts,tsx}",
+      "apps/web/src/sync/test-rig.ts",
+      "apps/web/src/ui/test-fixtures.ts",
+    ],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@manufactory/content", "@manufactory/content/*"],
+              message:
+                "W-4: browser code never imports @manufactory/content (node:fs, node:crypto); content comes from GET /api/content/:checksum",
+            },
+            {
+              group: ["@manufactory/api", "@manufactory/api/*"],
+              message: "P-13: the API is a test dependency only",
+            },
+            { regex: "^node:", message: "browser code" },
+            {
+              group: ["**/test-fixtures*", "**/test-rig*"],
+              message: "test-only helpers (Node, the API): never imported by app code",
+            },
+          ],
+        },
       ],
     },
   },
