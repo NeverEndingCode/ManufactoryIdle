@@ -2,7 +2,7 @@ name: CI
 
 on:
   push: { branches: [main] }
-  pull_request: { branches: [main] }
+  pull_request:
   # The pacing gate is too slow for every commit (~5 minutes in CI as of 2026-10-12;
   # ~15 when this was written), so it also runs nightly: a content change that
   # lands green on a shallow smoke run still gets measured to tier 10 within a day.

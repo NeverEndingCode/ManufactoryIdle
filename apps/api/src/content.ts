@@ -23,6 +23,18 @@ export async function openContentStore(db: Db, dir: string): Promise<ContentStor
   const content = indexContent(bundle);
 
   await db.transaction(async (tx) => {
+    // The engine's expansion cache is process-global and keyed on the authored label, so one
+    // label must mean one checksum. Refuse a second bundle under a label already published.
+    const clash = await tx.query<{ version: string }>(
+      "select version from content_versions where bundle->>'version' = $1 and version <> $2 limit 1",
+      [bundle.version, version],
+    );
+    if (clash.length > 0) {
+      throw new Error(
+        `content label "${bundle.version}" is already published with checksum ${clash[0]!.version}; ` +
+          `this bundle has checksum ${version}. Bump the label when the content changes.`,
+      );
+    }
     await tx.query(
       `insert into content_versions (version, checksum, bundle) values ($1, $1, $2::jsonb)
        on conflict (version) do nothing`,

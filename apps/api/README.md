@@ -16,7 +16,7 @@ client sends actions and gets back the resolved world.
 | `PORT` | `8080` | Listen port. |
 | `HOST` | `127.0.0.1` | Listen address. |
 | `LOG_LEVEL` | `info` | pino log level. |
-| `TRUST_PROXY` | unset (off) | Fastify's `trustProxy`, for a deployment behind a reverse proxy: `true` (trust every hop; only if nothing reaches the API except through the proxy), or a comma list of the proxy's addresses or CIDRs, e.g. `10.0.0.1` or `127.0.0.1,10.0.0.0/8`. A hop count is refused at startup: Fastify 5 accepts one but then trusts nothing. Unset behind a proxy, `request.ip` is the proxy's, and every guest shares one `POST /api/guests` bucket. |
+| `TRUST_PROXY` | unset (off) | Fastify's `trustProxy`, for a deployment behind a reverse proxy: `true` exactly (case-sensitive: `TRUE` is not `true`, and is read as an address, not as trust-all) (trust every hop; only if nothing reaches the API except through the proxy), or a comma list of the proxy's addresses or CIDRs, e.g. `10.0.0.1` or `127.0.0.1,10.0.0.0/8`. A hop count is refused at startup: Fastify 5 accepts one but then trusts nothing. Unset behind a proxy, `request.ip` is the proxy's, and every guest shares one `POST /api/guests` bucket. |
 | `ADMIN_TOKEN` | unset | Enables `POST /api/admin/migrate-world` (see below). Unset or empty: the route does not exist and answers 404. Use a long random value. |
 | `SUPERTOKENS_CONNECTION_URI` | unset | The SuperTokens core, e.g. `http://localhost:3567`. Unset: accounts are disabled (see below). |
 | `SUPERTOKENS_API_KEY` | unset | The core's API key (`API_KEYS` in `infra/.env`). |

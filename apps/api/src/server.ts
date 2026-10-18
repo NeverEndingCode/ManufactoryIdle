@@ -282,6 +282,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         },
         preValidation: async (request, reply) => {
           if (!isAdmin(request.headers.authorization, expected)) {
+            // Never the token: the address and route only.
+            request.log.warn({ ip: request.ip, route: "admin migrate-world" }, "admin token rejected");
             return reply.code(401).header("www-authenticate", "Admin").send({ error: "unauthorized" });
           }
         },

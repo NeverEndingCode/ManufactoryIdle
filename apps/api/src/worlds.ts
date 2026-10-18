@@ -317,7 +317,8 @@ export async function replayWorld(
     if (batch.rejected) {
       throw new Error(`replay of world ${worldId} rejected at log row ${row.id}: ${batch.reason}`);
     }
-    state = batch.state;
+    // A re-pin row (admin migrate) moves the state's label to its version's; other rows leave it.
+    state = { ...batch.state, contentVersion: pinned.bundle.version };
   }
   return state;
 }
@@ -384,6 +385,13 @@ export async function migrateWorld(
     const target = await content.get(toVersion, tx);
     const incompatible = (detail: string) =>
       ({ migrated: false, reason: "incompatible-version", detail }) as const;
+    // The engine's expansion cache keys on the authored label, so two bundles sharing a label
+    // would share cached rates; a cold process could then resolve differently from this one.
+    if (world.state.contentVersion === target.bundle.version && world.contentVersion !== toVersion) {
+      return incompatible(
+        `the target has the world's bundle label "${target.bundle.version}" but a different checksum; bump the label`,
+      );
+    }
     const misfit = contentMisfit(world.state, target);
     if (misfit) return incompatible(misfit);
     let state: WorldState;
@@ -391,8 +399,8 @@ export async function migrateWorld(
       const resolved = resolve(world.state, target, nowMs - world.state.lastResolvedAt);
       const batch = applyBatch(resolved.state, target, [], resolved.state.seed);
       if (batch.rejected) return incompatible(batch.reason);
-      // What is stored must load again.
-      state = deserializeWorld(toWire(batch.state));
+      // What is stored must load again. The state carries the target's label from here on.
+      state = deserializeWorld(toWire({ ...batch.state, contentVersion: target.bundle.version }));
     } catch (err) {
       return incompatible(err instanceof Error ? err.message : String(err));
     }

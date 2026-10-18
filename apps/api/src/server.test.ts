@@ -821,6 +821,9 @@ describe("POST /api/admin/migrate-world (D.6)", () => {
     const bundle = structuredClone(loadBundleDir(SLICE));
     const miner = bundle.recipes.find((r) => r.id === "mine_iron_ore")!;
     miner.outputs[0]!.rate = rate;
+    // A new label too: the engine's expansion cache keys on the label, so changed numbers
+    // under an old label are refused (see the relabel test below).
+    bundle.version = `${bundle.version}-rate-${rate}`;
     const version = bundleChecksum(bundle);
     await db.query(
       "insert into content_versions (version, checksum, bundle) values ($1, $1, $2::jsonb)",
@@ -832,6 +835,33 @@ describe("POST /api/admin/migrate-world (D.6)", () => {
   async function playerId(): Promise<string> {
     return (await db.query<{ id: string }>("select id from players"))[0]!.id;
   }
+
+  it("refuses a target with the world's bundle label but another checksum, and sets state.contentVersion on a real re-pin", async () => {
+    const { app } = await server(SLICE, undefined, { adminToken: ADMIN });
+    await createGuest(app);
+    const pid = await playerId();
+    // Same label, other numbers: published directly, as only a rogue writer could.
+    const bundle = structuredClone(loadBundleDir(SLICE));
+    bundle.recipes.find((r) => r.id === "mine_iron_ore")!.outputs[0]!.rate = "77";
+    const same = bundleChecksum(bundle);
+    await db.query("insert into content_versions (version, checksum, bundle) values ($1, $1, $2::jsonb)", [
+      same,
+      JSON.stringify(bundle),
+    ]);
+    const before = await onlyWorld();
+    const res = await migrateWorld(app, admin(), { playerId: pid, toVersion: same });
+    expect(res.statusCode).toBe(400);
+    const body = res.json() as { error: string; detail: string };
+    expect(body.error).toBe("incompatible-version");
+    expect(body.detail).toMatch(/label/);
+    expect(await onlyWorld()).toEqual(before);
+    expect(await logRows()).toEqual([]);
+
+    const variant = await publishVariant("90");
+    now = T0 + 5 * MINUTE;
+    expect((await migrateWorld(app, admin(), { playerId: pid, toVersion: variant.version })).statusCode).toBe(200);
+    expect((await storedState()).contentVersion).toBe(variant.content.bundle.version);
+  });
 
   it("404s when ADMIN_TOKEN is unset, so the route is not advertised", async () => {
     const { app } = await server();
@@ -933,7 +963,7 @@ describe("POST /api/admin/migrate-world (D.6)", () => {
     expect(row.state_version).toBe("2");
     // The re-pin is a batch of no actions on the new version: resolved to now, on it.
     const r = resolve(at10, variant.content, 5 * MINUTE);
-    expect(row.state).toEqual(wire(r.state));
+    expect(row.state).toEqual(wire({ ...r.state, contentVersion: variant.content.bundle.version }));
     expect(row.last_resolved_at_ms).toBe(now);
 
     now = T0 + 20 * MINUTE;

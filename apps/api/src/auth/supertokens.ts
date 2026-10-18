@@ -183,6 +183,8 @@ export function superTokensFromEnv(
       // API answers 503 and never falls back to the guest token. Our own invariant error
       // above is thrown outside this try, so it stays a 500. (A failed JWKS fetch is not one
       // of these: the SDK reports it as TRY_REFRESH_TOKEN, a 401, before this sees it.)
+      // This includes an SDK bug: any non-SuperTokens error is treated as an outage and answered
+      // 503, which fails closed (the caller is never authenticated by guessing).
       let session: Awaited<ReturnType<typeof Session.getSession>>;
       try {
         session = await Session.getSession(request, reply, { sessionRequired: false });
