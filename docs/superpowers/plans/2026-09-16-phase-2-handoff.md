@@ -1,5 +1,7 @@
 # Phase 2 handoff — calibrated content
 
+**Phase 2 is complete (2026-10-16).** Next is Phase 3 (server): its design is `docs/superpowers/specs/2026-10-16-phase-3-server-design.md`, being built on branch `phase-3a-api`. This file stays as the record of how Phase 2 got here.
+
 Written 2026-09-16, at the end of the session that finished Task 3; header sections
 refreshed 2026-10-12 for PR #4 leaving draft. This is the
 orientation document: what is true now, what is left, and which assumptions have already
@@ -19,7 +21,7 @@ replace it — it says where that plan is now and which parts of it have gone st
   44 recipes, 14 machine classes.
 - `derived.yaml` in that directory is **generated**. Do not hand-edit it.
 
-## State: Tasks 3 and 4 done; all three policies gated, two of them by known-red pins
+## State: Phase 2 complete; all three policies gated, two of them by known-red pins
 
 Phase 2's deliverable is a calibrated `derived.yaml` plus CI pacing gates. Both now
 ship. The gate is `sim gate` (`apps/sim/src/gate.ts` for the rules, `gate-cli.ts` for
@@ -28,13 +30,13 @@ the runs), in two depths:
 | | what it runs | cost | where |
 |---|---|---|---|
 | `pnpm --filter @manufactory/sim gate:smoke` | greedy to tier 4, twice | **2.6 s** | every commit, in `check` |
-| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **2m15s** local (2026-10-14), **5m15s** in CI (2026-10-12) | `pacing` job, PRs + nightly |
+| `pnpm --filter @manufactory/sim gate` | all three policies to tier 10, greedy twice | **2m19s** local (2026-10-16), **5m15s** in CI (2026-10-12) | `pacing` job, PRs + nightly |
 
-Both currently PASS. The full gate's cost history: 15m54s (2026-09-16), ~49 min once
+Both currently PASS (tier 1 is `greedy`'s known-red pin, below). The full gate's cost history: 15m54s (2026-09-16), ~49 min once
 `bottleneck` made progress, 13 min after the stall cut-off and parallel workers, 135 min
 once `bottleneck` finished all ten tiers, 85 min after R32 asked jointly, and 2m18s since
 `resolve` solves each item-state configuration once (2026-10-12), 2m15s at 2026-10-14 with
-`bottleneck` finishing tier 10. `timeout-minutes` on
+`bottleneck` finishing tier 10, 2m19s at 2026-10-16 after the live-only-storage recalibration. `timeout-minutes` on
 the `pacing` job is 20. It fails the build on a tier time outside tolerance, a known-red
 pin that has drifted *or gone stale*, dead time over threshold, an observed `r_eff` at
 the runaway floor, or a determinism divergence. Verified to actually fail: pointed at
@@ -62,8 +64,8 @@ Recalibration (`calibrate --max-tier 10 --scales 0.5 --no-refine --write`; no `r
 Moved pins (old -> new). `casual`: t1 3.0035 -> 2.0046, t2 4.0139 -> 3.1389, t3 6.1115 -> 5.0069, t4 9.0434 -> 8.0579, t5 18.0034 (same), t6 28.0021 -> 26.0021, t7 42.0167 -> 41.0167, t8 62.0021 (same), t9 90.0014 -> 89.0013, t10 98.0222 -> 97.1651. `bottleneck`: t1 0.0664 -> 0.0716, t2 0.1321 -> 0.1901, t3 0.2965 -> 0.3325, t4 0.4209 -> 0.4396, t5 0.5012 -> 0.5659, t6 0.7536 -> 0.7914, t7 1.0156 -> 1.1113, t8 1.3441 -> 1.4360, t9 2.2276 -> 2.2982, t10 10.0576 -> 9.6322 (dead 0.7753 -> 1.4717). The `bottleneck` pins moved only because the recalibrated amounts changed; its policy did not. The gate takes 2m19s locally (bottleneck 138s), unchanged against the 2m18s in ci.yml.
 
 **Phase 2 close-out items found on 2026-10-16:**
-- **Calibrator bug: `--max-tier N --write` rewrites `derived.yaml` with only tiers <= N** (drops the milestones above N and truncates `observedCollectionsToTier`). It should merge into the existing file.
-- **`--no-solve-reff` holds scale 1.0, not the current scale** (main's is 0.5), so it changes every `rEff` and `costRatio` and, on the slice, left tiers 2-4 off target (−11.8%, +7.7%, −8.7%). `--scales 0.5 --no-refine` is the way to hold the current scale.
+- **Done 2026-10-16 (C-1, branch `phase-2-closeout`, commit e5d1172): calibrator bug: `--max-tier N --write` rewrites `derived.yaml` with only tiers <= N** (drops the milestones above N and truncates `observedCollectionsToTier`). It is now refused without `--merge`, which keeps the higher tiers' amounts and nulls their observed values.
+- **Done 2026-10-16 (C-2, branch `phase-2-closeout`, commit e5d1172): `--no-solve-reff` holds scale 1.0, not the current scale** (main's is 0.5), so it changes every `rEff` and `costRatio` and, on the slice, left tiers 2-4 off target (−11.8%, +7.7%, −8.7%). `--scale 0.5` is now shorthand for `--scales 0.5 --no-refine`, and `sim --help` says what `--no-solve-reff` holds. C-3 (the overshoot short-circuit) also landed, commit cf82e7d.
 
 History (superseded by the table above): until 2026-10-13 tier 10 was the one miss
 (20.8722, −16.5%). A plain `sim run` against the committed bundle reproduces
@@ -637,7 +639,8 @@ runs themselves are independent:
 - **`pnpm test` through turbo produced an empty output file twice.** Per-package
   `npx vitest run` is what to trust.
 - The sim suite is ~10 min and `calibrate.test.ts` is ~99% of it; 6 of its 71 tests are
-  86% of that. A full ten-tier calibration is ~1 hour.
+  86% of that. A full ten-tier calibration with an r_eff scan is ~1 hour; at one fixed scale
+  (`--scale 0.5`, measured 2026-10-16) it is ~3 minutes.
 
 ## Commands
 
