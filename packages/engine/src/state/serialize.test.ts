@@ -3,6 +3,7 @@ import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
 import { D, type Dec } from "../numbers/decimal.js";
 import { indexContent } from "../graph/index-content.js";
+import { apply } from "../actions/index.js";
 import { deserializeWorld, serializeWorld } from "./serialize.js";
 import { initialWorld, type WorldState } from "./world.js";
 
@@ -82,6 +83,40 @@ describe("serializeWorld", () => {
     const w = populated();
     const shuffled: WorldState = { ...w, stored: { iron_ore: w.stored.iron_ore!, ...w.stored } };
     expect(serializeWorld(shuffled)).toBe(serializeWorld(w));
+  });
+
+  it("is canonical for nested objects too (byte identity survives a jsonb round trip)", () => {
+    // jsonb re-orders object keys, so a stored world reads back with every nested object's
+    // keys in a different order. Every plain object -- priority entries, timers, the seed,
+    // the records -- is rebuilt here with its keys reversed; Decimal instances are left alone.
+    const tapped = apply(
+      populated(),
+      content,
+      { type: "TAP", count: 2, clientElapsedMs: 1000 },
+      populated().seed,
+    );
+    if (tapped.rejected) throw new Error(tapped.reason);
+    const w = tapped.state;
+    expect(w.timers.length).toBeGreaterThan(0);
+    const reversed = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(reversed);
+      if (
+        value !== null &&
+        typeof value === "object" &&
+        Object.getPrototypeOf(value) === Object.prototype
+      ) {
+        return Object.fromEntries(
+          Object.entries(value)
+            .reverse()
+            .map(([key, v]) => [key, reversed(v)]),
+        );
+      }
+      return value;
+    };
+    const copy = reversed(w) as WorldState;
+    expect(Object.keys(copy.priority[0]!)).toEqual(Object.keys(w.priority[0]!).reverse());
+    expect(Object.keys(copy.timers[0]!)).toEqual(Object.keys(w.timers[0]!).reverse());
+    expect(serializeWorld(copy)).toBe(serializeWorld(w));
   });
 
   it("is idempotent under a second round trip", () => {
