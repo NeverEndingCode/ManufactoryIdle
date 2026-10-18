@@ -27,11 +27,16 @@ export function memoryTokenStorage(): TokenStorage {
 const PROBE_KEY = "mi.storageProbe";
 
 /** localStorage under GUEST_TOKEN_KEY; if any access throws, an in-memory store with
- * persistent: false. A probe write at construction catches storage that reads but can't
- * write (Safari's old private mode); a later throw also falls back, keeping the token. */
-export function browserTokenStorage(
-  ls: Storage | undefined = typeof localStorage === "undefined" ? undefined : localStorage,
-): TokenStorage {
+ * persistent: false. Even reading the global can throw (Chrome with site data blocked). A
+ * probe write at construction catches storage that reads but can't write (Safari's old
+ * private mode); a later throw also falls back, keeping the token. */
+export function browserTokenStorage(arg?: Storage): TokenStorage {
+  let ls: Storage | undefined;
+  try {
+    ls = arg ?? (globalThis as { localStorage?: Storage }).localStorage;
+  } catch {
+    return memoryTokenStorage();
+  }
   const memory = memoryTokenStorage();
   if (ls === undefined) return memory;
   try {

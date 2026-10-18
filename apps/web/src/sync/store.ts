@@ -65,6 +65,7 @@ function plateauText(offlineCapMs: number): string {
 }
 
 type Cause = "get" | "post";
+type Adoption = "adopted" | "stale" | "failed";
 
 export class GameStore {
   readonly #fetch: FetchLike;
@@ -93,7 +94,11 @@ export class GameStore {
   /** A GET waiting on a pause or a network backoff. `force` skips the staleness check. */
   #deferred: { timer: number; force: boolean } | null = null;
   #guestTimer: number | null = null;
+  /** The one POST /api/guests in flight: a second start() joins it, never a second guest. */
+  #guesting: Promise<void> | null = null;
   #tickTimer: number | null = null;
+  /** The ephemeral-token banner was raised once; a dismissed one doesn't come back. */
+  #ephemeralShown = false;
 
   /** Everything in flight that idle() waits on, bar the outbox's own request. */
   readonly #work = new Set<Promise<unknown>>();
@@ -111,7 +116,9 @@ export class GameStore {
       clock: d.clock,
       authHeader: () => this.#authHeader(),
       baseVersion: () => this.#snapshot?.stateVersion ?? 0,
-      onOutcome: (_b, o) => this.#handle(o, "post", this.#clock.now()),
+      onOutcome: async (_b, o) => {
+        await this.#handle(o, "post", this.#clock.now());
+      },
       isPaused: () => Math.max(0, this.#pausedUntil - this.#clock.now()),
       onChange: () => this.#emit(),
       ...(d.random ? { random: d.random } : {}),
@@ -149,15 +156,17 @@ export class GameStore {
   /** First load: health ║ (token ? GET : POST /api/guests) → content(checksum) → snapshot. */
   start(): Promise<void> {
     this.#stopped = false;
-    if (!this.#tokens.persistent)
-      this.#setNotice({ kind: "ephemeral-token", text: TEXT["ephemeral-token"] });
+    this.#checkPersistence();
+    this.#outbox.start();
+    this.#armTick();
     this.#track(this.#loadHealth());
     if (this.#tokens.get() !== null) this.#wantGet(true);
     else this.#createGuest();
     return this.idle();
   }
 
-  /** Clears every timer. */
+  /** Clears every timer. A response landing afterwards is ignored (a new guest token is still
+   * kept, so the next start() reuses it). */
   stop(): void {
     this.#stopped = true;
     this.#clearBoundary();
@@ -220,8 +229,9 @@ export class GameStore {
     return this.idle();
   }
 
-  /** Nothing in flight: no request, no adoption, no content load (P-9). A batch or GET waiting
-   * on a backoff or pause timer is not in flight. */
+  /** Nothing in flight: no request, no adoption, no content load (P-9). It does NOT wait for
+   * the outbox to empty: a batch (or a GET) waiting out a backoff or a pause timer is not in
+   * flight, and waits for the clock. Under a FakeClientClock, advance it instead. */
   async idle(): Promise<void> {
     for (;;) {
       await this.#outbox.idle();
@@ -238,6 +248,7 @@ export class GameStore {
 
   #authHeader(): string | null {
     const token = this.#tokens.get();
+    this.#checkPersistence();
     return token === null ? null : `Guest ${token}`;
   }
 
@@ -259,9 +270,20 @@ export class GameStore {
     }
   }
 
+  /** W-14: the banner, once the token lives only in memory. Storage can fail mid-session. */
+  #checkPersistence(): void {
+    if (this.#tokens.persistent || this.#ephemeralShown) return;
+    this.#ephemeralShown = true;
+    this.#setNotice({ kind: "ephemeral-token", text: TEXT["ephemeral-token"] });
+  }
+
   #createGuest(): void {
-    if (this.#stopped) return;
-    this.#track(this.#postGuest());
+    if (this.#stopped || this.#guesting) return;
+    const guesting = this.#postGuest().finally(() => {
+      this.#guesting = null;
+    });
+    this.#guesting = guesting;
+    this.#track(guesting);
   }
 
   async #postGuest(): Promise<void> {
@@ -274,13 +296,14 @@ export class GameStore {
       outcome = { kind: "retry" };
     }
     const receivedAt = this.#clock.now();
+    if (this.#stopped && outcome.kind !== "adopt") return;
     switch (outcome.kind) {
       case "adopt": {
         const { guestToken, world } = outcome.body as unknown as GuestResponse;
+        // Kept even after stop(): the guest exists now, and the next start() must reuse it.
         this.#tokens.set(guestToken);
-        if (!this.#tokens.persistent)
-          this.#setNotice({ kind: "ephemeral-token", text: TEXT["ephemeral-token"] });
-        this.#failures = 0;
+        if (this.#stopped) return;
+        this.#checkPersistence();
         await this.#adopt(world, "get", receivedAt);
         return;
       }
@@ -296,6 +319,7 @@ export class GameStore {
       case "retry": {
         this.#failures += 1;
         const step = RETRY_STEPS_MS[Math.min(this.#getRetries++, RETRY_STEPS_MS.length - 1)]!;
+        if (this.#stopped) return;
         this.#guestTimer = this.#clock.setTimeout(() => {
           this.#guestTimer = null;
           this.#createGuest();
@@ -327,6 +351,7 @@ export class GameStore {
   }
 
   #defer(ms: number, force: boolean): void {
+    if (this.#stopped || this.#halted) return;
     const keepForce = force || (this.#deferred?.force ?? false);
     this.#clearDeferred();
     const timer = this.#clock.setTimeout(() => {
@@ -349,21 +374,20 @@ export class GameStore {
     }
     const receivedAt = this.#clock.now();
     this.#getting = false;
-    await this.#handle(outcome, "get", receivedAt);
-    // A dropped or failed GET leaves the old snapshot's timer to re-arm.
-    if (outcome.kind !== "adopt") this.#arm();
+    if (this.#stopped) return;
+    const result = await this.#handle(outcome, "get", receivedAt);
+    // A GET dropped as stale (W-6) re-arms from the snapshot it lost to. Nothing else re-arms
+    // here: a failure's deferred retry is its re-trigger, and re-arming from a boundary already
+    // past would fire at once and skip the backoff.
+    if (result === "stale") this.#arm();
   }
 
   /** One handler for every response, GET and POST alike (W-11). */
-  async #handle(o: Outcome, cause: Cause, receivedAt: number): Promise<void> {
+  async #handle(o: Outcome, cause: Cause, receivedAt: number): Promise<Adoption | void> {
+    if (this.#stopped) return;
     switch (o.kind) {
       case "adopt":
-        this.#failures = 0;
-        this.#notFound = 0;
-        if (cause === "get") this.#getRetries = 0;
-        this.#dropNotice("accounts-unavailable");
-        await this.#adopt(o.body, cause, receivedAt);
-        return;
+        return this.#adopt(o.body, cause, receivedAt);
       case "rejected":
         this.#failures = 0;
         this.#setNotice({ kind: "rejected", text: o.body.reason });
@@ -410,22 +434,40 @@ export class GameStore {
     this.#halted = true;
     this.#clearBoundary();
     this.#clearDeferred();
+    // Batches made for the lost world must never reach a new one (newFactory).
+    this.#outbox.clear({ kind: "unauthorized" });
     this.#setNotice({ kind: "guest-expired", text: TEXT["guest-expired"] });
   }
 
   /** Content first (a re-pin loads the new bundle, W-5), then the ordering check (W-6). */
-  async #adopt(body: WorldResponse, cause: Cause, receivedAt: number): Promise<void> {
-    let content;
+  async #adopt(body: WorldResponse, cause: Cause, receivedAt: number): Promise<Adoption> {
+    let next: Snapshot;
     try {
-      content = await this.#content.get(body.contentChecksum);
-    } catch {
+      const content = await this.#content.get(body.contentChecksum);
+      next = makeSnapshot(body, content, receivedAt);
+    } catch (err) {
+      // The content load, or a body makeSnapshot can't read: back off and GET again.
+      if (this.#stopped) return "failed";
+      console.error("adopt", err);
       this.#failures += 1;
-      this.#defer(RETRY_STEPS_MS[0], true);
+      const step = RETRY_STEPS_MS[Math.min(this.#getRetries, RETRY_STEPS_MS.length - 1)]!;
+      this.#getRetries += 1;
+      this.#defer(step, true);
       this.#emit();
-      return;
+      return "failed";
     }
-    const next = makeSnapshot(body, content, receivedAt);
-    if (!isAdoptable(this.#snapshot, next)) return;
+    if (this.#stopped) return "failed";
+    // A whole exchange worked: only now do the failure counters reset.
+    this.#failures = 0;
+    this.#notFound = 0;
+    this.#getRetries = 0;
+    this.#dropNotice("accounts-unavailable", false);
+    // A pending GET retry is moot after any good response (bar one waiting out a pause).
+    if (this.#pausedUntil <= this.#clock.now()) this.#clearDeferred();
+    if (!isAdoptable(this.#snapshot, next)) {
+      this.#emit();
+      return "stale";
+    }
     this.#snapshot = next;
     this.#repoll = nextRepoll(this.#repoll, next, cause);
     if (isPlateaued(next)) {
@@ -435,6 +477,7 @@ export class GameStore {
     }
     this.#arm();
     this.#emit();
+    return "adopted";
   }
 
   // ---- timers ----

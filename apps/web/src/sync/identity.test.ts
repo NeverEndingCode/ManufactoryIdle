@@ -58,6 +58,27 @@ describe("browserTokenStorage (W-14)", () => {
   });
 });
 
+describe("browserTokenStorage, the global", () => {
+  it("falls back to memory when reading the localStorage global throws", () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("site data blocked", "SecurityError");
+      },
+    });
+    try {
+      const tokens = browserTokenStorage();
+      expect(tokens.persistent).toBe(false);
+      tokens.set("abc");
+      expect(tokens.get()).toBe("abc");
+    } finally {
+      if (saved) Object.defineProperty(globalThis, "localStorage", saved);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
+  });
+});
+
 describe("memoryTokenStorage", () => {
   it("round-trips and is never persistent", () => {
     const tokens = memoryTokenStorage();

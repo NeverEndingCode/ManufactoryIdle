@@ -2,6 +2,6 @@
 import { useSyncExternalStore } from "react";
 import type { GameStore, StoreView } from "./store.js";
 
-export function useGame(store: GameStore): StoreView {
+export function useGame(store: Pick<GameStore, "subscribe" | "getView">): StoreView {
   return useSyncExternalStore(store.subscribe, store.getView);
 }

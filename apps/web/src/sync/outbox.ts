@@ -93,10 +93,35 @@ export class Outbox {
     while (this.#attempt) await this.#attempt;
   }
 
-  /** Clears the timer; nothing sends again. Queued promises stay pending. */
+  /** Clears the timer; nothing sends again until start(). A response landing after stop() is
+   * not reported and settles nothing: its batch stays at the head and start() resends it with
+   * the same key, so a committed batch replays. Queued promises stay pending meanwhile. */
   stop(): void {
     this.#stopped = true;
     this.#clearTimer();
+  }
+
+  /** Resumes after stop(). A no-op on a running outbox. */
+  start(): void {
+    this.#stopped = false;
+    this.#pump();
+  }
+
+  /** Drops every batch not in flight (W-14: the identity is gone, so they must never reach a new
+   * world), settling each with `outcome`. A batch in flight settles when its response lands. */
+  clear(outcome: Outcome): void {
+    this.#clearTimer();
+    const dropped = [...(this.#head && !this.#attempt ? [this.#head] : []), ...this.#queue];
+    if (this.#head && !this.#attempt) this.#head = null;
+    this.#queue = [];
+    for (const b of dropped) this.#settle(b, outcome);
+    if (dropped.length > 0) this.#d.onChange?.();
+  }
+
+  #settle(batch: Batch, outcome: Outcome): void {
+    if (this.#head === batch) this.#head = null;
+    this.#resolvers.get(batch.id)?.(outcome);
+    this.#resolvers.delete(batch.id);
   }
 
   #clearTimer(): void {
@@ -105,6 +130,7 @@ export class Outbox {
   }
 
   #wait(ms: number): void {
+    if (this.#stopped) return;
     this.#timer = this.#d.clock.setTimeout(() => {
       this.#timer = null;
       this.#pump();
@@ -124,9 +150,20 @@ export class Outbox {
       this.#wait(paused);
       return;
     }
-    const attempt = this.#send(this.#head).finally(() => {
-      this.#attempt = null;
-    });
+    const head = this.#head;
+    const attempt = this.#send(head)
+      .catch((err: unknown) => {
+        // Only a throw outside the request (authHeader, baseVersion): settle the batch anyway,
+        // so its promise never hangs and the queue moves on.
+        console.error("outbox", err);
+        if (this.#head === head) {
+          this.#settle(head, { kind: "client-bug", status: 0, body: String(err) });
+          this.#d.onChange?.();
+        }
+      })
+      .finally(() => {
+        this.#attempt = null;
+      });
     this.#attempt = attempt;
     void attempt.then(() => this.#pump());
   }
@@ -154,16 +191,15 @@ export class Outbox {
     } catch {
       outcome = { kind: "retry" }; // the body failed mid-read
     }
+    if (this.#stopped) return;
     try {
       await this.#d.onOutcome(batch, outcome);
     } catch (err) {
       console.error("outbox onOutcome", err);
     }
     if (SETTLED.has(outcome.kind)) {
-      this.#head = null;
       this.#retries = 0;
-      this.#resolvers.get(batch.id)?.(outcome);
-      this.#resolvers.delete(batch.id);
+      this.#settle(batch, outcome);
       this.#d.onChange?.();
     } else if (outcome.kind === "paused") {
       this.#wait(Math.max(MIN_WAIT_MS, outcome.retryAfterMs, this.#d.isPaused()));

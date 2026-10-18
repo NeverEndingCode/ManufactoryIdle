@@ -24,6 +24,8 @@ export interface RigFetch extends FetchLike {
   calls: { method: string; url: string; body?: unknown }[];
   /** The next matching request reaches the server, but its Response is withheld until release() is called. */
   hold(method: string, url: string): () => void;
+  /** Holds registered and not yet released. */
+  readonly activeHolds: number;
 }
 
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
@@ -44,6 +46,7 @@ function parseBody(body: RequestInit["body"]): unknown {
 
 export function injectFetch(app: FastifyInstance): RigFetch {
   const holds: { method: string; url: string; gate: Promise<void> }[] = [];
+  let active = 0;
 
   const fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? "GET").toUpperCase();
@@ -81,13 +84,21 @@ export function injectFetch(app: FastifyInstance): RigFetch {
   fetch.dropNextResponse = false;
   fetch.calls = [];
   fetch.hold = (method, url) => {
-    let release!: () => void;
+    let open!: () => void;
     const gate = new Promise<void>((resolve) => {
-      release = resolve;
+      open = resolve;
     });
     holds.push({ method: method.toUpperCase(), url, gate });
-    return release;
+    active += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      active -= 1;
+      open();
+    };
   };
+  Object.defineProperty(fetch, "activeHolds", { get: () => active });
   return fetch;
 }
 
@@ -115,6 +126,11 @@ export class FakeClientClock implements ClientClock {
 
   clearTimeout(id: number): void {
     this.#timers.delete(id);
+  }
+
+  /** Timers set and neither fired nor cleared. */
+  get pendingTimers(): number {
+    return this.#timers.size;
   }
 
   /** Awaited after each timer fires (and once at the end), on top of one macrotask turn. Point
@@ -176,13 +192,20 @@ export async function makeRig(
     ...(opts.limits ? { limits: opts.limits } : {}),
   });
   await app.ready();
+  const fetch = injectFetch(app);
   return {
     app,
     db,
     clock,
     serverNow,
-    fetch: injectFetch(app),
+    fetch,
     async advance(ms) {
+      // settleWith is usually some idle(), which would wait forever on a held response.
+      if (clock.settleWith && fetch.activeHolds > 0) {
+        throw new Error(
+          "rig.advance() with an active rig.fetch.hold(): release() it first, or clear clock.settleWith",
+        );
+      }
       await clock.advance(ms);
     },
     async close() {

@@ -4,8 +4,8 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { deserializeWorld, serializeWorld, type Action } from "@manufactory/engine";
-import { MIN_REPOLL_MS } from "./constants.js";
-import { memoryTokenStorage, type TokenStorage } from "./identity.js";
+import { MIN_REPOLL_MS, RETRY_STEPS_MS } from "./constants.js";
+import { browserTokenStorage, memoryTokenStorage, type TokenStorage } from "./identity.js";
 import { isPlateaued } from "./interpolate.js";
 import { GameStore } from "./store.js";
 import { makeRig, type TestRig } from "./test-rig.js";
@@ -39,6 +39,24 @@ let stores: GameStore[] = [];
 let log: Logged[] = [];
 /** When set, the next GET /api/world answers 429 with this Retry-After, without the server. */
 let fakeGet429: string | null = null;
+/** The next n GET /api/world reach the server, then throw TypeError("network"). */
+let dropGets = 0;
+/** The next n GET /api/world bodies have a state makeSnapshot can't read. */
+let corruptGets = 0;
+/** Every GET /api/content/* answers 404. */
+let failContent = false;
+/** When set, GET /api/world reports `to` as its checksum, and /api/content/<to> serves the
+ * bundle stored under `from`: a re-pin, as the client sees it. */
+let repin: { from: string; to: string } | null = null;
+
+function resetKnobs() {
+  log = [];
+  fakeGet429 = null;
+  dropGets = 0;
+  corruptGets = 0;
+  failContent = false;
+  repin = null;
+}
 
 afterEach(async () => {
   for (const s of stores) s.stop();
@@ -60,6 +78,29 @@ function storeFor(tokens: TokenStorage): GameStore {
         headers: { "retry-after": retryAfter },
       });
     }
+    if (url.startsWith("/api/content/")) {
+      if (failContent) return new Response('{"error":"unknown content"}', { status: 404 });
+      if (repin !== null && url === `/api/content/${repin.to}`) {
+        return rig.fetch(`/api/content/${repin.from}`, init);
+      }
+    }
+    if (method === "GET" && url === "/api/world") {
+      if (dropGets > 0) {
+        dropGets -= 1;
+        await rig.fetch(url, init);
+        throw new TypeError("network");
+      }
+      if (corruptGets > 0 || repin !== null) {
+        const res = await rig.fetch(url, init);
+        const body = (await res.json()) as Record<string, unknown>;
+        if (corruptGets > 0) {
+          corruptGets -= 1;
+          body.state = "junk";
+        }
+        if (repin !== null) body.contentChecksum = repin.to;
+        return new Response(JSON.stringify(body), { status: res.status });
+      }
+    }
     return rig.fetch(url, init);
   };
   const store = new GameStore({ fetch, clock: rig.clock, tokens });
@@ -72,8 +113,7 @@ function storeFor(tokens: TokenStorage): GameStore {
 
 async function setup(opts: Parameters<typeof makeRig>[0] = {}) {
   rig = await makeRig(opts);
-  log = [];
-  fakeGet429 = null;
+  resetKnobs();
   const tokens = memoryTokenStorage();
   const store = storeFor(tokens);
   await store.start();
@@ -207,7 +247,7 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
     // refetch.test.ts) isn't reached here.
     expect(gaps.slice(1, 6)).toEqual([5_000, 5_000, 10_000, 20_000, 40_000]);
 
-    // A fresh cycle: build the streak to a 20 s gap, then act.
+    // A fresh cycle: build the streak until a 10 s gap (the next would be 20 s), then act.
     await loadFixture();
     const second = gets().length - 1;
     while (!gapsSince(second).includes(10_000)) await rig.advance(100);
@@ -381,6 +421,185 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
     await store.idle();
     expect(gets()).toHaveLength(1);
     store.setVisible(true); // the snapshot is fresh now
+    await store.idle();
+    expect(gets()).toHaveLength(1);
+  });
+
+  it("11. a failed boundary GET backs off 1 s, then 2 s; it never re-fires from the past boundary", async () => {
+    const { store } = await setup();
+    await rig.advance(3_999_000);
+    dropGets = 2;
+    await rig.advance(10_000);
+    await store.idle();
+    const at = gets().map((g) => g.at);
+    expect(at).toHaveLength(3);
+    expect(at.slice(1).map((t, i) => t - at[i]!)).toEqual([RETRY_STEPS_MS[0], RETRY_STEPS_MS[1]]);
+    expect(store.getView().status).toBe("ready");
+  });
+
+  it("12. stop() with requests in flight leaves no timers; start() resumes and send() works", async () => {
+    const { store } = await setup();
+    await rig.advance(60_000);
+
+    // A GET in flight at stop(): its response lands and is ignored.
+    const release = rig.fetch.hold("GET", "/api/world");
+    store.onFocus();
+    store.stop();
+    release();
+    await store.idle();
+    expect(rig.clock.pendingTimers).toBe(0);
+    expect(version(store)).toBe(0);
+
+    // A POST in flight at stop() whose response is lost: no retry timer, no failure counted.
+    await store.start();
+    rig.fetch.dropNextResponse = true;
+    const sent = store.send([BUY_CONSTRUCTOR], "buy");
+    store.stop();
+    await store.idle();
+    expect(rig.clock.pendingTimers).toBe(0);
+    expect(store.getView().failures).toBe(0);
+    await rig.advance(60_000);
+    expect(posts()).toHaveLength(1);
+
+    // start() restarts the outbox: the batch resends with its key and replays.
+    await store.start();
+    expect((await sent).kind).toBe("adopt");
+    const [first, retry] = posts();
+    expect(retry!.body!.idempotencyKey).toBe(first!.body!.idempotencyKey);
+    expect(await dbRow()).toEqual({ stateVersion: 1, logRows: 1 });
+    const tap: Action = { type: "TAP", count: 1, clientElapsedMs: 1_000 };
+    expect((await store.send([tap], "tap")).kind).toBe("adopt");
+    expect(version(store)).toBe(2);
+  });
+
+  it("13. two start() calls make one guest", async () => {
+    rig = await makeRig();
+    resetKnobs();
+    const store = storeFor(memoryTokenStorage());
+    await Promise.all([store.start(), store.start()]);
+    await store.idle();
+    expect(log.filter((c) => c.url === "/api/guests")).toHaveLength(1);
+    expect(store.getView().status).toBe("ready");
+  });
+
+  it("14. a content load that keeps failing backs off 1, 2, 4 s and shows offline", async () => {
+    rig = await makeRig();
+    resetKnobs();
+    failContent = true;
+    const store = storeFor(memoryTokenStorage());
+    await store.start();
+    const created = log.find((c) => c.url === "/api/guests")!.at;
+    expect(store.getView().status).toBe("loading");
+    expect(store.getView().failures).toBe(1);
+    await rig.advance(1_000);
+    expect(store.getView().status).toBe("offline");
+    await rig.advance(6_500);
+    expect(gets().map((g) => g.at - created)).toEqual([1_000, 3_000, 7_000]);
+    failContent = false;
+    await rig.advance(8_000);
+    await store.idle();
+    expect(gets().map((g) => g.at - created)).toEqual([1_000, 3_000, 7_000, 15_000]);
+    expect(store.getView().status).toBe("ready");
+    expect(store.getView().failures).toBe(0);
+  });
+
+  it("15. a successful POST cancels a pending GET retry", async () => {
+    const { store } = await setup();
+    await rig.advance(60_000);
+    dropGets = 1;
+    store.onFocus();
+    await store.idle();
+    expect(store.getView().failures).toBe(1);
+    expect((await store.send([BUY_CONSTRUCTOR], "buy")).kind).toBe("adopt");
+    await rig.advance(5_000);
+    await store.idle();
+    expect(gets()).toHaveLength(1);
+    expect(store.getView().failures).toBe(0);
+  });
+
+  it("16. storage that fails mid-session raises the ephemeral-token banner", async () => {
+    rig = await makeRig();
+    resetKnobs();
+    let writes = 0;
+    const map = new Map<string, string>();
+    const flaky = {
+      length: 0,
+      key: () => null,
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        // The constructor's probe works; the token write after guest creation throws.
+        if (++writes > 1) throw new DOMException("quota", "QuotaExceededError");
+        map.set(k, v);
+      },
+      removeItem: (k: string) => void map.delete(k),
+      clear: () => map.clear(),
+    } satisfies Storage;
+    const tokens = browserTokenStorage(flaky);
+    expect(tokens.persistent).toBe(true);
+    const store = storeFor(tokens);
+    await store.start();
+    expect(tokens.persistent).toBe(false);
+    expect(tokens.get()).not.toBeNull();
+    expect(store.getView().notices.map((n) => n.kind)).toEqual(["ephemeral-token"]);
+    store.dismiss("ephemeral-token");
+    await rig.advance(MIN_REPOLL_MS);
+    store.onFocus();
+    await store.idle();
+    expect(store.getView().notices).toEqual([]);
+  });
+
+  it("17. guest-expired drops the queued batches: they never reach a new world", async () => {
+    const { store } = await setup();
+    await rig.db.query("delete from idempotency");
+    await rig.db.query("delete from players");
+    const tap: Action = { type: "TAP", count: 1, clientElapsedMs: 1_000 };
+    const a = store.send([tap], "a");
+    const b = store.send([tap], "b");
+    expect((await a).kind).toBe("unauthorized");
+    expect((await b).kind).toBe("unauthorized");
+    expect(posts()).toHaveLength(1);
+    expect(store.getView().pending).toEqual([]);
+    await store.newFactory();
+    await rig.advance(10_000);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("18. a body makeSnapshot can't read defers a retry", async () => {
+    const { store } = await setup();
+    await rig.advance(MIN_REPOLL_MS);
+    corruptGets = 1;
+    store.onFocus();
+    await store.idle();
+    expect(store.getView().failures).toBe(1);
+    await rig.advance(1_000);
+    await store.idle();
+    expect(gets()).toHaveLength(2);
+    expect(gets()[1]!.at - gets()[0]!.at).toBe(1_000);
+    expect(store.getView().failures).toBe(0);
+  });
+
+  it("19. a checksum change mid-session loads the new bundle before adopting (W-5)", async () => {
+    const { store } = await setup();
+    const before = store.getView().snapshot!;
+    const to = before.contentChecksum.replace(/^./, (c) => (c === "f" ? "e" : "f"));
+    repin = { from: before.contentChecksum, to };
+    await rig.advance(MIN_REPOLL_MS);
+    store.onFocus();
+    await store.idle();
+    const fetched = log.findIndex((c) => c.url === `/api/content/${to}`);
+    expect(fetched).toBeGreaterThan(log.indexOf(gets()[0]!));
+    const after = store.getView().snapshot!;
+    expect(after.contentChecksum).toBe(to);
+    expect(after.content).not.toBe(before.content);
+  });
+
+  it("20. rig.advance fails fast while a hold is active, instead of hanging", async () => {
+    const { store } = await setup();
+    await rig.advance(MIN_REPOLL_MS);
+    const release = rig.fetch.hold("GET", "/api/world");
+    store.onFocus();
+    await expect(rig.advance(1)).rejects.toThrow(/active rig.fetch.hold/);
+    release();
     await store.idle();
     expect(gets()).toHaveLength(1);
   });

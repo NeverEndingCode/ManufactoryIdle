@@ -177,4 +177,65 @@ describe("Outbox (W-10, W-11, P-7)", () => {
     expect((await done).kind).toBe("adopt");
     expect(s.sent.map((x) => x.at - s.sent[0]!.at)).toEqual([0, 1_000]);
   });
+
+  it("stop() with a request in flight: no timer, no outcome; start() resends the same key", async () => {
+    const clock = new FakeClientClock();
+    const s = scripted(clock, ["drop", "ok"]);
+    const { box, outcomes } = outbox(clock, s.fetch);
+    const done = box.enqueue([TAP], "a");
+    box.stop();
+    await clock.advance(0);
+    expect(clock.pendingTimers).toBe(0);
+    expect(outcomes).toEqual([]);
+    await clock.advance(60_000);
+    expect(s.sent).toHaveLength(1);
+    box.start();
+    await clock.advance(0);
+    expect((await done).kind).toBe("adopt");
+    expect(s.sent.map((x) => x.body.idempotencyKey)).toEqual([
+      s.sent[0]!.body.idempotencyKey,
+      s.sent[0]!.body.idempotencyKey,
+    ]);
+  });
+
+  it("clear() settles every batch not in flight, unsent", async () => {
+    const clock = new FakeClientClock();
+    const s = scripted(clock, ["drop"]);
+    const { box } = outbox(clock, s.fetch);
+    const a = box.enqueue([TAP], "a");
+    const b = box.enqueue([TAP], "b");
+    await clock.advance(0); // a dropped, waiting 1 s to resend; b queued
+    box.clear({ kind: "unauthorized" });
+    expect((await a).kind).toBe("unauthorized");
+    expect((await b).kind).toBe("unauthorized");
+    expect(box.inFlight).toBeNull();
+    expect(box.queued).toEqual([]);
+    expect(clock.pendingTimers).toBe(0);
+    await clock.advance(10_000);
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it("a dep that throws settles the batch (client-bug) and the queue moves on", async () => {
+    const clock = new FakeClientClock();
+    const s = scripted(clock);
+    let calls = 0;
+    const box = new Outbox({
+      fetch: s.fetch,
+      clock,
+      authHeader: () => {
+        if (calls++ === 0) throw new Error("boom");
+        return null;
+      },
+      baseVersion: () => 0,
+      onOutcome: () => {},
+      isPaused: () => 0,
+    });
+    clock.settleWith = () => box.idle();
+    const a = box.enqueue([TAP], "a");
+    const b = box.enqueue([TAP], "b");
+    await clock.advance(0);
+    expect((await a).kind).toBe("client-bug");
+    expect((await b).kind).toBe("adopt");
+    expect(s.sent).toHaveLength(1);
+  });
 });
