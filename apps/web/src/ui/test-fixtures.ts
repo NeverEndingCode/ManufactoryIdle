@@ -108,7 +108,7 @@ export interface FakeStore {
   /** Task 5's tap. */
   pressTap: Mock<() => void>;
   releaseTap: Mock<() => void>;
-  flushTaps: Mock<() => void>;
+  flushTaps: Mock<(opts?: { keepalive?: boolean }) => void>;
   set(patch: Partial<StoreView>): void;
   tick(ms: number): void;
   readonly tickers: number;
@@ -121,6 +121,8 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     pending: [],
     notices: [],
     failures: 0,
+    taps: { pending: 0, lastTapAt: null, holding: false },
+    polling: snapshot !== null,
   };
   let clock = opts.now ?? CLIENT_T0;
   const listeners = new Set<() => void>();

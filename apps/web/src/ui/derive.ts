@@ -163,7 +163,7 @@ function clears(n: number): string {
 }
 
 /** The power entry, or the engine's "power" target. */
-function isPowerTarget(s: Snapshot, limitingTarget: string): boolean {
+export function isPowerTarget(s: Snapshot, limitingTarget: string): boolean {
   if (limitingTarget === "power") return true;
   return s.state.priority.some((e) => e.id === limitingTarget && e.kind === "power");
 }

@@ -32,6 +32,7 @@ interface Logged {
   url: string;
   at: number;
   body?: ActionsRequest;
+  keepalive?: boolean;
 }
 
 /** The current test's rig, for the helpers and afterEach. Test bodies use the rig that
@@ -51,6 +52,11 @@ let failContent = false;
 /** When set, GET /api/world reports `to` as its checksum, and /api/content/<to> serves the
  * bundle stored under `from`: a re-pin, as the client sees it. */
 let repin: { from: string; to: string } | null = null;
+/** When set, the next GET /api/world answers this status with {"error":"x"}, without the server. */
+let fakeGetStatus: number | null = null;
+/** While set, a POST /api/actions with a non-TAP action reaches the server, then its Response
+ * waits for this gate. Unlike rig.fetch.hold it never matches a TAP flush, whichever lands first. */
+let gateSpends: Promise<void> | null = null;
 
 function resetKnobs() {
   log = [];
@@ -59,6 +65,8 @@ function resetKnobs() {
   corruptGets = 0;
   failContent = false;
   repin = null;
+  fakeGetStatus = null;
+  gateSpends = null;
 }
 
 afterEach(async () => {
@@ -70,9 +78,22 @@ afterEach(async () => {
 function storeFor(tokens: TokenStorage): GameStore {
   const fetch: FetchLike = async (url, init) => {
     const method = (init?.method ?? "GET").toUpperCase();
-    const entry: Logged = { method, url, at: live.clock.now() };
+    const entry: Logged = { method, url, at: live.clock.now(), keepalive: init?.keepalive };
     if (typeof init?.body === "string") entry.body = JSON.parse(init.body) as ActionsRequest;
     log.push(entry);
+    if (method === "GET" && url === "/api/world" && fakeGetStatus !== null) {
+      const status = fakeGetStatus;
+      fakeGetStatus = null;
+      return new Response('{"error":"x"}', { status });
+    }
+    if (method === "POST" && url === "/api/actions" && gateSpends !== null) {
+      const gate = gateSpends;
+      if (entry.body!.actions.some((a) => a.type !== "TAP")) {
+        const res = await live.fetch(url, init);
+        await gate;
+        return res;
+      }
+    }
     if (method === "GET" && url === "/api/world" && fakeGet429 !== null) {
       const retryAfter = fakeGet429;
       fakeGet429 = null;
@@ -624,5 +645,187 @@ describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
     const { rig } = await setup();
     await rig.close();
     await expect(rig.advance(1)).rejects.toThrow(/after rig.close/);
+  });
+});
+
+describe("GameStore taps, polling and tiers (Q-11, Q-13, Q-18)", () => {
+  type Tap = Extract<Action, { type: "TAP" }>;
+  const tapPosts = () => posts().filter((p) => p.body!.actions.some((a) => a.type === "TAP"));
+  const tapOf = (p: Logged) => p.body!.actions[0] as Tap;
+  const gaps = (at: number[]) => at.slice(1).map((t, i) => t - at[i]!);
+
+  it("22. a hold flushes once a second, then once after release, each its own batch", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(10_000);
+    const t0 = rig.clock.now();
+    store.pressTap();
+    expect(store.getView().taps).toEqual({ pending: 1, lastTapAt: t0, holding: true });
+    for (let i = 0; i < 35; i++) {
+      await rig.advance(100);
+      if (i === 10) expect(store.getView().snapshot!.state.tapStacks).toBe(10);
+    }
+    store.releaseTap();
+    expect(store.getView().taps.holding).toBe(false);
+    for (let i = 0; i < 20; i++) await rig.advance(100);
+    await store.idle();
+    const sent = tapPosts();
+    expect(sent.map((p) => p.at - t0)).toEqual([1_000, 2_000, 3_000, 4_000]);
+    expect(Math.min(...gaps(sent.map((p) => p.at)))).toBeGreaterThanOrEqual(1_000);
+    for (const p of sent) {
+      expect(p.body!.actions).toHaveLength(1);
+      expect(tapOf(p)).toEqual({
+        type: "TAP",
+        count: expect.any(Number) as number,
+        clientElapsedMs: expect.any(Number) as number,
+      });
+      expect(tapOf(p).count).toBeGreaterThan(0);
+    }
+    expect(sent.reduce((n, p) => n + tapOf(p).count, 0)).toBe(36);
+    expect(store.getView().taps.pending).toBe(0);
+    expect(store.getView().snapshot!.state.tapStacks).toBe(10);
+  });
+
+  it("23. tap-release bursts can't beat one flush a second", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(10_000);
+    let lastRelease = 0;
+    for (let i = 0; i < 6; i++) {
+      store.pressTap();
+      store.releaseTap();
+      lastRelease = rig.clock.now();
+      await rig.advance(400);
+    }
+    await rig.advance(2_000);
+    await store.idle();
+    const sent = tapPosts();
+    expect(sent.length).toBeGreaterThan(1);
+    expect(Math.min(...gaps(sent.map((p) => p.at)))).toBeGreaterThanOrEqual(1_000);
+    expect(sent.every((p) => tapOf(p).count > 0)).toBe(true);
+    expect(sent.reduce((n, p) => n + tapOf(p).count, 0)).toBe(6);
+    expect(sent.at(-1)!.at - lastRelease).toBeLessThanOrEqual(1_000);
+  });
+
+  it("24. a tap flush is never merged into a spend's batch", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    const release = rig.fetch.hold("POST", "/api/actions");
+    const spend = store.send([BUY_CONSTRUCTOR], "buy");
+    store.pressTap();
+    store.releaseTap();
+    store.flushTaps(); // nothing flushed yet, so the floor allows it now
+    const [head, queued] = store.getView().pending;
+    expect(head!.actions).toEqual([BUY_CONSTRUCTOR]);
+    expect(queued!.label).toBe("tap");
+    expect(queued!.actions).toHaveLength(1);
+    expect(queued!.actions[0]!.type).toBe("TAP");
+    expect(queued!.key).not.toBe(head!.key);
+    release();
+    expect((await spend).kind).toBe("adopt");
+    await store.idle();
+    const [a, b] = posts();
+    expect(posts()).toHaveLength(2);
+    expect(a!.body!.actions).toEqual([BUY_CONSTRUCTOR]);
+    expect(b!.body!.actions.map((x) => x.type)).toEqual(["TAP"]);
+    expect(b!.body!.idempotencyKey).not.toBe(a!.body!.idempotencyKey);
+  });
+
+  it("25a. the keepalive flush sends at once, past a batch in flight", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    for (let i = 0; i < 4; i++) {
+      store.pressTap();
+      store.releaseTap();
+      await rig.advance(50);
+    }
+    expect(tapPosts()).toHaveLength(0); // the release flush (about +300 ms) hasn't fired
+    let open!: () => void;
+    gateSpends = new Promise<void>((r) => (open = r));
+    let spendDone = false;
+    const spend = store.send([BUY_CONSTRUCTOR], "buy").finally(() => (spendDone = true));
+    store.flushTaps({ keepalive: true });
+    const [tap] = tapPosts();
+    expect(tapOf(tap!).count).toBe(4);
+    expect(tap!.keepalive).toBe(true);
+    expect(store.getView().pending.map((b) => b.label)).toEqual(["buy"]);
+    expect(store.getView().taps.pending).toBe(0);
+    expect(spendDone).toBe(false);
+    open();
+    await spend;
+    await store.idle();
+    expect(store.getView().snapshot!.state.tapStacks).toBeGreaterThan(0);
+    expect(tapPosts()).toHaveLength(1);
+    await rig.advance(2_000);
+    expect(tapPosts()).toHaveLength(1);
+  });
+
+  it("25b. a lost keepalive flush is retried through the outbox with the same key", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    store.pressTap();
+    store.releaseTap();
+    const before = (await dbRow()).logRows;
+    rig.fetch.dropNextResponse = true;
+    store.flushTaps({ keepalive: true });
+    await store.idle();
+    const [first, retry] = tapPosts();
+    expect(tapPosts()).toHaveLength(2);
+    expect(first!.keepalive).toBe(true);
+    expect(retry!.keepalive).not.toBe(true);
+    expect(retry!.body!.idempotencyKey).toBe(first!.body!.idempotencyKey);
+    expect((await dbRow()).logRows).toBe(before + 1);
+    expect(store.getView().snapshot!.state.tapStacks).toBe(1);
+  });
+
+  it("26. a GET 4xx stops polling until focus (Q-18)", async () => {
+    const { store, rig } = await setup();
+    expect(store.getView().polling).toBe(true);
+    await rig.advance(MIN_REPOLL_MS);
+    fakeGetStatus = 418;
+    store.onFocus();
+    await store.idle();
+    expect(store.getView().notices.some((n) => n.kind === "client-bug")).toBe(true);
+    expect(store.getView().polling).toBe(false);
+    const n = gets().length;
+    await rig.advance(4_100_000);
+    await store.idle();
+    expect(gets()).toHaveLength(n);
+    const old = store.getView().snapshot!.receivedAt;
+    store.onFocus();
+    await store.idle();
+    expect(gets()).toHaveLength(n + 1);
+    expect(store.getView().snapshot!.receivedAt).toBeGreaterThan(old);
+    expect(store.getView().polling).toBe(true);
+  });
+
+  it("27. adopting a higher tier raises one tier-up toast", async () => {
+    const { store, rig } = await setup();
+    expect(store.getView().snapshot!.state.tier).toBe(0);
+    const [row] = await rig.db.query<{ state: Record<string, unknown> }>(
+      "select state from player_worlds",
+    );
+    await rig.db.query("update player_worlds set state = $1::jsonb", [
+      JSON.stringify({ ...row!.state, tier: 1 }),
+    ]);
+    await rig.advance(MIN_REPOLL_MS);
+    store.onFocus();
+    await store.idle();
+    expect(store.getView().snapshot!.state.tier).toBe(1);
+    await rig.advance(MIN_REPOLL_MS);
+    store.onFocus();
+    await store.idle();
+    const ups = store.getView().notices.filter((x) => x.kind === "tier-up");
+    expect(ups).toEqual([{ kind: "tier-up", text: "Tier 1 reached." }]);
+  });
+
+  it("28. stop() clears the tap's timers", async () => {
+    const { store, rig } = await setup();
+    store.stop();
+    expect(rig.clock.pendingTimers).toBe(0);
+    await store.start();
+    store.pressTap();
+    expect(rig.clock.pendingTimers).toBeGreaterThan(0);
+    store.stop();
+    expect(rig.clock.pendingTimers).toBe(0);
+    expect(store.getView().taps.holding).toBe(false);
   });
 });

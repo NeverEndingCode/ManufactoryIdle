@@ -11,7 +11,9 @@ import layout from "./Layout.module.css";
 import { LaneView } from "./LaneView.js";
 import styles from "./LaneView.module.css";
 import { Notices } from "./Notices.js";
+import { PowerDock } from "./PowerDock.js";
 import { PriorityList } from "./PriorityList.js";
+import { TierReadout } from "./TierReadout.js";
 import { usePanes } from "./use-panes.js";
 import { createTickSource, TickContext } from "./use-tick.js";
 
@@ -123,9 +125,11 @@ export function App({ store }: { store: GameStore }) {
         className="app"
         data-sync={view.status}
         data-state-version={s === null ? "" : String(s.stateVersion)}
+        data-polling={view.polling ? "armed" : "off"}
       >
         <header className="app-header">
           <h1>Manufactory Idle</h1>
+          {s !== null && <TierReadout snapshot={s} now={() => store.now()} />}
         </header>
         <Notices store={store} view={view} bottleneck={bottleneck} />
         {s === null || laneId === null ? (
@@ -238,7 +242,9 @@ export function App({ store }: { store: GameStore }) {
                 />
               </div>
             )}
-            <div className={layout.dock} data-dock-slot />
+            <div className={layout.dock} data-dock-slot>
+              <PowerDock store={store} snapshot={s} taps={view.taps} />
+            </div>
           </div>
         )}
       </div>

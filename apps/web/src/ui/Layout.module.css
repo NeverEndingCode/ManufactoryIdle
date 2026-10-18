@@ -7,9 +7,12 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   /* The sheet's tallest; the column reserves it while the sheet is open (vh, then dvh). */
   --sheet-max: 60vh;
+  /* The fixed power dock's height; the column reserves it below the last rows. */
+  --dock-h: 96px;
   display: grid;
   gap: 12px 20px;
   min-width: 0;
+  padding-bottom: calc(var(--dock-h) + var(--safe-bottom));
 }
 
 .layout > * {
@@ -36,14 +39,14 @@
 }
 
 .layout[data-panes="1"] {
-  --sheet-bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+  --sheet-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--dock-h));
   grid-template-columns: minmax(0, 1fr);
-  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--dock-h));
 }
 
 /* The open sheet must not cover the last rows: reserve its height below them. */
 .layout[data-panes="1"][data-sheet="open"] {
-  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--sheet-max));
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--dock-h) + var(--sheet-max));
 }
 
 .lanes,
@@ -66,8 +69,8 @@
   top: 10px;
   align-self: start;
   grid-area: detail;
-  max-height: calc(100vh - 20px);
-  max-height: calc(100dvh - 20px);
+  max-height: calc(100vh - 20px - var(--dock-h));
+  max-height: calc(100dvh - 20px - var(--dock-h));
   overflow-y: auto;
 }
 
@@ -129,7 +132,25 @@
   background: var(--s2);
 }
 
-/* Task 5's power dock. */
+/* The power dock: fixed along the bottom, above the tab bar below 600 px (as in the MVP). */
+.dock {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  min-height: var(--dock-h);
+  padding-bottom: var(--safe-bottom);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--bg);
+}
+
+.layout[data-panes="1"] .dock {
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: 0;
+}
+
 .dock:empty {
   display: none;
 }

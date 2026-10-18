@@ -54,6 +54,25 @@ button {
   letter-spacing: 0.14em;
 }
 
+/* The tier readout (Q-13): the tier and next milestone, one compact line per requirement. */
+.tier-readout {
+  min-width: 0;
+  color: var(--t2);
+  font-size: var(--fs-3);
+  text-align: right;
+}
+
+.tier-name {
+  color: var(--t1);
+  font-weight: var(--fw-strong);
+}
+
+.tier-reqs {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
 .app-loading {
   color: var(--t3);
   font-size: var(--fs-2);

@@ -6,7 +6,7 @@ import { plateauText, type BottleneckModel } from "./derive.js";
 import { useTick } from "./use-tick.js";
 
 /** Toasts: the only notices a player dismisses. Banners clear when their cause does. */
-const TOASTS: ReadonlySet<Notice["kind"]> = new Set(["rejected", "client-bug"]);
+const TOASTS: ReadonlySet<Notice["kind"]> = new Set(["rejected", "client-bug", "tier-up"]);
 
 const OFFLINE_TEXT = "Offline. Your factory keeps running; we'll reconnect when we can.";
 
