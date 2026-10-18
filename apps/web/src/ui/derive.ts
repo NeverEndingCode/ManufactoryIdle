@@ -39,6 +39,8 @@ export interface RowModel {
   tag: ItemStateTag;
   /** True when the item's priority entry is paused. */
   paused: boolean;
+  /** Neither produced nor consumed: the meter takes the neutral tone, not amber at 0%. */
+  idle: boolean;
   capText: string;
   /** null when zero: no QS chip. */
   quantum: Dec | null;
@@ -62,6 +64,11 @@ export function satisfaction(solution: Solution, itemId: ItemId): number {
   if (!flow) return 0;
   if (flow.consumption > 0) return Math.min(1, flow.production / flow.consumption);
   return flow.production > 0 ? 1 : 0;
+}
+
+function isIdle(solution: Solution, itemId: ItemId): boolean {
+  const flow = solution.itemRates.get(itemId);
+  return !flow || (flow.production <= 0 && flow.consumption <= 0);
 }
 
 /** Lanes by order, up to the world's tier. */
@@ -109,6 +116,7 @@ export function laneRows(s: Snapshot, laneId: LaneId): RowModel[] {
       satisfaction: satisfaction(solution, item.id),
       tag: itemStateTag(content, s.display.state, item.id),
       paused: state.priority.some((e) => e.itemId === item.id && e.paused),
+      idle: isIdle(solution, item.id),
       capText: format(liquidCap(content, state, item.id), "hybrid"),
       quantum: nonZero(own(state.quantum, item.id)),
       bound: nonZero(own(state.bound, item.id)),
@@ -117,7 +125,8 @@ export function laneRows(s: Snapshot, laneId: LaneId): RowModel[] {
 }
 
 export interface BottleneckModel {
-  /** null for a power bottleneck with no generator: a notice, no framed row. */
+  /** null when no row can carry the frame (a power bottleneck with no generator, or an item
+   * outside the unlocked lanes and tier): the advice is a notice, and no tab is marked. */
   laneId: LaneId | null;
   itemId: ItemId | null;
   text: string;
@@ -135,6 +144,17 @@ function targetName(s: Snapshot, limitingTarget: string): string {
 
 export function plural(n: number, word: string): string {
   return n === 1 ? word : `${word}s`;
+}
+
+/** "1 more Constructor clears it", "10 more Constructors clear it". */
+function clears(n: number): string {
+  return n === 1 ? "clears it" : "clear it";
+}
+
+/** The power entry, or the engine's "power" target. */
+function isPowerTarget(s: Snapshot, limitingTarget: string): boolean {
+  if (limitingTarget === "power") return true;
+  return s.state.priority.some((e) => e.id === limitingTarget && e.kind === "power");
 }
 
 /** The class's display name, for "Buy N <class name>". */
@@ -167,16 +187,38 @@ function recipeRow(
   const recipe = s.content.recipes.get(recipeId);
   if (!recipe) return null;
   const n = Math.max(1, machinesToClear);
+  const more = `${n} more ${className(s, recipe.machineClass, n)} ${clears(n)}.`;
+  const text = isPowerTarget(s, limitingTarget)
+    ? `Power is limited by ${itemName(s, recipe.primaryOutput).toLowerCase()}. ${more}`
+    : `Limiting ${targetName(s, limitingTarget)}. ${more}`;
   return {
     laneId: recipe.lane,
     itemId: recipe.primaryOutput,
-    text: `Limiting ${targetName(s, limitingTarget)}. ${n} more ${className(s, recipe.machineClass, n)} clears it.`,
+    text,
     buy: machineBuy(s, recipeId, machinesToClear),
   };
 }
 
+/** The frame needs a rendered row: an item in an unlocked lane, at or under the tier. */
+function shownAsRow(s: Snapshot, m: BottleneckModel): BottleneckModel {
+  if (m.itemId === null) return m;
+  const item = s.content.items.get(m.itemId);
+  const lane = item === undefined ? undefined : s.content.lanes.get(item.lane);
+  const visible =
+    item !== undefined &&
+    lane !== undefined &&
+    item.tier <= s.state.tier &&
+    lane.unlockTier <= s.state.tier;
+  return visible ? m : { ...m, laneId: null, itemId: null, buy: null };
+}
+
 /** P-2: the one framed row in the whole factory, from the display solve's bottleneck. */
 export function bottleneckRow(s: Snapshot): BottleneckModel | null {
+  const m = bottleneckModel(s);
+  return m === null ? null : shownAsRow(s, m);
+}
+
+function bottleneckModel(s: Snapshot): BottleneckModel | null {
   const b = s.display.solution.bottleneck;
   if (b === null) return null;
   switch (b.kind) {
@@ -251,10 +293,12 @@ export function plateauText(s: Snapshot): string | null {
   return `Production paused ${hours} h after your last action. Do anything to resume.`;
 }
 
-/** The meter's state class: fed at 98%, throttled below, paused for a paused entry. */
+/** The meter's state class: fed at 98%, throttled below, paused for a paused entry, and idle
+ * (the paused grey, never amber at 0%) for an item nothing makes or uses. */
 export function stateClass(
-  row: Pick<RowModel, "satisfaction" | "paused">,
-): "fed" | "throttled" | "paused" {
+  row: Pick<RowModel, "satisfaction" | "paused" | "idle">,
+): "fed" | "throttled" | "paused" | "idle" {
   if (row.paused) return "paused";
+  if (row.idle) return "idle";
   return row.satisfaction >= 0.98 ? "fed" : "throttled";
 }

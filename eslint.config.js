@@ -153,6 +153,10 @@ export default tseslint.config(
               message: "P-13: the API is a test dependency only",
             },
             { regex: "^node:", message: "browser code" },
+            {
+              group: ["**/test-fixtures*", "**/test-rig*"],
+              message: "test-only helpers (Node, the API): never imported by app code",
+            },
           ],
         },
       ],

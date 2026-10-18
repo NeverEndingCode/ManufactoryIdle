@@ -97,7 +97,8 @@
   background: var(--state-throttled);
 }
 
-.state-paused {
+.state-paused,
+.state-idle {
   background: var(--state-paused);
 }
 

@@ -24,12 +24,13 @@ export function Notices({ store, view, bottleneck }: NoticesProps) {
   if (s !== null && isPlateaued(s) && !shown.some((n) => n.kind === "plateau"))
     shown.push({ kind: "plateau", text: plateauText(s)! });
   if (view.status === "offline") shown.push({ kind: "offline", text: OFFLINE_TEXT });
-  // P-2: a power bottleneck with no generator frames no row; it is a line here instead.
-  if (bottleneck !== null && bottleneck.itemId === null)
+  // P-2: a bottleneck no row can carry (a power shortfall with no generator, or an item not
+  // yet shown) frames nothing; it is a line here instead.
+  if (bottleneck !== null && bottleneck.laneId === null)
     shown.push({ kind: "bottleneck", text: bottleneck.text });
 
   return (
-    <div role="status" aria-live="polite" className="notices">
+    <div role="status" aria-live="polite" aria-atomic="false" className="notices">
       {shown.map((n) => (
         <div key={n.kind} className="notice" data-notice={n.kind}>
           <span>{n.text}</span>

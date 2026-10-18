@@ -79,6 +79,23 @@ function transitioned(value: string): string[] {
   });
 }
 
+const STATE_CLASSES = new Set([
+  "frame",
+  "state-fed",
+  "state-throttled",
+  "state-bottleneck",
+  "state-paused",
+  "state-idle",
+]);
+
+/** Every selector in the list names a state or frame class, as a whole class token. */
+function isStateSelector(selectorList: string): boolean {
+  return selectorList.split(",").every((sel) => {
+    const classes = [...sel.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].map((m) => m[1]!);
+    return classes.some((c) => STATE_CLASSES.has(c));
+  });
+}
+
 describe("the CSS source", () => {
   it("has the files the tests read", () => {
     expect(files.map((f) => relative(SRC, f)).sort()).toEqual(
@@ -118,13 +135,39 @@ describe("the CSS source", () => {
     ).toBe(true);
   });
 
+  it("7d. a hidden tab pauses animations on pseudo-elements too (W-9)", () => {
+    const paused = all.filter((d) => d.property === "animation-play-state" && d.value === "paused");
+    const selectors = paused.flatMap((d) =>
+      d.stack
+        .at(-1)!
+        .split(",")
+        .map((x) => x.trim()),
+    );
+    expect(selectors).toEqual(
+      expect.arrayContaining([
+        ":root.hidden-tab *",
+        ":root.hidden-tab *::before",
+        ":root.hidden-tab *::after",
+      ]),
+    );
+  });
+
+  it("8a. the matcher takes whole class tokens", () => {
+    expect(isStateSelector(".frame")).toBe(true);
+    expect(isStateSelector(".frame::before")).toBe(true);
+    expect(isStateSelector(".frame .label")).toBe(true);
+    expect(isStateSelector(".state-fed")).toBe(true);
+    expect(isStateSelector(".state-paused, .state-idle")).toBe(true);
+    expect(isStateSelector(".frameworks")).toBe(false);
+    expect(isStateSelector(".myframe")).toBe(false);
+    expect(isStateSelector(".state-fedora")).toBe(false);
+    expect(isStateSelector(".state-fed, .chip")).toBe(false);
+  });
+
   it("8a. the state colours are used only by state and frame rules (W-17)", () => {
     const misuse = all
       .filter((d) => d.value.includes("var(--state-"))
-      .filter((d) => {
-        const selector = d.stack.filter((s) => !s.startsWith("@")).at(-1) ?? "";
-        return !selector.includes(".state-") && !selector.includes(".frame");
-      })
+      .filter((d) => !isStateSelector(d.stack.filter((s) => !s.startsWith("@")).at(-1) ?? ""))
       .map((d) => `${d.file}: ${d.stack.join(" > ")} { ${d.property}: ${d.value} }`);
     expect(misuse).toEqual([]);
     // And something does use them.

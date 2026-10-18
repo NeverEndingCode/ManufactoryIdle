@@ -2,7 +2,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Solution } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import { fixtureState, freshState, loadSlice, snapshotOf, type Slice } from "./test-fixtures.js";
-import { affordability, bottleneckRow, laneRows, satisfaction, unlockedLanes } from "./derive.js";
+import {
+  affordability,
+  bottleneckRow,
+  laneRows,
+  satisfaction,
+  stateClass,
+  unlockedLanes,
+} from "./derive.js";
 
 let slice: Slice;
 let fresh: Snapshot;
@@ -134,7 +141,7 @@ describe("bottleneckRow (P-2, P-3)", () => {
     expect(b.laneId).toBe("power");
     expect(b.itemId).toBe("biomass");
     expect(b.buy).toMatchObject({ type: "BUY_MACHINE", count: 10, recipeId: "collect_biomass" });
-    expect(b.text).toMatch(/^Limiting power\. 10 more /);
+    expect(b.text).toMatch(/^Power is limited by biomass\. 10 more \S.* clear it\.$/);
   });
 
   it("5c. a storage bottleneck frames its item with no button", () => {
@@ -185,6 +192,62 @@ describe("bottleneckRow, the power kind (P-2)", () => {
       }),
     )!;
     expect([b.laneId, b.itemId, b.buy]).toEqual([null, null, null]);
+  });
+});
+
+describe("bottleneckRow, rows not shown (P-2)", () => {
+  it("an item outside the unlocked lanes frames nothing and marks no tab", () => {
+    // Copper unlocks at tier 2; a fresh world is tier 0.
+    const solution = {
+      ...fresh.display.solution,
+      bottleneck: {
+        kind: "recipe",
+        recipeId: "make_wire",
+        limitingTarget: "item:iron_plate",
+        machinesToClear: 2,
+      },
+    } as Solution;
+    const b = bottleneckRow({ ...fresh, display: { ...fresh.display, solution } })!;
+    expect([b.laneId, b.itemId, b.buy]).toEqual([null, null, null]);
+    expect(b.text).toBe("Limiting iron plate. 2 more Constructors clear it.");
+  });
+
+  it("an item above the tier in an unlocked lane frames nothing either", () => {
+    // Screw is tier 1, in iron.
+    const solution = {
+      ...fresh.display.solution,
+      bottleneck: {
+        kind: "recipe",
+        recipeId: "make_screw",
+        limitingTarget: "item:iron_plate",
+        machinesToClear: 1,
+      },
+    } as Solution;
+    const b = bottleneckRow({ ...fresh, display: { ...fresh.display, solution } })!;
+    expect([b.laneId, b.itemId]).toEqual([null, null]);
+  });
+});
+
+describe("stateClass", () => {
+  it("fed at 98%, throttled below, paused, and idle for an item nothing makes or uses", () => {
+    expect(stateClass({ satisfaction: 0.98, paused: false, idle: false })).toBe("fed");
+    expect(stateClass({ satisfaction: 0.5, paused: false, idle: false })).toBe("throttled");
+    expect(stateClass({ satisfaction: 1, paused: true, idle: false })).toBe("paused");
+    expect(stateClass({ satisfaction: 0, paused: false, idle: true })).toBe("idle");
+  });
+
+  it("a fresh world's unmade items are idle, not throttled", () => {
+    const rows = laneRows(fresh, "iron");
+    const idle = rows.filter((r) => r.idle);
+    expect(idle.length).toBeGreaterThan(0);
+    for (const r of idle) {
+      expect(r.satisfaction).toBe(0);
+      expect(stateClass(r)).toBe("idle");
+    }
+    for (const r of rows.filter((x) => !x.idle)) {
+      const flow = fresh.display.solution.itemRates.get(r.itemId)!;
+      expect(flow.production > 0 || flow.consumption > 0).toBe(true);
+    }
   });
 });
 

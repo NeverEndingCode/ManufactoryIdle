@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { storageTransition } from "../sync/interpolate.js";
 import type { Batch } from "../sync/outbox.js";
@@ -113,6 +114,31 @@ describe("LaneView", () => {
     expect(row(container, "biomass")).toBeNull();
   });
 
+  it("2b. the lane tabs follow the WAI-ARIA keyboard pattern", async () => {
+    const user = userEvent.setup();
+    mount(fakeStore(tier8));
+    const tab = (name: RegExp) => screen.getByRole("tab", { name });
+    const expectOn = (name: RegExp) => {
+      const t = tab(name);
+      expect(t.getAttribute("aria-selected")).toBe("true");
+      expect(t.tabIndex).toBe(0);
+      expect(document.activeElement).toBe(t);
+    };
+    await user.tab();
+    expectOn(/Iron/);
+    await user.keyboard("{ArrowRight}");
+    expectOn(/Power/);
+    expect(tab(/Iron/).tabIndex).toBe(-1);
+    await user.keyboard("{End}");
+    expectOn(/Oil/);
+    await user.keyboard("{ArrowRight}");
+    expectOn(/Iron/);
+    await user.keyboard("{ArrowLeft}");
+    expectOn(/Oil/);
+    await user.keyboard("{Home}");
+    expectOn(/Iron/);
+  });
+
   it("3. meters carry aria-valuenow per snapshot; the 4 Hz tick moves only the text", () => {
     const store = fakeStore(fresh);
     const { container } = mount(store);
@@ -172,6 +198,25 @@ describe("LaneView", () => {
     // The tick does not touch it.
     store.tick(250);
     expect(fill.style.transform).toBe(`scaleX(${t.to})`);
+  });
+
+  it("5b. under reduced motion the bar has no transition; the 4 Hz tick steps it", () => {
+    const media = vi.fn((q: string) => ({ matches: q.includes("reduce") }) as MediaQueryList);
+    vi.stubGlobal("matchMedia", media);
+    try {
+      const store = fakeStore(fresh);
+      const { container } = mount(store);
+      const fill = row(container, "iron_ore").querySelector<HTMLElement>("[data-fill]")!;
+      const t = storageTransition(fresh, "iron_ore", serverNow(fresh, store.now()));
+      expect(fill.style.transition).toBe("none");
+      expect(fill.style.transform).toBe(`scaleX(${t.from})`);
+      store.tick(10_000);
+      const later = storageTransition(fresh, "iron_ore", serverNow(fresh, store.now()));
+      expect(later.from).toBeGreaterThan(t.from);
+      expect(fill.style.transform).toBe(`scaleX(${later.from})`);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("6. the plateau notice renders on a plateaued snapshot", () => {

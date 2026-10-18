@@ -110,9 +110,12 @@ button {
   cursor: default;
 }
 
-/* W-9: a hidden tab pauses every animation. */
+/* W-9: a hidden tab pauses every animation. The property isn't inherited and "*" doesn't
+   match pseudo-elements, so they are named too (the frame's pulse is on ::before). */
 @media (prefers-reduced-motion: no-preference) {
-  :root.hidden-tab * {
+  :root.hidden-tab *,
+  :root.hidden-tab *::before,
+  :root.hidden-tab *::after {
     animation-play-state: paused;
   }
 }

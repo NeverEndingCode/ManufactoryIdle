@@ -147,7 +147,9 @@ function SatisfactionMeter({ row }: { row: RowModel }) {
       aria-valuemax={1}
       aria-valuenow={round3(row.satisfaction)}
       aria-valuetext={
-        cls === "paused" ? "paused" : `${Math.round(row.satisfaction * 100)}% satisfied`
+        cls === "paused" || cls === "idle"
+          ? cls
+          : `${Math.round(row.satisfaction * 100)}% satisfied`
       }
       className={styles.sat}
       data-state={cls}
