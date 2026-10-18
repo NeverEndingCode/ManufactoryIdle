@@ -9,9 +9,11 @@ for years.
 
 ## Status
 
-**Phases 0 and 1 complete; Phase 2 complete (close-out PR in review); Phase 3 (server) in
-progress: 3a, guest play over HTTP.** The monorepo, its packages (`rational`, `content`,
-`engine`, `sim`) and the `apps/api` server, CI, and local infra (Postgres + SuperTokens via
+**Phases 0 to 3 complete** (the Phase 2 and Phase 3 PRs are in review). Phase 3, the server:
+guest play over HTTP (3a), optional accounts with SuperTokens (3b), and the anti-cheat guards,
+cleanup job and admin content migrate (3c); see [`apps/api/README.md`](apps/api/README.md).
+The monorepo, its packages (`rational`, `content`, `engine`, `sim`) and the `apps/api` server,
+CI (including a real-Postgres job for the API), and local infra (Postgres + SuperTokens via
 Docker Compose) are in place, with the test suite, lint, typecheck and `pnpm content:check`
 all green.
 
@@ -40,7 +42,7 @@ The original spec is decomposed into four, of which the engine core is the first
 | 0 | Monorepo, Postgres, SuperTokens, engine skeleton, content validator, CI | Green pipeline — **done** |
 | 1 | Engine + simulator | A playable game in the terminal |
 | 2 | Calibrated content | A game that is *paced* — **done** (close-out PR in review) |
-| 3 | Server + authority | A game with a backend — **in progress** (3a: guest play over HTTP) |
+| 3 | Server + authority | A game with a backend — **done** (in review) |
 | 4 | Web client | A game other people can play |
 
 ## Design pillars

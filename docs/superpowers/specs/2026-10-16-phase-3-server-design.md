@@ -150,9 +150,9 @@ D.3 verbatim, with these rulings:
 | Method | Path | 3a behaviour |
 |---|---|---|
 | `POST` | `/api/guests` | Create a guest player with a server-generated 256-bit token and a fresh world on the current content version. Returns `{ guestToken, world }`. |
-| `GET` | `/api/world` | Resolve the caller's world to now **without persisting**, and return `{ state, schedule, stateVersion, contentVersion }`. |
+| `GET` | `/api/world` | Resolve the caller's world to now **without persisting**, and return `{ state, schedule, stateVersion, contentChecksum }` (named `contentVersion` until 3c's R-22). |
 | `POST` | `/api/actions` | D.2 lifecycle: `{ idempotencyKey, baseVersion, actions }` → `{ state, schedule, summary, stateVersion }`, or `409 { failedAction, index, reason }`. |
-| `GET` | `/api/health` | `{ ok: true, contentVersion }`. |
+| `GET` | `/api/health` | `{ ok: true, contentChecksum }` (likewise renamed in 3c). |
 
 **Ruling R-10: the guest token is server-generated.** D.3 says "client-generated,
 localStorage". A server-generated token is no less private and can't be chosen by an attacker
@@ -256,12 +256,15 @@ tests build a server on PGlite with a fake clock and inject requests with Fastif
 
 ## PR 3c — D.5, implemented
 
+**Status:** implemented (plan `docs/superpowers/plans/2026-10-17-phase-3c-anticheat.md`, rulings
+R-19 to R-23), and with it Phase 3. The real-Postgres tests run in CI's `api-integration` job.
+
 | Guard | Implementation |
 |---|---|
 | Replay | `idempotency(key, player_id, response, created_at)`. Step 4 of D.2: inside the transaction, after the row lock, a seen key returns the stored response verbatim. 24-hour TTL via cleanup. |
 | Action rate | A per-player token bucket, 30 tokens, refilling 3/s, in process memory, returning `429` with `Retry-After`. **Ruling R-15:** per-instance memory. D.7 says instances are stateless apart from the content LRU; a shared limiter (Postgres or Redis) is deferred until there's more than one instance. |
 | Guest creation | A per-IP bucket, 5 per hour, on `POST /api/guests`. |
-| Tap ceiling | The handler caps every `TAP.clientElapsedMs` at the server's elapsed time since the world's last tap flush (stored in state), before `applyBatch`. The engine's own clamp then applies. |
+| Tap ceiling | The handler caps every `TAP.clientElapsedMs` at the server's elapsed time since the world's last tap flush, before `applyBatch`. The engine's own clamp then applies. **R-19:** the flush time is a column, `player_worlds.last_tap_flush_at`, not engine state: it is a server trust boundary, and sims and replays don't need it. |
 | Elapsed time | Already server-only (R-6). |
 | Double-resolve | Already covered: the row lock in 3a. Proved here against real Postgres: two concurrent `POST /api/actions` on one world serialize, and the second sees the first's state. |
 | Illegal actions | Already covered: validated against the pinned version in 3a. |
@@ -284,25 +287,36 @@ for a nightly cron):
   Postgres check.
 
 **Carried from 3a review:**
-- **A schedule boundary EPSILON away.** `schedule` steps past unpins up to once per stock
+Each item below is marked **Done** or **Deferred**, with where or why.
+
+- **Deferred to Phase 4 (the client). A schedule boundary EPSILON away.** `schedule` steps past unpins up to once per stock
   item. For an item in a steady pin/unpin cycle (the slice's screw case) it can exhaust that
   bound and report a boundary ~1 ns ahead, which would make a naive client re-fetch at once.
   The client (Phase 4) needs a minimum re-poll interval, or `schedule` reports the cycle as a
-  steady average rate.
-- **Migrate under an advisory lock.** `migrate` takes `pg_advisory_xact_lock` so two instances
-  booting at once cannot both apply a migration.
-- **Replay across a D.6 re-pin.** Replay-from-start uses `initial_content_version` for every
+  steady average rate. *Why deferred:* the engine does not change in 3c, and the harm is a
+  client re-fetching too eagerly, so the guard belongs in the client's poll loop.
+- **Done: migrate under an advisory lock.** `migrate` takes `pg_advisory_xact_lock` so two instances
+  booting at once cannot both apply a migration. Every migration transaction takes it and
+  re-checks `schema_migrations` under it. PGlite has the function, so no capability flag;
+  the concurrent case is tested on real Postgres.
+- **Done (R-21): replay across a D.6 re-pin.** Replay-from-start uses `initial_content_version` for every
   batch; once the admin migrate endpoint re-pins a world, later batches ran on another version.
   Either record the content version on each `action_log` row or log the re-pin as an entry.
-- **Retention vs replay.** 30-day `action_log` retention ends replay-from-start for any world
+  Both: every row carries `content_version`, and the admin migrate logs an empty batch on the
+  new version; a test replays exactly across a re-pin.
+- **Done (R-20): retention vs replay.** 30-day `action_log` retention ends replay-from-start for any world
   older than 30 days. Decide: snapshot (a replay base row) or keep the log for live worlds.
-- **Two meanings of "contentVersion".** `WorldState.contentVersion` is a state label;
+  A replay base: cleanup folds the deleted rows into `replay_base_state`, one world per
+  transaction.
+- **Done (R-22): two meanings of "contentVersion".** `WorldState.contentVersion` is a state label;
   `player_worlds.content_version` and the API's `contentVersion` are the bundle checksum.
-  Document the distinction or rename one.
-- **Untested paths:** the 4xx message allowlist in the error handler, and the
-  logger-instance branch of `buildServer`.
-- **Content LRU:** a test that eviction past capacity reloads from the table, and in-flight
-  dedupe so concurrent misses on one version index it once.
+  Document the distinction or rename one. The API field is now `contentChecksum`;
+  `state.contentVersion` keeps the authored label.
+- **Done: untested paths:** the 4xx message allowlist in the error handler, and the
+  logger-instance branch of `buildServer`. Both have tests now.
+- **Done: content LRU:** a test that eviction past capacity reloads from the table, and in-flight
+  dedupe so concurrent misses on one version index it once. Dedupe is implemented, except
+  that a caller inside a transaction never waits on a root-db load (a PGlite deadlock).
 
 ## What Phase 3 does not do
 
