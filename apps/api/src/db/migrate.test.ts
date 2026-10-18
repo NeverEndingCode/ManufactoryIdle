@@ -24,8 +24,8 @@ const TABLES = [
 ];
 
 describe("migrate", () => {
-  it("applies 001-initial.sql and creates all six tables", async () => {
-    expect(await migrate(db)).toEqual(["001-initial.sql"]);
+  it("applies the migrations and creates all six tables", async () => {
+    expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql"]);
     const rows = await db.query<{ table_name: string }>(
       `select table_name from information_schema.tables
        where table_schema = 'public' and table_name = any($1) order by table_name`,
@@ -38,7 +38,7 @@ describe("migrate", () => {
     await migrate(db);
     expect(await migrate(db)).toEqual([]);
     const rows = await db.query("select * from schema_migrations");
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
   });
 
   it("players check requires exactly one identifier", async () => {
@@ -128,6 +128,42 @@ describe("failing migration", () => {
   });
 });
 
+describe("002 backfills action_log.content_version", () => {
+  it("existing rows take their world's version, and the column is then not null", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mig-"));
+    try {
+      const src = (f: string) => new URL(`../../migrations/${f}`, import.meta.url);
+      await copyFile(src("001-initial.sql"), join(dir, "001-initial.sql"));
+      await migrate(db, dir);
+      const pid = crypto.randomUUID();
+      const wid = crypto.randomUUID();
+      await db.query("insert into players (id, guest_token) values ($1, 'g')", [pid]);
+      await db.query(
+        "insert into content_versions (version, checksum, bundle) values ('v1', 'c', '{}'), ('v2', 'c', '{}')",
+      );
+      await db.query(
+        `insert into player_worlds (id, player_id, content_version, state, last_resolved_at, schema_version,
+                                    initial_seed, created_at, initial_content_version)
+         values ($1, $2, 'v2', '{}', now(), 1, 0, now(), 'v1')`,
+        [wid, pid],
+      );
+      await db.query("insert into action_log (player_id, world_id, actions) values ($1, $2, '[]')", [
+        pid,
+        wid,
+      ]);
+      await copyFile(src("002-anticheat.sql"), join(dir, "002-anticheat.sql"));
+      expect(await migrate(db, dir)).toEqual(["002-anticheat.sql"]);
+      const rows = await db.query<{ content_version: string }>("select content_version from action_log");
+      expect(rows).toEqual([{ content_version: "v2" }]);
+      await expect(
+        db.query("insert into action_log (player_id, world_id, actions) values ($1, $2, '[]')", [pid, wid]),
+      ).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("transaction", () => {
   it("rolls back on throw", async () => {
     await migrate(db);
@@ -152,5 +188,46 @@ describe("transaction", () => {
       });
     });
     expect(await db.query("select * from players")).toHaveLength(1);
+  });
+});
+
+describe("the migrate lock", () => {
+  it("takes pg_advisory_xact_lock inside every migration transaction (PGlite has it)", async () => {
+    const seen: { sql: string; inTx: boolean }[] = [];
+    const spy = (inner: Db, inTx: boolean): Db => ({
+      query: (sql, params) => {
+        seen.push({ sql, inTx });
+        return inner.query(sql, params);
+      },
+      transaction: (fn) => inner.transaction((tx) => fn(spy(tx, true))),
+      close: () => inner.close(),
+    });
+    await migrate(spy(db, false));
+    const ddl = seen.filter((q) => /create table (if not exists )?\w/i.test(q.sql));
+    expect(ddl.length).toBeGreaterThan(0);
+    for (const q of ddl) expect(q.inTx, q.sql.slice(0, 60)).toBe(true);
+    const tx = seen.filter((q) => q.inTx);
+    const locks = tx.filter((q) => /pg_advisory_xact_lock/.test(q.sql));
+    // One for the bookkeeping table, then one per migration file.
+    expect(locks).toHaveLength(3);
+  });
+
+  it("re-checks under the lock: a migration another instance applied meanwhile is skipped", async () => {
+    // Deterministic stand-in for two instances booting at once: just before this migrate's
+    // first transaction, another migrate runs to completion.
+    let raced = false;
+    const racing: Db = {
+      query: (sql, params) => db.query(sql, params),
+      transaction: async (fn) => {
+        if (!raced) {
+          raced = true;
+          expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql"]);
+        }
+        return db.transaction(fn);
+      },
+      close: () => db.close(),
+    };
+    expect(await migrate(racing)).toEqual([]);
+    expect(await db.query("select * from schema_migrations")).toHaveLength(2);
   });
 });

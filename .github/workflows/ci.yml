@@ -2,7 +2,7 @@ name: CI
 
 on:
   push: { branches: [main] }
-  pull_request: { branches: [main] }
+  pull_request:
   # The pacing gate is too slow for every commit (~5 minutes in CI as of 2026-10-12;
   # ~15 when this was written), so it also runs nightly: a content change that
   # lands green on a shallow smoke run still gets measured to tier 10 within a day.
@@ -112,3 +112,41 @@ jobs:
       # tolerance, a known-red pin that has drifted OR gone stale, dead time over
       # threshold, an observed r_eff at the runaway floor, or a determinism divergence.
       - run: pnpm --filter @manufactory/sim run gate
+
+  # The API's DATABASE_URL-gated tests (apps/api/src/pg.integration.test.ts), against a real
+  # Postgres 16: what PGlite, a single in-process connection, cannot show. Two concurrent
+  # POST /api/actions on one world serialize on the row lock, migrations apply (and two pools
+  # migrating at once apply each file once), the pg adapter destroys a client whose COMMIT
+  # failed, and lazy account creation racing a claim ends with one player. A separate job, so
+  # it runs alongside `check`; it runs only the API's suite, the PGlite tests included.
+  api-integration:
+    runs-on: ubuntu-latest
+    # A hang guard, not a budget: the API suite takes about a minute locally on PGlite, and a
+    # test stuck on a lock would otherwise run GitHub's six-hour default.
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: manufactory
+          POSTGRES_PASSWORD: manufactory
+          POSTGRES_DB: manufactory_test
+        ports:
+          - 5432:5432
+        # Steps start only once the service reports healthy.
+        options: >-
+          --health-cmd "pg_isready -U manufactory -d manufactory_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://manufactory:manufactory@localhost:5432/manufactory_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @manufactory/api test
