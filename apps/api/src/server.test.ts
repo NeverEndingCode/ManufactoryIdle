@@ -168,7 +168,89 @@ describe("GET /api/health", () => {
     const { app, store } = await server();
     const res = await app.inject({ method: "GET", url: "/api/health" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, contentChecksum: store.current.version });
+    expect(res.json()).toEqual({ ok: true, contentChecksum: store.current.version, accounts: false });
+  });
+
+  it("reports accounts: true when an accounts core is wired", async () => {
+    const { app } = await server(SLICE, undefined, {
+      accounts: { register() {}, handleError: async () => false },
+    });
+    const res = await app.inject({ method: "GET", url: "/api/health" });
+    expect(res.json()).toHaveProperty("accounts", true);
+  });
+});
+
+describe("GET /api/content/:checksum", () => {
+  it("serves the current bundle, immutable, with no authorization", async () => {
+    const { app, store } = await server();
+    const res = await app.inject({ method: "GET", url: `/api/content/${store.current.version}` });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(() => indexContent(res.json())).not.toThrow();
+    expect(bundleChecksum(res.json())).toBe(store.current.version);
+  });
+
+  it("serves an older pinned version after the server restarts on newer content", async () => {
+    const old = await server(FIXTURE);
+    const fresh = await server(SLICE);
+    for (const v of [old.store.current.version, fresh.store.current.version]) {
+      const res = await fresh.app.inject({ method: "GET", url: `/api/content/${v}` });
+      expect(res.statusCode).toBe(200);
+      expect(bundleChecksum(res.json())).toBe(v);
+    }
+  });
+
+  it("answers 404 for an unknown or malformed checksum", async () => {
+    const { app } = await server();
+    for (const v of ["0".repeat(64), "not-hex"]) {
+      const res = await app.inject({ method: "GET", url: `/api/content/${v}` });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: "unknown content" });
+    }
+  });
+});
+
+describe("persistedAtMs", () => {
+  it("is the creation time on POST /api/guests", async () => {
+    const { app } = await server();
+    const res = await app.inject({ method: "POST", url: "/api/guests" });
+    expect((res.json() as { world: { persistedAtMs: number } }).world.persistedAtMs).toBe(T0);
+  });
+
+  it("stays at the stored time on GET, and moves with a successful action", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const get = await app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+    const view = get.json() as { persistedAtMs: number; schedule: { atMs: number } };
+    expect(view.persistedAtMs).toBe(T0);
+    expect(Math.abs(view.schedule.atMs - (T0 + 10 * MINUTE))).toBeLessThan(MINUTE);
+
+    const act = await postActions(app, token, {
+      idempotencyKey: "k-p",
+      baseVersion: 0,
+      actions: [BUY_MINER],
+    });
+    expect(act.statusCode).toBe(200);
+    expect((act.json() as { persistedAtMs: number }).persistedAtMs).toBe(now);
+    now = T0 + 20 * MINUTE;
+    const again = await app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+    const persisted = (again.json() as { persistedAtMs: number }).persistedAtMs;
+    expect(persisted).toBe(T0 + 10 * MINUTE);
+    expect(persisted).toBe((await onlyWorld()).last_resolved_at_ms);
+  });
+
+  it("survives an idempotent replay byte for byte", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    now = T0 + 10 * MINUTE;
+    const body = { idempotencyKey: "k-r", baseVersion: 0, actions: [BUY_MINER] };
+    const first = await postActions(app, token, body);
+    now = T0 + 15 * MINUTE;
+    const replay = await postActions(app, token, body);
+    expect(replay.statusCode).toBe(200);
+    expect((replay.json() as { persistedAtMs: number }).persistedAtMs).toBe(T0 + 10 * MINUTE);
+    expect(replay.body).toBe(first.body);
   });
 });
 

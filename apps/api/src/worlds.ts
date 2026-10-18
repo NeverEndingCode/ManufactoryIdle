@@ -23,6 +23,8 @@ export interface World {
   contentVersion: string;
   stateVersion: number;
   state: WorldState;
+  /** When the world was last stored (the stored state's lastResolvedAt); a GET resolves past it in memory only. */
+  persistedAtMs: number;
 }
 
 export class WorldNotFoundError extends Error {
@@ -43,12 +45,14 @@ interface WorldRow {
 }
 
 function fromRow(row: WorldRow): World {
+  const state = deserializeWorld(JSON.stringify(row.state));
   return {
     id: row.id,
     playerId: row.player_id,
     contentVersion: row.content_version,
     stateVersion: Number(row.state_version),
-    state: deserializeWorld(JSON.stringify(row.state)),
+    state,
+    persistedAtMs: state.lastResolvedAt,
   };
 }
 
@@ -254,7 +258,12 @@ export async function applyActions(
       nowMs,
     ]);
     const body = render({
-      world: { ...world, state: batch.state, stateVersion: Number(updated!.state_version) },
+      world: {
+        ...world,
+        state: batch.state,
+        stateVersion: Number(updated!.state_version),
+        persistedAtMs: batch.state.lastResolvedAt,
+      },
       content: pinned,
       summary: resolved.summary,
     });

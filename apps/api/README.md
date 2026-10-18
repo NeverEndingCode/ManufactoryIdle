@@ -68,8 +68,13 @@ Authentication is `Authorization: Guest <token>`, with the token from `POST /api
 a session (see the auth model above). The guest token is returned once; only its sha256 is
 stored.
 
-    # health
+    # health: { ok, contentChecksum, accounts } (accounts: whether /auth/* and claim are live)
     curl http://127.0.0.1:8080/api/health
+
+    # a content bundle by checksum (public, immutable: cache-control public, max-age=31536000,
+    # immutable). Serves the current bundle and any older one a world is pinned to. An unknown
+    # or malformed checksum is 404 { "error": "unknown content" }; no rate limit.
+    curl http://127.0.0.1:8080/api/content/$CHECKSUM
 
     # create a guest (returns guestToken and the starting world)
     curl -X POST http://127.0.0.1:8080/api/guests
@@ -181,3 +186,33 @@ skipped by default:
   database will do. CI's `api-integration` job runs it on `postgres:16`.
 - `src/auth/supertokens.smoke.test.ts` runs only with `SUPERTOKENS_CONNECTION_URI` set,
   against a real SuperTokens core; see `infra/README.md`.
+
+## World responses and `persistedAtMs`
+
+Every world response (`POST /api/guests`, `GET /api/world`, `POST /api/actions`,
+`POST /api/auth/claim`) is `{ state, schedule, stateVersion, contentChecksum, persistedAtMs }`
+(plus `summary` on actions). `persistedAtMs` is the time the world was last stored: production
+simulated past `persistedAtMs + offlineCapMs` is not credited until the next action. A GET
+resolves the world to now in memory only, so `persistedAtMs` stays put until an action is
+applied. Idempotent replays return the stored response verbatim; responses stored before this
+field existed lack it and are not backfilled.
+
+## Package exports and the dev server
+
+`package.json` has an `exports` map, `./server` and `./testing`, and no `main`: a bare
+`import "@manufactory/api"` does not resolve, because `src/main.ts` starts a process when
+imported. `./testing` re-exports the pieces tests need (`pgliteDb`, `migrate`,
+`openContentStore`, `guestAuth`, `identityAuth`, `noSessions`, `Db`).
+
+    pnpm --filter @manufactory/api dev
+
+runs a PGlite-backed, guest-only server (`src/dev.ts`): no accounts, no admin route, and up to
+1000 guests per IP per hour.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `8787` | Listen port. |
+| `HOST` | `127.0.0.1` | Listen address. |
+| `PGLITE_DIR` | unset (in memory) | Directory to persist the database across restarts. |
+| `CONTENT_DIR` | the vertical slice bundle | Content bundle to serve. |
+| `LOG_LEVEL` | `warn` | pino log level. |

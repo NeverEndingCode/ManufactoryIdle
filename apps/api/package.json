@@ -3,12 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "main": "./src/main.ts",
+  "exports": {
+    "./server": "./src/server.ts",
+    "./testing": "./src/testing.ts"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "start": "tsx src/main.ts",
+    "dev": "tsx src/dev.ts",
     "cleanup": "tsx src/cleanup.ts"
   },
   "dependencies": {

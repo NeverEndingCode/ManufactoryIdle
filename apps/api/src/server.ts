@@ -87,6 +87,7 @@ function worldView(world: World, content: IndexedContent) {
     stateVersion: world.stateVersion,
     // R-22: the pinned bundle's checksum. Not state.contentVersion, the bundle's authored label.
     contentChecksum: world.contentVersion,
+    persistedAtMs: world.persistedAtMs,
   };
 }
 
@@ -173,7 +174,26 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return reply.code(500).send({ error: "internal error" });
   });
 
-  app.get("/api/health", async () => ({ ok: true, contentChecksum: content.current.version }));
+  app.get("/api/health", async () => ({
+    ok: true,
+    contentChecksum: content.current.version,
+    accounts: accounts !== undefined,
+  }));
+
+  // Public and immutable: a bundle never changes under its checksum (W-5). A malformed
+  // checksum is a 404 like an unknown one, so the route reveals nothing.
+  app.get<{ Params: { checksum: string } }>("/api/content/:checksum", async (request, reply) => {
+    const { checksum } = request.params;
+    const rows = /^[0-9a-f]{64}$/.test(checksum)
+      ? await db.query<{ bundle: unknown }>("select bundle from content_versions where version = $1", [
+          checksum,
+        ])
+      : [];
+    if (rows.length === 0) return reply.code(404).send({ error: "unknown content" });
+    return reply
+      .header("cache-control", "public, max-age=31536000, immutable")
+      .send(rows[0]!.bundle);
+  });
 
   app.post("/api/guests", async (request, reply) => {
     if (await limited(guestBucket, request.ip, reply)) return reply;

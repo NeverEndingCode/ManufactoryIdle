@@ -163,6 +163,7 @@ describe("POST /api/auth/claim", () => {
     const res = await claim("u5", { guestToken: token });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toHaveProperty("stateVersion", 1);
+    expect(res.json()).toHaveProperty("persistedAtMs", T0 + 10 * 60_000);
 
     const players = await db.query<{ id: string; supertokens_user_id: string; guest_token: null }>(
       "select id, supertokens_user_id, guest_token from players",
