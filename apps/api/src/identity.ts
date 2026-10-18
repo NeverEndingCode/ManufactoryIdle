@@ -9,6 +9,20 @@ import { createPlayerWithWorld } from "./worlds.js";
 /** Returns the SuperTokens user id of the request's session, or null. */
 export type SessionVerifier = (request: FastifyRequest) => Promise<string | null>;
 
+/**
+ * Thrown by a SessionVerifier when the accounts backend (the SuperTokens core) cannot be
+ * reached. The API answers `503 accounts-unavailable` with `Retry-After`, and never falls
+ * back to the request's guest token. Any other error a verifier throws is a 500.
+ * The SuperTokens wrapper decides what is an outage (src/auth/supertokens.ts), so nothing
+ * here matches on SDK error strings.
+ */
+export class AccountsUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("accounts backend unavailable", { cause });
+    this.name = "AccountsUnavailableError";
+  }
+}
+
 /** A verifier that never finds a session (guest-only servers). */
 export const noSessions: SessionVerifier = async () => null;
 

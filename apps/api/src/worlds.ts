@@ -233,9 +233,12 @@ export async function applyActions(
       `update player_worlds
           set state = $2::jsonb, state_version = state_version + 1,
               last_resolved_at = to_timestamp($3 / 1000.0),
-              last_tap_flush_at = case when $4 then to_timestamp($5 / 1000.0) else last_tap_flush_at end
+              last_tap_flush_at = case when $4 then greatest(last_tap_flush_at, to_timestamp($5 / 1000.0))
+                                       else last_tap_flush_at end
         where id = $1
         returning state_version::text as state_version`,
+      // greatest() (which skips a null) keeps the flush monotonic: a batch stamped before the
+      // last flush, after a clock step back, cannot hand the next batch extra tap budget.
       // R-6: last_resolved_at mirrors the state's own clock. action_log.created_at below is
       // the request time from clock(); the two agree today, but they mean different things.
       [world.id, toWire(batch.state), batch.state.lastResolvedAt, hasTap, nowMs],
@@ -317,6 +320,103 @@ export async function replayWorld(
     state = batch.state;
   }
   return state;
+}
+
+/**
+ * Why `state` cannot run on `content`, or null if it can. The engine does not check this (a
+ * world on foreign content resolves without complaint, to nonsense), so the admin migrate
+ * does: every id the state refers to must exist in the target, and its stock must be
+ * exactly the target's stock items. A re-pin is for content that changes numbers, not ids.
+ */
+export function contentMisfit(state: WorldState, content: IndexedContent): string | null {
+  const stock = new Set(content.stockItemIds);
+  const held = Object.keys(state.stored);
+  const missing = content.stockItemIds.filter((id) => !Object.hasOwn(state.stored, id));
+  const extra = held.filter((id) => !stock.has(id));
+  if (missing.length > 0 || extra.length > 0) {
+    return `stock items differ (missing ${missing.join(",") || "none"}; unknown ${extra.join(",") || "none"})`;
+  }
+  const unknown = (kind: string, ids: Iterable<string>, known: { has(id: string): boolean }) => {
+    for (const id of ids) if (!known.has(id)) return `unknown ${kind} ${id}`;
+    return null;
+  };
+  const items = new Set(content.itemIds); // includes POWER_ITEM
+  for (const [lane, classes] of Object.entries(state.installed)) {
+    if (!content.lanes.has(lane)) return `unknown lane ${lane}`;
+    const problem = unknown("machine class", Object.keys(classes), content.machineClasses);
+    if (problem) return problem;
+  }
+  return (
+    unknown("lane", Object.keys(state.qsLevel), content.lanes) ??
+    unknown("recipe", Object.keys(state.assignment), content.recipes) ??
+    unknown("recipe", Object.values(state.activeRecipe), content.recipes) ??
+    unknown("item", Object.keys(state.activeRecipe), items) ??
+    unknown("item", Object.keys(state.reserve), items) ??
+    unknown("item", Object.keys(state.storageLevel), items) ??
+    (state.tier > content.maxTier ? `tier ${state.tier} is past the content's ${content.maxTier}` : null)
+  );
+}
+
+export type MigrateWorldResult =
+  | { migrated: true; worldId: string; fromVersion: string; toVersion: string; stateVersion: number }
+  | { migrated: false; reason: "unknown-version" }
+  | { migrated: false; reason: "incompatible-version"; detail: string };
+
+/**
+ * Spec D.6, the admin re-pin, in one transaction under the world's row lock. `toVersion` must
+ * be in content_versions, and the world must fit it (contentMisfit) and resolve on it. The
+ * re-pin is then a batch of no actions on the new version, exactly as replayWorld will replay
+ * it (R-21): the state is resolved to now on `toVersion`, stored with state_version bumped,
+ * and logged as an `actions = []` row carrying `toVersion`. Only content_version moves;
+ * initial_content_version never does. last_seen_at is not touched: an admin is not the player.
+ */
+export async function migrateWorld(
+  db: Db,
+  content: ContentStore,
+  playerId: string,
+  toVersion: string,
+  nowMs: number,
+): Promise<MigrateWorldResult> {
+  return db.transaction(async (tx) => {
+    const world = await loadMainWorld(tx, playerId, true);
+    const known = await tx.query("select 1 from content_versions where version = $1", [toVersion]);
+    if (known.length === 0) return { migrated: false, reason: "unknown-version" } as const;
+    const target = await content.get(toVersion, tx);
+    const incompatible = (detail: string) =>
+      ({ migrated: false, reason: "incompatible-version", detail }) as const;
+    const misfit = contentMisfit(world.state, target);
+    if (misfit) return incompatible(misfit);
+    let state: WorldState;
+    try {
+      const resolved = resolve(world.state, target, nowMs - world.state.lastResolvedAt);
+      const batch = applyBatch(resolved.state, target, [], resolved.state.seed);
+      if (batch.rejected) return incompatible(batch.reason);
+      // What is stored must load again.
+      state = deserializeWorld(toWire(batch.state));
+    } catch (err) {
+      return incompatible(err instanceof Error ? err.message : String(err));
+    }
+    const [updated] = await tx.query<{ state_version: string }>(
+      `update player_worlds
+          set content_version = $2, state = $3::jsonb, state_version = state_version + 1,
+              last_resolved_at = to_timestamp($4 / 1000.0)
+        where id = $1
+        returning state_version::text as state_version`,
+      [world.id, toVersion, toWire(state), state.lastResolvedAt],
+    );
+    await tx.query(
+      `insert into action_log (player_id, world_id, actions, idempotency_key, content_version, created_at)
+       values ($1, $2, '[]'::jsonb, null, $3, to_timestamp($4 / 1000.0))`,
+      [playerId, world.id, toVersion, nowMs],
+    );
+    return {
+      migrated: true,
+      worldId: world.id,
+      fromVersion: world.contentVersion,
+      toVersion,
+      stateVersion: Number(updated!.state_version),
+    } as const;
+  });
 }
 
 /**

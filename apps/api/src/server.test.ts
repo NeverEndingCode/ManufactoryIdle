@@ -6,6 +6,7 @@ import { bundleChecksum, loadBundleDir } from "@manufactory/content";
 import {
   applyBatch,
   deserializeWorld,
+  indexContent,
   initialWorld,
   resolve,
   schedule,
@@ -83,9 +84,10 @@ afterEach(async () => {
 async function server(
   dir: string = SLICE,
   limits?: ServerDeps["limits"],
+  extra: Partial<ServerDeps> = {},
 ): Promise<{ app: FastifyInstance; store: ContentStore }> {
   const store = await openContentStore(db, dir);
-  const app = buildServer({ db, content: store, clock, auth: guestAuth(db), limits });
+  const app = buildServer({ db, content: store, clock, auth: guestAuth(db), limits, ...extra });
   apps.push(app);
   return { app, store };
 }
@@ -166,7 +168,7 @@ describe("GET /api/health", () => {
     const { app, store } = await server();
     const res = await app.inject({ method: "GET", url: "/api/health" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, contentVersion: store.current.version });
+    expect(res.json()).toEqual({ ok: true, contentChecksum: store.current.version });
   });
 });
 
@@ -177,7 +179,7 @@ describe("POST /api/guests", () => {
     expect(res.statusCode).toBe(201);
     const body = res.json() as {
       guestToken: string;
-      world: { state: unknown; schedule: unknown; stateVersion: number; contentVersion: string };
+      world: { state: unknown; schedule: unknown; stateVersion: number; contentChecksum: string };
     };
     expect(body.guestToken).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes, base64url
 
@@ -191,7 +193,8 @@ describe("POST /api/guests", () => {
     expect(body.world.state).toEqual(wire(expected));
     expect(body.world.schedule).toEqual(schedule(expected, content));
     expect(body.world.stateVersion).toBe(0);
-    expect(body.world.contentVersion).toBe(store.current.version);
+    expect(body.world.contentChecksum).toBe(store.current.version);
+    expect(body.world).not.toHaveProperty("contentVersion"); // R-22: renamed, not duplicated
     expect(row.state_version).toBe("0");
     expect(row.content_version).toBe(store.current.version);
     expect(row.last_resolved_at_ms).toBe(T0);
@@ -455,6 +458,9 @@ describe("POST /api/actions idempotency", () => {
     now = T0 + 10 * MINUTE;
     // If the rejection rolled back and stored its 409 afterwards, this retry would take the
     // lock in between, with more time accrued, and apply. Stored under the lock, it cannot.
+    // A regression tripwire, not a live race: afterRollback fires only when a transaction
+    // throws, and today the rejection commits its 409, so the hook never runs and `raced`
+    // stays undefined. It fires again only if someone moves the 409 back out of the lock.
     let raced: { statusCode: number } | undefined;
     db.afterRollback = async () => {
       db.afterRollback = undefined;
@@ -534,9 +540,9 @@ describe("content versions", () => {
     const body = res.json() as {
       state: { stored: Record<string, string> };
       schedule: { items: Record<string, unknown> };
-      contentVersion: string;
+      contentChecksum: string;
     };
-    expect(body.contentVersion).toBe(bundleChecksum(loadBundleDir(FIXTURE)));
+    expect(body.contentChecksum).toBe(bundleChecksum(loadBundleDir(FIXTURE)));
     expect(Object.keys(body.state.stored).sort()).toEqual([...fixture.stockItemIds].sort());
     expect(Object.keys(body.schedule.items).sort()).toEqual([...fixture.stockItemIds].sort());
     const resolved = resolve(initial, fixture, 10 * MINUTE).state;
@@ -757,5 +763,277 @@ describe("the server-side tap ceiling", () => {
     now += 10_000;
     await postActions(app, token, ok);
     expect(await flushMs()).toBe(first);
+  });
+});
+
+describe("the tap flush is monotonic", () => {
+  it("a batch stamped earlier than the last flush (a clock step back) never moves it back", async () => {
+    const { app } = await server();
+    const token = await createGuest(app);
+    const flushMs = async () =>
+      (
+        await db.query<{ ms: number }>(
+          "select round(extract(epoch from last_tap_flush_at) * 1000)::float8 as ms from player_worlds",
+        )
+      )[0]!.ms;
+    const tap: Action = { type: "TAP", count: 1, clientElapsedMs: 50 };
+    now = T0 + 5_000;
+    expect((await postActions(app, token, { idempotencyKey: "a", baseVersion: 0, actions: [tap] })).statusCode).toBe(200);
+    now = T0 + 3_000;
+    const back = await postActions(app, token, { idempotencyKey: "b", baseVersion: 1, actions: [tap] });
+    expect(back.statusCode, back.body).toBe(200);
+    expect(await flushMs()).toBe(T0 + 5_000);
+  });
+});
+
+describe("trustProxy", () => {
+  const fromProxy = (app: FastifyInstance, client: string) =>
+    app.inject({
+      method: "POST",
+      url: "/api/guests",
+      remoteAddress: "10.9.9.9",
+      headers: { "x-forwarded-for": client },
+    });
+  const oneGuestPerIp = { guestsPerIp: { capacity: 1, refillPerSec: 0.001 } };
+
+  it("unset: every guest behind a proxy shares the proxy's bucket", async () => {
+    const { app } = await server(SLICE, oneGuestPerIp);
+    expect((await fromProxy(app, "1.1.1.1")).statusCode).toBe(201);
+    expect((await fromProxy(app, "2.2.2.2")).statusCode).toBe(429);
+  });
+
+  it("set: the guest limit keys on the forwarded client address", async () => {
+    const { app } = await server(SLICE, oneGuestPerIp, { trustProxy: "10.9.9.9" });
+    expect((await fromProxy(app, "1.1.1.1")).statusCode).toBe(201);
+    expect((await fromProxy(app, "2.2.2.2")).statusCode).toBe(201);
+    expect((await fromProxy(app, "1.1.1.1")).statusCode).toBe(429);
+  });
+});
+
+describe("POST /api/admin/migrate-world (D.6)", () => {
+  const ADMIN = "correct horse battery staple";
+  const admin = (token = ADMIN) => ({ authorization: `Admin ${token}` });
+  const migrateWorld = (app: FastifyInstance, headers: Record<string, string>, payload: object) =>
+    app.inject({ method: "POST", url: "/api/admin/migrate-world", headers, payload });
+
+  /** A copy of the slice with the iron miner's output changed: the same ids, other numbers. */
+  async function publishVariant(rate: string): Promise<{ version: string; content: IndexedContent }> {
+    const bundle = structuredClone(loadBundleDir(SLICE));
+    const miner = bundle.recipes.find((r) => r.id === "mine_iron_ore")!;
+    miner.outputs[0]!.rate = rate;
+    const version = bundleChecksum(bundle);
+    await db.query(
+      "insert into content_versions (version, checksum, bundle) values ($1, $1, $2::jsonb)",
+      [version, JSON.stringify(bundle)],
+    );
+    return { version, content: indexContent(bundle) };
+  }
+
+  async function playerId(): Promise<string> {
+    return (await db.query<{ id: string }>("select id from players"))[0]!.id;
+  }
+
+  it("404s when ADMIN_TOKEN is unset, so the route is not advertised", async () => {
+    const { app } = await server();
+    await createGuest(app);
+    const res = await migrateWorld(app, admin(), { playerId: await playerId(), toVersion: "x" });
+    expect(res.statusCode).toBe(404);
+    const empty = await server(SLICE, undefined, { adminToken: "" });
+    expect((await migrateWorld(empty.app, admin(""), { playerId: await playerId(), toVersion: "x" })).statusCode).toBe(404);
+  });
+
+  it("401s on a missing, wrong, prefixed or differently-schemed token, and changes nothing", async () => {
+    const { app, store } = await server(SLICE, undefined, { adminToken: ADMIN });
+    await createGuest(app);
+    const { version } = await publishVariant("90");
+    const before = await onlyWorld();
+    const body = { playerId: await playerId(), toVersion: version };
+    for (const headers of [
+      {},
+      admin("wrong"),
+      admin(ADMIN.slice(0, -1)),
+      admin(ADMIN + "x"),
+      { authorization: `Guest ${ADMIN}` },
+      { authorization: ADMIN },
+    ]) {
+      const res = await migrateWorld(app, headers, body);
+      expect(res.statusCode, JSON.stringify(headers)).toBe(401);
+      expect(res.json()).toEqual({ error: "unauthorized" });
+    }
+    // A bad token is a 401 even with a malformed body: auth runs before validation.
+    expect((await migrateWorld(app, admin("wrong"), {})).statusCode).toBe(401);
+    expect(await onlyWorld()).toEqual(before);
+    expect(before.content_version).toBe(store.current.version);
+  });
+
+  it("400s on an unknown version, a malformed body, or content the world does not fit", async () => {
+    const { app } = await server(SLICE, undefined, { adminToken: ADMIN });
+    await createGuest(app);
+    const fixture = await openContentStore(db, FIXTURE); // published, but other ids entirely
+    const before = await onlyWorld();
+    const pid = await playerId();
+
+    const unknown = await migrateWorld(app, admin(), { playerId: pid, toVersion: "nope" });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json()).toEqual({ error: "unknown-version" });
+
+    for (const body of [{}, { playerId: pid }, { playerId: "not-a-uuid", toVersion: "v" }, { playerId: pid, toVersion: "v", x: 1 }]) {
+      expect((await migrateWorld(app, admin(), body)).statusCode, JSON.stringify(body)).toBe(400);
+    }
+
+    const misfit = await migrateWorld(app, admin(), { playerId: pid, toVersion: fixture.current.version });
+    expect(misfit.statusCode).toBe(400);
+    expect((misfit.json() as { error: string }).error).toBe("incompatible-version");
+
+    expect(await onlyWorld()).toEqual(before);
+    expect(await logRows()).toEqual([]);
+  });
+
+  it("404s for a player with no world", async () => {
+    const { app, store } = await server(SLICE, undefined, { adminToken: ADMIN });
+    const res = await migrateWorld(app, admin(), {
+      playerId: crypto.randomUUID(),
+      toVersion: store.current.version,
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("re-pins content_version (never initial_content_version), logs the re-pin, and replay stays exact across it", async () => {
+    const { app, store } = await server(SLICE, undefined, { adminToken: ADMIN });
+    const token = await createGuest(app);
+    const variant = await publishVariant("120");
+    const slice = store.current;
+
+    now = T0 + 10 * MINUTE;
+    expect((await postActions(app, token, { idempotencyKey: "a", baseVersion: 0, actions: [BUY_MINER] })).statusCode).toBe(200);
+    const at10 = await storedState();
+
+    // The variant really is different content: resolving the same span on it diverges, so a
+    // replay that used the wrong version for any span would not match.
+    expect(serializeWorld(resolve(at10, variant.content, 5 * MINUTE).state)).not.toBe(
+      serializeWorld(resolve(at10, slice.content, 5 * MINUTE).state),
+    );
+
+    now = T0 + 15 * MINUTE;
+    const pid = await playerId();
+    const res = await migrateWorld(app, admin(), { playerId: pid, toVersion: variant.version });
+    expect(res.statusCode, res.body).toBe(200);
+    const [world] = await db.query<{ id: string }>("select id from player_worlds");
+    expect(res.json()).toEqual({
+      playerId: pid,
+      worldId: world!.id,
+      fromVersion: slice.version,
+      toVersion: variant.version,
+      stateVersion: 2,
+    });
+
+    const row = await onlyWorld();
+    expect(row.content_version).toBe(variant.version);
+    expect(row.initial_content_version).toBe(slice.version);
+    expect(row.state_version).toBe("2");
+    // The re-pin is a batch of no actions on the new version: resolved to now, on it.
+    const r = resolve(at10, variant.content, 5 * MINUTE);
+    expect(row.state).toEqual(wire(r.state));
+    expect(row.last_resolved_at_ms).toBe(now);
+
+    now = T0 + 20 * MINUTE;
+    const tap: Action = { type: "TAP", count: 3, clientElapsedMs: 1500 };
+    const after = await postActions(app, token, { idempotencyKey: "b", baseVersion: 2, actions: [tap] });
+    expect(after.statusCode, after.body).toBe(200);
+    expect((after.json() as { contentChecksum: string }).contentChecksum).toBe(variant.version);
+
+    const log = await db.query<{ actions: Action[]; content_version: string; idempotency_key: string | null }>(
+      "select actions, content_version, idempotency_key from action_log order by id",
+    );
+    expect(log).toEqual([
+      { actions: [BUY_MINER], content_version: slice.version, idempotency_key: "a" },
+      { actions: [], content_version: variant.version, idempotency_key: null },
+      { actions: [tap], content_version: variant.version, idempotency_key: "b" },
+    ]);
+    const replayed = await replayWorld(db, store, world!.id);
+    expect(serializeWorld(replayed)).toBe(serializeWorld(await storedState()));
+  });
+});
+
+describe("the error handler", () => {
+  class Teapot extends Error {
+    statusCode = 418;
+  }
+  function withRoutes(extra: Partial<ServerDeps> = {}) {
+    return server(SLICE, undefined, {
+      accounts: {
+        register(instance) {
+          instance.get("/x/teapot", async () => {
+            throw new Teapot("internal detail: table players, row 7");
+          });
+          instance.get("/x/boom", async () => {
+            throw new Error("kaboom");
+          });
+        },
+        handleError: async () => false,
+      },
+      ...extra,
+    });
+  }
+
+  it("a 4xx that isn't Fastify's own gets a generic message, never the error's", async () => {
+    const { app } = await withRoutes();
+    const res = await app.inject({ method: "GET", url: "/x/teapot" });
+    expect(res.statusCode).toBe(418);
+    expect(res.json()).toEqual({ error: "request failed" });
+    // Fastify's own 4xx messages are written for clients and pass through.
+    const bad = await app.inject({
+      method: "POST",
+      url: "/api/actions",
+      headers: { ...guest(await createGuest(app)), "content-type": "application/json" },
+      payload: "{not json",
+    });
+    expect(bad.statusCode).toBe(400);
+    expect((bad.json() as { error: string }).error).not.toBe("request failed");
+  });
+
+  it("uses a ready-made logger instance (loggerInstance), and logs a 500 to it", async () => {
+    const lines: { level: string; args: unknown[] }[] = [];
+    const logger = {
+      level: "info",
+      child() {
+        return logger;
+      },
+      ...Object.fromEntries(
+        ["trace", "debug", "info", "warn", "error", "fatal", "silent"].map((level) => [
+          level,
+          (...args: unknown[]) => void lines.push({ level, args }),
+        ]),
+      ),
+    } as unknown as NonNullable<ServerDeps["logger"]>;
+    const { app } = await withRoutes({ logger });
+    expect(app.log).toBe(logger);
+    const res = await app.inject({ method: "GET", url: "/x/boom" });
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toEqual({ error: "internal error" });
+    const logged = lines.filter((l) => l.level === "error").flatMap((l) => l.args);
+    expect(logged.some((a) => a instanceof Error && a.message === "kaboom")).toBe(true);
+  });
+});
+
+describe("resolve cost (spec 3c, Resolve-cost DoS)", () => {
+  it("a world idle for a year resolves within the offline cap, in bounded time", async () => {
+    const { app, store } = await server();
+    const token = await createGuest(app);
+    const initial = await storedState();
+    now = T0 + 365 * 24 * 60 * MINUTE;
+    const started = Date.now();
+    const res = await app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+    const tookMs = Date.now() - started;
+    expect(res.statusCode).toBe(200);
+    // A budget against a runaway resolve (MAX_EVENTS), not a performance target.
+    expect(tookMs).toBeLessThan(10_000);
+    // The year counts only up to the offline cap: the same as resolving exactly the cap.
+    const capMs = store.current.content.offlineCapMs;
+    expect(capMs).toBeLessThan(365 * 24 * 60 * MINUTE);
+    const capped = resolve(initial, store.current.content, capMs).state;
+    expect((res.json() as { state: { stored: unknown } }).state.stored).toEqual(
+      (wire(capped) as { stored: unknown }).stored,
+    );
   });
 });

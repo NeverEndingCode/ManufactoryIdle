@@ -5,6 +5,7 @@ import { pgliteDb } from "./db/pglite.js";
 import { migrate } from "./db/migrate.js";
 import type { Db } from "./db/db.js";
 import { openContentStore } from "./content.js";
+import { indexContent } from "@manufactory/engine";
 
 const SLICE = fileURLToPath(
   new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
@@ -76,4 +77,99 @@ describe("openContentStore", () => {
     const store = await openContentStore(db, SLICE);
     await expect(store.get("unknown")).rejects.toThrow(/unknown/);
   });
+});
+
+describe("the content LRU", () => {
+  /** Counts the store's bundle reads, so a hit (no read) and a reload (one read) can be told apart. */
+  function counting(inner: Db): Db & { reads: number } {
+    const wrapped: Db & { reads: number } = {
+      reads: 0,
+      query: (sql, params) => {
+        if (/select bundle from content_versions/.test(sql)) wrapped.reads += 1;
+        return inner.query(sql, params);
+      },
+      transaction: (fn) => inner.transaction(fn),
+      close: () => inner.close(),
+    };
+    return wrapped;
+  }
+
+  /** Publishes n small variants of the slice (only the authored label differs) and returns their versions. */
+  async function publishVariants(n: number): Promise<string[]> {
+    const slice = loadBundleDir(SLICE);
+    const versions: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const variant = { ...slice, version: `${slice.version}-variant-${i}` };
+      indexContent(variant); // a real, indexable bundle
+      const version = bundleChecksum(variant);
+      await db.query(
+        "insert into content_versions (version, checksum, bundle) values ($1, $1, $2::jsonb)",
+        [version, JSON.stringify(variant)],
+      );
+      versions.push(version);
+    }
+    return versions;
+  }
+
+  it("evicts the least recently used past 8 entries, and reloads an evicted version from the table", async () => {
+    const counted = counting(db);
+    const store = await openContentStore(counted, FIXTURE); // the current version: entry 1
+    const versions = await publishVariants(9);
+    for (const v of versions.slice(0, 7)) await store.get(v); // entries 2..8: full
+    expect(counted.reads).toBe(7);
+    for (const v of versions.slice(0, 7)) await store.get(v); // all hits
+    expect(counted.reads).toBe(7);
+
+    await store.get(store.current.version); // touch the current version: variant 0 is now oldest
+    await store.get(versions[7]!); // a 9th entry evicts variant 0
+    expect(counted.reads).toBe(8);
+    await store.get(versions[1]!); // still cached
+    await store.get(store.current.version); // still cached
+    expect(counted.reads).toBe(8);
+    const reloaded = await store.get(versions[0]!); // evicted: read again
+    expect(counted.reads).toBe(9);
+    expect(reloaded.bundle.version).toBe(`${loadBundleDir(SLICE).version}-variant-0`);
+  });
+
+  it("dedupes concurrent misses on one version: one read, one index, the same object", async () => {
+    const counted = counting(db);
+    const store = await openContentStore(counted, FIXTURE);
+    const [v] = await publishVariants(1);
+    const [a, b, c] = await Promise.all([store.get(v!), store.get(v!), store.get(v!)]);
+    expect(counted.reads).toBe(1);
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+  });
+
+  it("a failed load is not cached: concurrent waiters all fail, and a later get retries", async () => {
+    const counted = counting(db);
+    const store = await openContentStore(counted, FIXTURE);
+    const results = await Promise.allSettled([store.get("missing"), store.get("missing")]);
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect(counted.reads).toBe(1);
+    await expect(store.get("missing")).rejects.toThrow(/unknown/);
+    expect(counted.reads).toBe(2);
+  });
+});
+
+describe("the content LRU inside a transaction", () => {
+  it("a transaction's miss does not wait on a root-db load of the same version (PGlite deadlock)", async () => {
+    const store = await openContentStore(db, FIXTURE);
+    const slice = loadBundleDir(SLICE);
+    const version = bundleChecksum(slice);
+    await db.query(
+      "insert into content_versions (version, checksum, bundle) values ($1, $1, $2::jsonb)",
+      [version, JSON.stringify(slice)],
+    );
+    const [inTx, outside] = await Promise.all([
+      db.transaction(async (tx) => {
+        // Let the root get below start its load first, queued behind this transaction.
+        await new Promise((r) => setTimeout(r, 20));
+        return store.get(version, tx);
+      }),
+      new Promise((r) => setTimeout(r, 5)).then(() => store.get(version)),
+    ]);
+    expect((inTx as { bundle: unknown }).bundle).toEqual(slice);
+    expect((outside as { bundle: unknown }).bundle).toEqual(slice);
+  }, 5_000);
 });

@@ -40,25 +40,42 @@ export async function openContentStore(db: Db, dir: string): Promise<ContentStor
   };
   remember(version, content);
 
+  // Misses in flight, by version: concurrent gets of one uncached version share one read and
+  // one indexContent. A failed load is dropped from here, so a later get retries. Sharing a
+  // load is safe whatever querier ran it, since a content_versions row never changes, with one
+  // exception: a caller inside a transaction never waits on a load running on the root db.
+  // On PGlite that root query is queued behind the caller's own transaction, a deadlock.
+  const loading = new Map<string, { on: Db; promise: Promise<IndexedContent> }>();
+  const load = async (v: string, q: Db): Promise<IndexedContent> => {
+    const rows = await q.query<{ bundle: Bundle }>(
+      "select bundle from content_versions where version = $1",
+      [v],
+    );
+    if (rows.length === 0) throw new Error(`unknown content version: ${v}`);
+    const stored = rows[0]!.bundle;
+    // The version is the bundle's checksum, which survives the jsonb round trip; a
+    // mismatch means the row was edited or corrupted, and a world must never run on
+    // content other than the version it pinned.
+    const actual = bundleChecksum(stored);
+    if (actual !== v) {
+      throw new Error(`content version ${v}: stored bundle checksum mismatch (got ${actual})`);
+    }
+    return remember(v, indexContent(stored));
+  };
+
   return {
     current: { version, content },
     async get(v, tx) {
       const hit = cache.get(v);
       if (hit) return remember(v, hit);
-      const rows = await (tx ?? db).query<{ bundle: Bundle }>(
-        "select bundle from content_versions where version = $1",
-        [v],
-      );
-      if (rows.length === 0) throw new Error(`unknown content version: ${v}`);
-      const stored = rows[0]!.bundle;
-      // The version is the bundle's checksum, which survives the jsonb round trip; a
-      // mismatch means the row was edited or corrupted, and a world must never run on
-      // content other than the version it pinned.
-      const actual = bundleChecksum(stored);
-      if (actual !== v) {
-        throw new Error(`content version ${v}: stored bundle checksum mismatch (got ${actual})`);
-      }
-      return remember(v, indexContent(stored));
+      const q = tx ?? db;
+      const pending = loading.get(v);
+      if (pending && (q === db || pending.on !== db)) return pending.promise;
+      const promise = load(v, q).finally(() => {
+        if (loading.get(v)?.promise === promise) loading.delete(v);
+      });
+      loading.set(v, { on: q, promise });
+      return promise;
     },
   };
 }
