@@ -286,6 +286,29 @@ for a nightly cron):
   `DATABASE_URL`-gated tests: the concurrency serialization test and a migrations-on-real-
   Postgres check.
 
+**Admin migrate: content compatibility (final review).**
+- **One label, one checksum.** The engine's expansion cache (`packages/engine/src/graph/expand.ts`)
+  is process-global and keyed on `content.bundle.version`, the authored label. Two bundles
+  sharing a label but not numbers would share cached rate vectors, and a cold process
+  (cleanup's `replayWorld`, a restarted instance) could resolve differently from the live one.
+  So `openContentStore` throws, naming both checksums, when it publishes or boots a bundle whose
+  label already exists in `content_versions` under another checksum, and `migrateWorld` refuses a
+  `toVersion` with the world's current label but another checksum (400 `incompatible-version`,
+  "bump the label"). **Deferred engine fix (a later phase):** key the expansion cache on the
+  bundle checksum; the API guard is the interim. `migrateWorld` also sets `state.contentVersion`
+  to the target's label, and `replayWorld` does the same for each row, so replay stays exact.
+- **Strict compatibility rule.** A world re-pins only onto content whose stock items equal its
+  own and which knows every id it refers to (`contentMisfit`): a re-pin changes numbers, not ids.
+- **Superset follow-up (designed, not built).** To allow content that adds ids, a pure
+  `fitToContent(state, target)` fills only the missing keys in `stored`, `quantum`, `bound`,
+  `lifetime`, `storageLevel`, `reserve` and `qsLevel` from
+  `initialWorld(target, 0, state.lastResolvedAt)`, sets
+  `activeRecipe = {...target.defaultActiveRecipe, ...state.activeRecipe}`, and leaves `priority`
+  alone. Removed ids and a tier past `maxTier` are still refused. `replayWorld` must apply it
+  whenever a row's `content_version` changes, so replay matches the live migration.
+- **Time credit.** Time from `lastResolvedAt` up to the migration is credited at the new
+  content's rates (the state is resolved to now on `toVersion`), not the old ones.
+
 **Carried from 3a review:**
 Each item below is marked **Done** or **Deferred**, with where or why.
 

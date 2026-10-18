@@ -149,11 +149,16 @@ describe.skipIf(!DATABASE_URL)("on real Postgres", () => {
         headers: { authorization: `Guest ${token}` },
         payload: { idempotencyKey: key, baseVersion: 0, actions: [tap(1500)] },
       });
-    const pending = Promise.all([post(a.app, "from-a"), post(b.app, "from-b")]);
-    await lockWaiters(2);
-    release.fire();
-    await holding;
-    const responses = await pending;
+    let responses: Awaited<ReturnType<typeof post>>[];
+    try {
+      const pending = Promise.all([post(a.app, "from-a"), post(b.app, "from-b")]);
+      await lockWaiters(2);
+      release.fire();
+      await holding;
+      responses = await pending;
+    } finally {
+      release.fire(); // a failed wait must not leave the holder blocking pool.end()
+    }
 
     for (const res of responses) expect(res.statusCode, res.body).toBe(200);
     const bodies = responses.map((r) => r.json() as { stateVersion: number; state: unknown });

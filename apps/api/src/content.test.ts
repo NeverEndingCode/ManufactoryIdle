@@ -35,6 +35,25 @@ describe("openContentStore", () => {
     expect(rows).toEqual([{ version: checksum, checksum }]);
   });
 
+  it("refuses a label already published under another checksum, naming both", async () => {
+    const slice = loadBundleDir(SLICE);
+    // A row with the slice's label but other numbers.
+    const rogue = structuredClone(slice);
+    rogue.recipes.find((r) => r.outputs.length > 0)!.outputs[0]!.rate = "12345";
+    const rogueSum = bundleChecksum(rogue);
+    await db.query("insert into content_versions (version, checksum, bundle) values ($1, $1, $2::jsonb)", [
+      rogueSum,
+      JSON.stringify(rogue),
+    ]);
+    const error = await openContentStore(db, SLICE).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(error?.message).toContain(rogueSum);
+    expect(error?.message).toContain(bundleChecksum(slice));
+    expect(await db.query("select 1 from content_versions")).toHaveLength(1);
+  });
+
   it("serves an older version from the table, not from memory", async () => {
     const a = await openContentStore(db, SLICE);
     const versionA = a.current.version;
