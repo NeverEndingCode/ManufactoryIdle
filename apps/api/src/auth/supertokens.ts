@@ -96,6 +96,17 @@ export function passwordResetDelivery(
  *
  * `supertokens.init` is once per process: a second call is a silent no-op that keeps the
  * first config, so call this once (main.ts). It contacts no core until a request needs it. */
+export function appInfoFor(apiDomain: string, websiteDomain: string) {
+  return {
+    appName: "Manufactory Idle" as const,
+    apiDomain,
+    websiteDomain,
+    apiBasePath: "/auth" as const,
+    // Where the web client mounts the pre-built UI's routes; reset-password mail links use it.
+    websiteBasePath: "/account" as const,
+  };
+}
+
 export function superTokensFromEnv(
   env: Env,
   log: { info: Log; warn: Log } = { info: console.log, warn: console.warn },
@@ -122,12 +133,7 @@ export function superTokensFromEnv(
       connectionURI,
       ...(set(env.SUPERTOKENS_API_KEY) ? { apiKey: env.SUPERTOKENS_API_KEY } : {}),
     },
-    appInfo: {
-      appName: "Manufactory Idle",
-      apiDomain,
-      websiteDomain,
-      apiBasePath: "/auth",
-    },
+    appInfo: appInfoFor(apiDomain, websiteDomain),
     recipeList: [
       EmailPassword.init({
         emailDelivery: { service: passwordResetDelivery(env, log.info).service },

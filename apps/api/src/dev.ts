@@ -6,10 +6,16 @@ if (!Number.isInteger(port) || port < 0 || port >= 65536) {
   console.error(`PORT must be an integer from 0 to 65535, got ${JSON.stringify(process.env.PORT)}`);
   process.exit(1);
 }
+const fake = process.env.DEV_FAKE_SESSIONS;
+if (fake !== undefined && fake !== "" && fake !== "1") {
+  console.error(`DEV_FAKE_SESSIONS must be unset, empty or "1", got ${JSON.stringify(fake)}`);
+  process.exit(1);
+}
 const host = process.env.HOST ?? "127.0.0.1";
 const { app, db } = await devServer({
   ...(process.env.PGLITE_DIR ? { pgliteDir: process.env.PGLITE_DIR } : {}),
   ...(process.env.CONTENT_DIR ? { contentDir: process.env.CONTENT_DIR } : {}),
+  ...(fake === "1" ? { fakeSessions: true } : {}),
   logLevel: process.env.LOG_LEVEL ?? "warn",
 });
 

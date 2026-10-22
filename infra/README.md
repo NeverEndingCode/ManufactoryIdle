@@ -45,6 +45,10 @@ Point the API at the compose SuperTokens core as well (port 3567, API key
     API_DOMAIN=http://localhost:8080 WEBSITE_DOMAIN=http://localhost:5173 \
       pnpm --filter @manufactory/api start
 
+To use the web client against it, open the client at `http://localhost:5173` and set
+`API_DOMAIN=http://localhost:5173 WEBSITE_DOMAIN=http://localhost:5173`: Vite proxies `/api`
+and `/auth` to the API (W-2), so the browser sees one origin.
+
 Without `SUPERTOKENS_CONNECTION_URI` the API runs guest-only (it logs `accounts
 disabled`). With it, `API_DOMAIN` and `WEBSITE_DOMAIN` are required; an `http`
 `API_DOMAIN` logs a warning (session cookies aren't `Secure`), which is expected locally.

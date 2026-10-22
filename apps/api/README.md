@@ -217,3 +217,13 @@ runs a PGlite-backed, guest-only server (`src/dev.ts`): no accounts, no admin ro
 | `PGLITE_DIR` | unset (in memory) | Directory to persist the database across restarts. |
 | `CONTENT_DIR` | the vertical slice bundle | Content bundle to serve. |
 | `LOG_LEVEL` | `warn` | pino log level. |
+
+### Fake sessions (`DEV_FAKE_SESSIONS=1`)
+
+`DEV_FAKE_SESSIONS=1 pnpm --filter @manufactory/api dev` also mounts an in-memory fake of the
+SuperTokens front-end interface (`src/dev-sessions.ts`: sign-up, sign-in, sign-out, refresh,
+password reset, plus `GET /auth/dev/reset-link?email=`), so the web client's account e2e runs
+without a SuperTokens core. It rejects an `fdi-version` the node SDK does not speak. Any value
+other than unset, empty or `1` stops `dev.ts`. **Never in production**: `main.ts` cannot reach
+it and `devServer` throws under `NODE_ENV=production`. The real path is covered only by the
+SuperTokens smoke test (`src/auth/supertokens.smoke.test.ts`, needs a core).
