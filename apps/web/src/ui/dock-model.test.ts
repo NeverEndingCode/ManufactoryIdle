@@ -2,6 +2,8 @@
 import { TAP_TIMER_ID } from "@manufactory/engine";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Snapshot } from "../sync/snapshot.js";
+import { TAP_LABEL } from "../sync/constants.js";
+import type { Batch } from "../sync/outbox.js";
 import { dockModel } from "./dock-model.js";
 import {
   CLIENT_T0,
@@ -51,6 +53,21 @@ describe("dockModel (Q-12)", () => {
     expect(m.injectionMw).toBe(25);
     expect(m.remainingMs).toBe(30_000);
     expect(dockModel(fresh, { pending: 50, lastTapAt: at, holding: true }, at).stacks).toBe(10);
+  });
+
+  it("2b. taps in an in-flight TAP batch still count: no dip while the flush is out", () => {
+    const at = CLIENT_T0 + 1_000;
+    const tap = (count: number): Batch => ({
+      id: 1,
+      key: "k",
+      label: TAP_LABEL,
+      actions: [{ type: "TAP", count, clientElapsedMs: 50 }],
+    });
+    const other: Batch = { id: 2, key: "j", label: "buy", actions: [{ type: "TAP", count: 7, clientElapsedMs: 5 }] };
+    const flushed = { pending: 0, lastTapAt: at, holding: true };
+    expect(dockModel(fresh, flushed, at, [tap(3)]).stacks).toBe(3);
+    expect(dockModel(fresh, { ...flushed, pending: 2 }, at, [tap(3), other]).stacks).toBe(5);
+    expect(dockModel(fresh, flushed, at, [tap(30)]).stacks).toBe(10);
   });
 
   it("3. the server's tap-expiry timer, counted down on the client's clock", () => {

@@ -247,6 +247,8 @@ export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: 
 
   const onDown = (e: PointerEvent<HTMLButtonElement>, id: string) => {
     if (e.button !== 0 || confirm !== null) return;
+    // Safari and macOS Firefox don't focus a button on pointerdown; Escape needs the focus.
+    e.currentTarget.focus();
     e.currentTarget.setPointerCapture?.(e.pointerId);
     // The midpoints are read once, here: the list doesn't autoscroll during a drag.
     const mids: number[] = [];

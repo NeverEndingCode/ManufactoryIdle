@@ -13,6 +13,8 @@ export interface PowerDockProps {
   store: Pick<GameStore, "pressTap" | "releaseTap" | "now">;
   snapshot: Snapshot;
   taps: StoreView["taps"];
+  /** The outbox, for the taps in flight (W-12). */
+  pending?: StoreView["pending"];
 }
 
 /** MW to one decimal, and the notation past 10,000. */
@@ -22,9 +24,9 @@ function mw(n: number): string {
 
 const HOLD_KEYS = new Set([" ", "Enter"]);
 
-export function PowerDock({ store, snapshot, taps }: PowerDockProps) {
+export function PowerDock({ store, snapshot, taps, pending }: PowerDockProps) {
   useTick(); // the kick's countdown, at 4 Hz
-  const m = dockModel(snapshot, taps, store.now());
+  const m = dockModel(snapshot, taps, store.now(), pending);
   const keyHeld = useRef(false);
 
   const fill = m.supplyMw > 0 ? Math.min(1, m.demandMw / m.supplyMw) : m.demandMw > 0 ? 1 : 0;

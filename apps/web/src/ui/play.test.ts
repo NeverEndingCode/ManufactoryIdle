@@ -21,7 +21,11 @@ import { reorderVisible, visiblePriority } from "./priority-model.js";
 import { affordability } from "./quote.js";
 import { CLIENT_T0, loadSlice, snapshotOf, type Slice } from "./test-fixtures.js";
 
-const TARGET = Number(process.env.WEB_PLAY_TIER ?? 6);
+const raw = process.env.WEB_PLAY_TIER;
+const TARGET = raw ? Number(raw) : 6;
+if (!Number.isInteger(TARGET) || TARGET < 1 || TARGET > 10) {
+  throw new Error(`WEB_PLAY_TIER must be an integer from 1 to 10, got "${raw}"`);
+}
 const H = 3_600_000;
 const MIN_WAIT_MS = 1_000;
 const MAX_WAIT_MS = 30 * 60_000;
@@ -136,7 +140,10 @@ function play(target: number): Run {
 describe("the builder-only player (Q-14)", () => {
   it(
     `reaches tier ${TARGET} from the client's builders alone`,
-    { timeout: TARGET >= 10 ? 300_000 : 60_000 },
+    // Hang guards, not budgets: a shared CI runner ran several times slower than local (PR #23).
+    // Measured locally: tier 6 about 7.6 s, tier 10 about 61 s. 480 s stays under the
+    // web-play job's 10-minute cap.
+    { timeout: TARGET >= 10 ? 480_000 : 180_000 },
     () => {
       const t0 = performance.now();
       const run = play(TARGET);

@@ -111,8 +111,8 @@ Measured with `npx tsx` probes against the real engine and the slice bundle (`/h
   - It applies each action to engine state, and advances time with `resolve` by `affordability(...).inMs`, capped at 30 min.
   - Measured with the equivalent probe: tier 10 at 132 h game time, 718 actions, 1,098 decisions, 47 s wall locally. Tier 6 is at 9.2 h.
   - **Where it runs:**
-    - `pnpm test` runs it to **tier 6**, in about 2 s;
-    - a new CI job, `web-play`, runs it to **tier 10** (`WEB_PLAY_TIER=10`, about 2 min at the 2.43× runner factor, `timeout-minutes: 10`).
+    - `pnpm test` runs it to **tier 6**, in about 7.6 s (measured in Task 6);
+    - a new CI job, `web-play`, runs it to **tier 10** (`WEB_PLAY_TIER=10`, about 61 s locally as measured in Task 6, longer on a runner, `timeout-minutes: 10`).
   - It is backed by Task 6's D.1 coverage test.
   - *Cost if wrong:* a UI-only stall that the scripted player avoids. The coverage test and the e2e specs bound that.
 - **Q-15. Four e2e specs, each on its own guest.** Measured on a fresh world:

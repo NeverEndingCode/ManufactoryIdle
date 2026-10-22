@@ -66,6 +66,8 @@ test("a lost POST and a 429 are resent with the same key", async ({ page }) => {
   });
 });
 
+const teapot = (r: Route) => r.fulfill({ status: 418, body: '{"error":"x"}' });
+
 test("a GET answered with a 4xx stops polling until focus", async ({ page }) => {
   let gets = 0;
   page.on("request", (req) => {
@@ -76,9 +78,8 @@ test("a GET answered with a 4xx stops polling until focus", async ({ page }) => 
   const focus = () => page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
   await test.step("the 4xx: a client-bug toast, and polling off", async () => {
-    await page.route("**/api/world", (r) => r.fulfill({ status: 418, body: '{"error":"x"}' }), {
-      times: 1,
-    });
+    // Unlimited, so a stray automatic GET in the fast-forward window can't use it up.
+    await page.route("**/api/world", teapot);
     await page.clock.fastForward(6_000);
     await focus();
     await expect(page.locator('[data-notice="client-bug"]')).toBeVisible();
@@ -94,6 +95,7 @@ test("a GET answered with a 4xx stops polling until focus", async ({ page }) => 
 
   await test.step("focus: exactly one GET, and polling armed again", async () => {
     const n = gets;
+    await page.unroute("**/api/world", teapot);
     await focus();
     await expect(root).toHaveAttribute("data-polling", "armed");
     expect(gets).toBe(n + 1);

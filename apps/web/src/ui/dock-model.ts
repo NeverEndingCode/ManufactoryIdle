@@ -2,6 +2,8 @@
 // kick and remaining time, optimistic until the flush's response lands (W-12).
 import { TAP_TIMER_ID, tapMultiplier } from "@manufactory/engine";
 import { localTimeOf, type Snapshot } from "../sync/snapshot.js";
+import { TAP_LABEL } from "../sync/constants.js";
+import type { Batch } from "../sync/outbox.js";
 import type { StoreView } from "../sync/store.js";
 import { isPowerTarget } from "./derive.js";
 
@@ -20,7 +22,13 @@ export interface DockModel {
   injectionMw: number;
 }
 
-export function dockModel(s: Snapshot, taps: StoreView["taps"], clientNow: number): DockModel {
+export function dockModel(
+  s: Snapshot,
+  taps: StoreView["taps"],
+  clientNow: number,
+  /** The store view's outbox: its TAP batches are flushed taps the snapshot hasn't counted yet. */
+  pending: readonly Batch[] = [],
+): DockModel {
   const { demandMw, fullDemandMw, supplyMw, ratio } = s.display.solution.power;
   const b = s.display.solution.bottleneck;
   const limited =
@@ -39,7 +47,12 @@ export function dockModel(s: Snapshot, taps: StoreView["taps"], clientNow: numbe
   // Past the SERVER's expiry its stacks are gone, before the next snapshot says so; a local
   // tap since then extends the readout's time, not the expired stacks.
   const base = serverEnd > clientNow ? state.tapStacks : 0;
-  const stacks = Math.min(tap.maxStacks, base + taps.pending);
+  let inFlight = 0;
+  for (const b of pending) {
+    if (b.label !== TAP_LABEL) continue;
+    for (const a of b.actions) if (a.type === "TAP") inFlight += a.count;
+  }
+  const stacks = Math.min(tap.maxStacks, base + taps.pending + inFlight);
   return {
     demandMw,
     supplyMw,

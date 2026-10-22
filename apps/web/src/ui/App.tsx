@@ -250,7 +250,7 @@ export function App({ store }: { store: GameStore }) {
                 </div>
               )}
               <div className={layout.dock} data-dock-slot>
-                <PowerDock store={store} snapshot={s} taps={view.taps} />
+                <PowerDock store={store} snapshot={s} taps={view.taps} pending={view.pending} />
               </div>
             </div>
           )}

@@ -212,6 +212,7 @@ describe("PriorityList", () => {
     // Cancel first: no send, no ghost.
     fireEvent.pointerDown(handle, { pointerId: 1, clientY: 180, button: 0 });
     expect(capture).toHaveBeenCalledWith(1);
+    expect(document.activeElement).toBe(handle);
     fireEvent.pointerMove(handle, { pointerId: 1, clientY: 50 });
     expect(row("item:iron_ore").style.transform).toBe("translateY(-130px)");
     expect(list().querySelector("[data-drop]")).not.toBeNull();

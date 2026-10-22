@@ -74,7 +74,7 @@ Citations are to `main` at 8994558.
 | PR | Scope | Ends in |
 |---|---|---|
 | **4a** | `apps/web` shell, the API and engine additions (W-5, W-8, W-15, W-26), the sync core (W-6 to W-12), guest start, the lane view with storage/QS/BOUND, split bars and the bottleneck frame (its inline buy sends the advised `BUY_MACHINE`), the e2e harness | A stranger opens the page, gets a guest factory from the real API, watches it run, and buys from the bottleneck frame |
-| **4b** | Buy drawer (projection, ladder progress, `UPGRADE_MARK`, dismantle, storage/QS, recipe select/assign), priority list (drag, Simple/Advanced, pinned power, reserves), power dock and holdable tap | Every D.1 action is reachable; the slice is playable to tier 10 in a browser |
+| **4b** | Buy drawer (projection, ladder progress, `UPGRADE_MARK`, dismantle, storage/QS, recipe select/assign), priority list (drag, Simple/Advanced, pinned power, reserves), power dock and holdable tap | Every D.1 action is reachable; the slice is playable to tier 10 in a browser; per plan Q-14 the tier-10 proof runs in process (the `web-play` job), with the browser covering the flows via e2e |
 | **4c** | Handbook, accounts (sign-up/in, claim, sign-out, password reset), motion polish (sweep, number tweens, conveyor), the a11y and 320 px pass, deploy example, source link | Other people can play, sign up, and keep their factory |
 
 Each PR is its own plan and its own subagent-driven run.
@@ -398,6 +398,7 @@ at 4 Hz. Ticking numbers are **not** live regions. One polite live region announ
 discrete events: a bottleneck change, a rejection, a tier-up. The tap is holdable by
 pointer **and** by a held Space/Enter. State colour is never the only signal: chips and the
 bottleneck frame carry text. Contrast is WCAG AA in both themes, checked in the token test.
+The polite region also announces priority moves (ruled in Phase 4b, Task 4).
 
 **W-21. Priority drag is hand-rolled.** Pointer events with `setPointerCapture`, a
 `translateY` ghost, and drop on release, plus **keyboard reorder** (focus a row, Alt+↑/↓) and
