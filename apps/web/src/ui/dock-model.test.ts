@@ -67,4 +67,17 @@ describe("dockModel (Q-12)", () => {
     // Past the expiry, the kick is gone before the next snapshot says so.
     expect(dockModel(s, NO_TAPS, CLIENT_T0 + 13_000)).toMatchObject({ remainingMs: 0, stacks: 0 });
   });
+
+  it("3b. a tap after the server's kick expired counts from 0, not on the expired stacks", () => {
+    const state = {
+      ...freshState(slice),
+      tapStacks: 3,
+      timers: [{ id: TAP_TIMER_ID, kind: "tapExpiry" as const, fireAt: SERVER_T0 + 12_000 }],
+    };
+    const s = snapshotOf(slice, state);
+    const at = CLIENT_T0 + 13_000;
+    const m = dockModel(s, { pending: 1, lastTapAt: at, holding: false }, at);
+    expect(m.stacks).toBe(1);
+    expect(m.remainingMs).toBe(30_000);
+  });
 });

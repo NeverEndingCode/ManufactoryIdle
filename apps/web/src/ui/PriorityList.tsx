@@ -28,6 +28,7 @@ import {
   visiblePriority,
   type PriorityRowModel,
 } from "./priority-model.js";
+import { useAnnounce } from "./announce.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
 
 /** Every priority batch carries this label. */
@@ -110,8 +111,8 @@ export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: 
   const rowRefs = useRef(new Map<string, HTMLLIElement>());
   const refocus = useRef<HTMLElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  /** The one polite announcement: a move landed, or was undone (W-20: discrete events only). */
-  const [announce, setAnnounce] = useState("");
+  /** A move landed, or was undone: said through the page's one live region (W-20). */
+  const announce = useAnnounce();
   const orderSeq = useRef(0);
   const warnId = useId();
 
@@ -154,12 +155,12 @@ export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: 
     refocus.current = active instanceof HTMLElement ? active : null;
     const name = byId.get(id)?.name ?? id;
     const shown = next.filter((x) => byId.has(x));
-    setAnnounce(`${name} moved to position ${shown.indexOf(id) + 1} of ${shown.length}`);
+    announce(`${name} moved to position ${shown.indexOf(id) + 1} of ${shown.length}`);
     const seq = ++orderSeq.current;
     order.run(next, () =>
       send([{ type: "REORDER_PRIORITY", entries: next }]).then((o) => {
         // Anything but adoption reverts the control; say so, unless a newer move superseded it.
-        if (o.kind !== "adopt" && seq === orderSeq.current) setAnnounce(`${name} move undone`);
+        if (o.kind !== "adopt" && seq === orderSeq.current) announce(`${name} move undone`);
         return o;
       }),
     );
@@ -528,11 +529,6 @@ export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: 
           );
         })}
       </ol>
-      {/* aria-live without role="status": the notices own the page's one status region
-          (W-20, LaneView test), and this one carries only the list's moves. */}
-      <p aria-live="polite" aria-atomic="true" className={styles.srOnly} data-announce>
-        {announce}
-      </p>
       <p id={`${warnId}-keys`} className={styles.keys}>
         Drag, or focus a row and press Alt+↑ / Alt+↓.
       </p>

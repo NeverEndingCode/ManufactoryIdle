@@ -259,22 +259,27 @@ describe("PriorityList", () => {
     delete (HTMLElement.prototype as { setPointerCapture?: unknown }).setPointerCapture;
   });
 
-  it("6d. a move is announced politely, and so is its undoing", async () => {
-    const { store } = mount(fresh);
-    const status = list().parentElement!.querySelector<HTMLElement>("[data-announce]")!;
-    expect(status.getAttribute("aria-live")).toBe("polite");
-    expect(status.textContent).toBe("");
+  it("6d. moves are announced in the page's one polite live region, and so is their undoing", async () => {
+    const store = fakeStore(fresh);
+    render(<App store={store as unknown as GameStore} />);
+    // W-20: exactly one live region in the whole App.
+    expect(document.querySelectorAll("[aria-live], [role='status']")).toHaveLength(1);
+    const region = screen.getByRole("status");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+    const said = () => region.querySelector("[data-announce]")?.textContent ?? "";
+    expect(said()).toBe("");
     const settle = deferred(store);
     altKey(row("item:iron_rod"), "ArrowUp");
-    expect(status.textContent).toBe(`${nameOf("iron_rod")} moved to position 2 of 6`);
+    expect(said()).toBe(`${nameOf("iron_rod")} moved to position 2 of 6`);
     await settle(REJECTED);
-    expect(status.textContent).toBe(`${nameOf("iron_rod")} move undone`);
+    expect(said()).toBe(`${nameOf("iron_rod")} move undone`);
 
-    // A confirmed power move is announced too.
+    // A confirmed power move is announced too, and only once confirmed.
     altKey(row("power"), "ArrowDown");
-    expect(status.textContent).toBe(`${nameOf("iron_rod")} move undone`);
+    expect(said()).toBe(`${nameOf("iron_rod")} move undone`);
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Move" }));
-    expect(status.textContent).toBe("Power moved to position 2 of 6");
+    expect(said()).toBe("Power moved to position 2 of 6");
+    expect(document.querySelectorAll("[aria-live], [role='status']")).toHaveLength(1);
   });
 
   it("7. Simple / Advanced: the indicator, mode, target, reserve; power has none", () => {

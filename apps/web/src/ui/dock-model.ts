@@ -36,8 +36,9 @@ export function dockModel(s: Snapshot, taps: StoreView["taps"], clientNow: numbe
     taps.lastTapAt === null ? -Infinity : taps.lastTapAt + tap.durationSeconds * 1000;
   const end = Math.max(serverEnd, localEnd);
   const remainingMs = Number.isFinite(end) ? Math.max(0, end - clientNow) : 0;
-  // Past the expiry the server's stacks are gone, before the next snapshot says so.
-  const base = remainingMs > 0 ? state.tapStacks : 0;
+  // Past the SERVER's expiry its stacks are gone, before the next snapshot says so; a local
+  // tap since then extends the readout's time, not the expired stacks.
+  const base = serverEnd > clientNow ? state.tapStacks : 0;
   const stacks = Math.min(tap.maxStacks, base + taps.pending);
   return {
     demandMw,

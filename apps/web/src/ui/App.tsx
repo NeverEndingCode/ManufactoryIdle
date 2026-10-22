@@ -10,6 +10,7 @@ import { Drawer } from "./Drawer.js";
 import layout from "./Layout.module.css";
 import { LaneView } from "./LaneView.js";
 import styles from "./LaneView.module.css";
+import { AnnounceContext, createAnnouncer } from "./announce.js";
 import { Notices } from "./Notices.js";
 import { PowerDock } from "./PowerDock.js";
 import { PriorityList } from "./PriorityList.js";
@@ -47,6 +48,7 @@ function tabTarget(e: KeyboardEvent, i: number, n: number): number | null {
 export function App({ store }: { store: GameStore }) {
   const view = useGame(store);
   const ticks = useMemo(() => createTickSource(store), [store]);
+  const announcer = useMemo(() => createAnnouncer(), []);
   const s = view.snapshot;
   const lanes = useMemo(() => (s ? unlockedLanes(s) : []), [s]);
   const bottleneck = useMemo(() => (s ? bottleneckRow(s) : null), [s]);
@@ -120,133 +122,140 @@ export function App({ store }: { store: GameStore }) {
   };
 
   return (
-    <TickContext.Provider value={ticks}>
-      <div
-        className="app"
-        data-sync={view.status}
-        data-state-version={s === null ? "" : String(s.stateVersion)}
-        data-polling={view.polling ? "armed" : "off"}
-      >
-        <header className="app-header">
-          <h1>Manufactory Idle</h1>
-          {s !== null && <TierReadout snapshot={s} now={() => store.now()} />}
-        </header>
-        <Notices store={store} view={view} bottleneck={bottleneck} />
-        {s === null || laneId === null ? (
-          <p className="app-loading">Loading your factory…</p>
-        ) : (
-          <div
-            className={`layout ${layout.layout}`}
-            data-panes={panes}
-            data-view={shown}
-            data-sheet={sheetOpen ? "open" : undefined}
-          >
-            {panes < 3 && (
-              <div
-                role="tablist"
-                aria-label="View"
-                className={panes === 1 ? layout.tabbar : layout.switch}
-                onKeyDown={onViewKey}
-              >
-                {VIEWS.map((v) => (
-                  <button
-                    key={v.id}
-                    ref={(el) => {
-                      if (el) viewRefs.current.set(v.id, el);
-                      else viewRefs.current.delete(v.id);
-                    }}
-                    type="button"
-                    role="tab"
-                    aria-selected={shown === v.id}
-                    tabIndex={shown === v.id ? 0 : -1}
-                    // Only the shown view's pane is rendered below three panes.
-                    aria-controls={shown === v.id ? `pane-${v.id}` : undefined}
-                    className={shown === v.id ? `${layout.view} ${layout.on}` : layout.view}
-                    onClick={() => setShown(v.id)}
-                  >
-                    {v.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            {(panes === 3 || shown === "factory") && (
-              <div id="pane-factory" className={layout.lanes}>
-                <div role="tablist" aria-label="Lanes" className={styles.tabs} onKeyDown={onTabKey}>
-                  {lanes.map((lane) => {
-                    const selected = lane.id === laneId;
-                    return (
-                      <button
-                        key={lane.id}
-                        ref={(el) => {
-                          if (el) tabRefs.current.set(lane.id, el);
-                          else tabRefs.current.delete(lane.id);
-                        }}
-                        type="button"
-                        role="tab"
-                        id={`lane-tab-${lane.id}`}
-                        aria-selected={selected}
-                        aria-controls="lane-panel"
-                        tabIndex={selected ? 0 : -1}
-                        className={selected ? `${styles.tab} ${styles.on}` : styles.tab}
-                        data-lane={lane.id}
-                        onClick={() => setPicked(lane.id)}
-                      >
-                        {lane.name}
-                        {bottleneck?.laneId === lane.id && (
-                          <span role="img" aria-label="bottleneck" className={styles.mark}>
-                            !
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+    <AnnounceContext.Provider value={announcer}>
+      <TickContext.Provider value={ticks}>
+        <div
+          className="app"
+          data-sync={view.status}
+          data-state-version={s === null ? "" : String(s.stateVersion)}
+          data-polling={view.polling ? "armed" : "off"}
+        >
+          <header className="app-header">
+            <h1>Manufactory Idle</h1>
+            {s !== null && <TierReadout snapshot={s} now={() => store.now()} />}
+          </header>
+          <Notices store={store} view={view} bottleneck={bottleneck} />
+          {s === null || laneId === null ? (
+            <p className="app-loading">Loading your factory…</p>
+          ) : (
+            <div
+              className={`layout ${layout.layout}`}
+              data-panes={panes}
+              data-view={shown}
+              data-sheet={sheetOpen ? "open" : undefined}
+            >
+              {panes < 3 && (
+                <div
+                  role="tablist"
+                  aria-label="View"
+                  className={panes === 1 ? layout.tabbar : layout.switch}
+                  onKeyDown={onViewKey}
+                >
+                  {VIEWS.map((v) => (
+                    <button
+                      key={v.id}
+                      ref={(el) => {
+                        if (el) viewRefs.current.set(v.id, el);
+                        else viewRefs.current.delete(v.id);
+                      }}
+                      type="button"
+                      role="tab"
+                      aria-selected={shown === v.id}
+                      tabIndex={shown === v.id ? 0 : -1}
+                      // Only the shown view's pane is rendered below three panes.
+                      aria-controls={shown === v.id ? `pane-${v.id}` : undefined}
+                      className={shown === v.id ? `${layout.view} ${layout.on}` : layout.view}
+                      onClick={() => setShown(v.id)}
+                    >
+                      {v.name}
+                    </button>
+                  ))}
                 </div>
-                <LaneView
-                  store={store}
-                  snapshot={s}
-                  laneId={laneId}
-                  bottleneck={bottleneck}
-                  pending={view.pending}
-                  openItem={openItem}
-                  onOpen={toggle}
-                  onSplit={showEntry}
-                />
-              </div>
-            )}
-            {/* One stable spot for the drawer at every width, so a pane-count change
-                re-renders it in place (as a sheet below 600 px) instead of remounting it. */}
-            <div className={panes === 1 ? layout.sheetHost : layout.detail}>
-              {openItem !== null && (panes >= 2 || shown === "factory") ? (
-                <Drawer
-                  key={openItem}
-                  store={store}
-                  snapshot={s}
-                  itemId={openItem}
-                  pending={view.pending}
-                  onClose={close}
-                  sheet={panes === 1}
-                  claimFocus={claimFocus}
-                />
-              ) : (
-                panes >= 2 && <p className={layout.hint}>Tap a row to buy, upgrade or store</p>
               )}
-            </div>
-            {(panes === 3 || shown === "priority") && (
-              <div id="pane-priority" className={layout.priority} data-priority-slot>
-                <PriorityList
-                  store={store}
-                  snapshot={s}
-                  focusEntry={focusEntry}
-                  onFocused={() => setFocusEntry(null)}
-                />
+              {(panes === 3 || shown === "factory") && (
+                <div id="pane-factory" className={layout.lanes}>
+                  <div
+                    role="tablist"
+                    aria-label="Lanes"
+                    className={styles.tabs}
+                    onKeyDown={onTabKey}
+                  >
+                    {lanes.map((lane) => {
+                      const selected = lane.id === laneId;
+                      return (
+                        <button
+                          key={lane.id}
+                          ref={(el) => {
+                            if (el) tabRefs.current.set(lane.id, el);
+                            else tabRefs.current.delete(lane.id);
+                          }}
+                          type="button"
+                          role="tab"
+                          id={`lane-tab-${lane.id}`}
+                          aria-selected={selected}
+                          aria-controls="lane-panel"
+                          tabIndex={selected ? 0 : -1}
+                          className={selected ? `${styles.tab} ${styles.on}` : styles.tab}
+                          data-lane={lane.id}
+                          onClick={() => setPicked(lane.id)}
+                        >
+                          {lane.name}
+                          {bottleneck?.laneId === lane.id && (
+                            <span role="img" aria-label="bottleneck" className={styles.mark}>
+                              !
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <LaneView
+                    store={store}
+                    snapshot={s}
+                    laneId={laneId}
+                    bottleneck={bottleneck}
+                    pending={view.pending}
+                    openItem={openItem}
+                    onOpen={toggle}
+                    onSplit={showEntry}
+                  />
+                </div>
+              )}
+              {/* One stable spot for the drawer at every width, so a pane-count change
+                re-renders it in place (as a sheet below 600 px) instead of remounting it. */}
+              <div className={panes === 1 ? layout.sheetHost : layout.detail}>
+                {openItem !== null && (panes >= 2 || shown === "factory") ? (
+                  <Drawer
+                    key={openItem}
+                    store={store}
+                    snapshot={s}
+                    itemId={openItem}
+                    pending={view.pending}
+                    onClose={close}
+                    sheet={panes === 1}
+                    claimFocus={claimFocus}
+                  />
+                ) : (
+                  panes >= 2 && <p className={layout.hint}>Tap a row to buy, upgrade or store</p>
+                )}
               </div>
-            )}
-            <div className={layout.dock} data-dock-slot>
-              <PowerDock store={store} snapshot={s} taps={view.taps} />
+              {(panes === 3 || shown === "priority") && (
+                <div id="pane-priority" className={layout.priority} data-priority-slot>
+                  <PriorityList
+                    store={store}
+                    snapshot={s}
+                    focusEntry={focusEntry}
+                    onFocused={() => setFocusEntry(null)}
+                  />
+                </div>
+              )}
+              <div className={layout.dock} data-dock-slot>
+                <PowerDock store={store} snapshot={s} taps={view.taps} />
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-    </TickContext.Provider>
+          )}
+        </div>
+      </TickContext.Provider>
+    </AnnounceContext.Provider>
   );
 }

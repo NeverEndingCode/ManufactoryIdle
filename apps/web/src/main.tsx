@@ -38,7 +38,11 @@ function syncVisibility(): void {
   store.setVisible(!hidden);
 }
 document.addEventListener("visibilitychange", syncVisibility);
-window.addEventListener("pagehide", () => store.flushTaps({ keepalive: true }));
+// bfcache and Safari can hide the page without a visibilitychange: end the hold here too.
+window.addEventListener("pagehide", () => {
+  store.releaseTap();
+  store.flushTaps({ keepalive: true });
+});
 window.addEventListener("focus", () => store.onFocus());
 window.addEventListener("online", () => store.onOnline());
 if (document.visibilityState === "hidden") syncVisibility();

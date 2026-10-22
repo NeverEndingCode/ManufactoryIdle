@@ -1,7 +1,10 @@
 // Discrete events, all in one polite live region (W-20). Ticking numbers are never in it,
-// and the rate-limit countdown inside it is marked aria-live="off".
+// and the rate-limit countdown inside it is marked aria-live="off". Other components'
+// announcements (the priority list's moves) are read from here too (announce.ts).
+import type { CSSProperties } from "react";
 import { isPlateaued } from "../sync/interpolate.js";
 import type { GameStore, Notice, StoreView } from "../sync/store.js";
+import { useAnnouncement } from "./announce.js";
 import { plateauText, type BottleneckModel } from "./derive.js";
 import { useTick } from "./use-tick.js";
 
@@ -9,6 +12,16 @@ import { useTick } from "./use-tick.js";
 const TOASTS: ReadonlySet<Notice["kind"]> = new Set(["rejected", "client-bug", "tier-up"]);
 
 const OFFLINE_TEXT = "Offline. Your factory keeps running; we'll reconnect when we can.";
+
+/** Read, not seen: the notices themselves are the visible part of the region. */
+const VISUALLY_HIDDEN: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+};
 
 type Shown = { kind: Notice["kind"] | "offline" | "bottleneck"; text: string; retryAt?: number };
 
@@ -19,6 +32,7 @@ export interface NoticesProps {
 }
 
 export function Notices({ store, view, bottleneck }: NoticesProps) {
+  const said = useAnnouncement();
   const shown: Shown[] = [...view.notices];
   const s = view.snapshot;
   if (s !== null && isPlateaued(s) && !shown.some((n) => n.kind === "plateau"))
@@ -30,7 +44,14 @@ export function Notices({ store, view, bottleneck }: NoticesProps) {
     shown.push({ kind: "bottleneck", text: bottleneck.text });
 
   return (
-    <div role="status" aria-live="polite" aria-atomic="false" className="notices">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+      className="notices"
+      // The hidden announcement alone takes no room.
+      style={shown.length === 0 ? { marginBottom: 0 } : undefined}
+    >
       {shown.map((n) => (
         <div key={n.kind} className="notice" data-notice={n.kind}>
           <span>{n.text}</span>
@@ -53,6 +74,12 @@ export function Notices({ store, view, bottleneck }: NoticesProps) {
           )}
         </div>
       ))}
+      {said.text !== "" && (
+        // Keyed by seq: a new node per announcement, so the same words twice are read twice.
+        <span key={said.seq} data-announce style={VISUALLY_HIDDEN}>
+          {said.text}
+        </span>
+      )}
     </div>
   );
 }
