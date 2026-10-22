@@ -175,3 +175,21 @@ jobs:
         with:
           name: playwright-report
           path: apps/web/playwright-report
+
+  # Q-14: the builder-only player to tier 10 (~61 s locally, measured 2026-10-22; ~2.5 min on a
+  # runner at the 2.43x factor). pnpm test runs it to tier 6; this is the "playable to tier 10"
+  # pin. A hang guard, not a budget.
+  web-play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @manufactory/web exec vitest run src/ui/play.test.ts
+        env:
+          WEB_PLAY_TIER: "10"
