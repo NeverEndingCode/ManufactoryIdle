@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
@@ -5,6 +6,15 @@ import prettier from "eslint-config-prettier";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 
+// W-4 bans the bare Node builtins in browser code, but a few builtin names are also npm
+// packages ("url", "punycode", "buffer", ...). A web dependency of that name is the package.
+const webPackage = JSON.parse(
+  readFileSync(new URL("./apps/web/package.json", import.meta.url), "utf8"),
+);
+const webDeps = new Set([
+  ...Object.keys(webPackage.dependencies ?? {}),
+  ...Object.keys(webPackage.devDependencies ?? {}),
+]);
 export default tseslint.config(
   {
     ignores: [
@@ -144,7 +154,9 @@ export default tseslint.config(
         "error",
         {
           // W-4: bare Node builtins (fs, crypto, fs/promises, ...); `node:` is the regex below.
-          paths: builtinModules.map((name) => ({ name, message: "W-4: browser code (a Node builtin)" })),
+          paths: builtinModules
+            .filter((name) => !webDeps.has(name))
+            .map((name) => ({ name, message: "W-4: browser code (a Node builtin)" })),
           patterns: [
             {
               group: ["@manufactory/content", "@manufactory/content/*"],

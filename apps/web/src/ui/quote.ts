@@ -139,8 +139,10 @@ export function creditFor(state: WorldState, q: Quote): Map<ItemId, Dec> {
   for (const [itemId, cost] of q.cost) {
     const bound = own(state.bound, itemId) ?? DECIMAL_ZERO;
     const refund = q.refund.get(itemId) ?? DECIMAL_ZERO;
-    const short = cost.minus(liquid(state, itemId).plus(bound).plus(refund));
-    if (short.gt(DECIMAL_ZERO)) out.set(itemId, short);
+    const have = liquid(state, itemId).plus(bound).plus(refund);
+    // The reducer's own gate is an exact compare. cost − have can round to 0 when have is a
+    // hair under cost (Decimal keeps ~15 digits), and that item is still short, by 0.
+    if (cost.gt(have)) out.set(itemId, cost.minus(have));
   }
   return out;
 }
@@ -201,29 +203,39 @@ export type Affordability =
   /** inMs null: not reachable on current rates. */
   | { affordable: false; inMs: number | null };
 
-/** 4a's affordability, widened to any Action: have = shownStock + bound + refund, at serverMs
- * (the 4 Hz tick). The line stops at the cap and at the plateau (W-13, P-3, P-4). */
+/** display.state with stored = shownStock at serverMs and quantum = 0: what affordability reads
+ * (S-18), so its verdict and its countdown are creditFor's own. */
+export function stockAt(s: Snapshot, serverMs: number): WorldState {
+  const base = s.display.state;
+  const stored: Record<ItemId, Dec> = { ...base.stored };
+  const quantum: Record<ItemId, Dec> = { ...base.quantum };
+  for (const itemId of s.content.stockItemIds) {
+    stored[itemId] = shownStock(s, itemId, serverMs);
+    quantum[itemId] = DECIMAL_ZERO;
+  }
+  return { ...base, stored, quantum };
+}
+
+/** 4a's affordability, widened to any Action: creditFor over the shown stock at serverMs (the
+ * 4 Hz tick) says what is short; the line stops at the cap and at the plateau (W-13, P-3,
+ * P-4). */
 export function affordability(s: Snapshot, action: Action, serverMs: number): Affordability {
   const q = quote(s.content, s.state, action);
+  const credit = creditFor(stockAt(s, serverMs), q);
+  if (credit.size === 0) return { affordable: true };
   let inMs: number | null = 0;
-  let short = false;
-  for (const [itemId, need] of q.cost) {
+  for (const [itemId, short] of credit) {
+    const net = s.schedule.items[itemId]?.netPerSecond ?? 0;
     const extra = (own(s.state.bound, itemId) ?? DECIMAL_ZERO).plus(
       q.refund.get(itemId) ?? DECIMAL_ZERO,
     );
-    const have = shownStock(s, itemId, serverMs).plus(extra);
-    if (have.gte(need)) continue;
-    short = true;
-    if (inMs === null) continue;
-    const net = s.schedule.items[itemId]?.netPerSecond ?? 0;
     // Past the cap or the plateau the wait never ends.
-    if (net <= 0 || need.minus(extra).gt(liquidCap(s.content, s.state, itemId))) {
+    if (net <= 0 || q.cost.get(itemId)!.minus(extra).gt(liquidCap(s.content, s.state, itemId))) {
       inMs = null;
-      continue;
+      break;
     }
-    inMs = Math.max(inMs, (need.minus(have).toNumber() / net) * 1000);
+    inMs = Math.max(inMs, (short.toNumber() / net) * 1000);
   }
-  if (!short) return { affordable: true };
   if (inMs !== null && serverMs + inMs > plateauAtMs(s)) inMs = null;
   return { affordable: false, inMs };
 }

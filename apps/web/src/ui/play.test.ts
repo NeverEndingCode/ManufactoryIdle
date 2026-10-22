@@ -67,6 +67,11 @@ function reorders(s: Snapshot): Action[] {
   return out;
 }
 
+/** The lane-class's section, fresh from the snapshot. */
+function sectionFor(s: Snapshot, lane: string, machineClass: string): MachineSection {
+  return sections(s).find((x) => x.lane === lane && x.machineClass === machineClass)!;
+}
+
 /** Each installed lane-class's drawer section, from an item one of its recipes makes. */
 function sections(s: Snapshot): MachineSection[] {
   const out: MachineSection[] = [];
@@ -116,9 +121,7 @@ function play(target: number): Run {
     for (const a of reorders(s)) if (act(s, [a])) s = snap();
     // 3. Idle machines to a starved recipe, per lane-class.
     for (const sec of sections(s)) {
-      const fresh = sections(s).find(
-        (x) => x.lane === sec.lane && x.machineClass === sec.machineClass,
-      )!;
+      const fresh = sectionFor(s, sec.lane, sec.machineClass);
       const mv = idleMove(s, fresh);
       if (mv && act(s, moveMachines(fresh, mv.from, mv.to, mv.n))) s = snap();
     }
@@ -157,6 +160,11 @@ describe("the builder-only player (Q-14)", () => {
           ),
       );
       expect(run.rejected).toEqual([]);
+      if (TARGET === 6) {
+        // Pinned before the S-18 changes (Phase 4c): the player's run must not move.
+        expect(run.actions).toBe(275);
+        expect(run.tierAtH[6]).toBe(10.845218848871589);
+      }
       expect(run.state.tier).toBeGreaterThanOrEqual(TARGET);
       expect(hours).toBeLessThanOrEqual(BOUND_H);
     },

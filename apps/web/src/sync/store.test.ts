@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { deserializeWorld, serializeWorld, type Action } from "@manufactory/engine";
+import { dockModel } from "../ui/dock-model.js";
 import { MIN_REPOLL_MS, RETRY_STEPS_MS } from "./constants.js";
 import { browserTokenStorage, memoryTokenStorage, type TokenStorage } from "./identity.js";
 import { isPlateaued } from "./interpolate.js";
@@ -827,5 +828,62 @@ describe("GameStore taps, polling and tiers (Q-11, Q-13, Q-18)", () => {
     store.stop();
     expect(rig.clock.pendingTimers).toBe(0);
     expect(store.getView().taps.holding).toBe(false);
+  });
+
+  it("29. a keepalive flush during a pause waits for it, under the key it made", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(MIN_REPOLL_MS);
+    fakeGet429 = "3";
+    store.onFocus();
+    await store.idle();
+    const before = posts().length;
+    store.pressTap();
+    await rig.advance(300);
+    store.releaseTap();
+    store.flushTaps({ keepalive: true });
+    expect(posts()).toHaveLength(before); // no keepalive POST goes out into the pause
+    const key = store.getView().pending[0]!.key;
+    await rig.advance(1_000);
+    expect(posts()).toHaveLength(before);
+    await rig.advance(2_000);
+    await store.idle();
+    expect(tapPosts()).toHaveLength(1);
+    expect(tapPosts()[0]!.body!.idempotencyKey).toBe(key);
+    expect(tapPosts()[0]!.keepalive).not.toBe(true);
+  });
+
+  it("30. start() re-arms the flush of taps that were pending across stop()", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    store.pressTap();
+    store.releaseTap();
+    const pending = store.getView().taps.pending;
+    expect(pending).toBeGreaterThan(0);
+    store.stop();
+    await store.start();
+    await rig.advance(1_000);
+    await store.idle();
+    expect(tapPosts()).toHaveLength(1);
+    expect(tapOf(tapPosts()[0]!).count).toBe(pending);
+  });
+
+  it("31. adopting a tap flush never shows more stacks than were tapped", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    let max = 0;
+    store.subscribe(() => {
+      const v = store.getView();
+      if (v.snapshot === null) return;
+      max = Math.max(max, dockModel(v.snapshot, v.taps, store.now(), v.pending).stacks);
+    });
+    for (let i = 0; i < 3; i++) {
+      store.pressTap();
+      store.releaseTap();
+    }
+    await rig.advance(1_000);
+    await store.idle();
+    expect(tapPosts()).toHaveLength(1);
+    expect(store.getView().snapshot!.state.tapStacks).toBe(3);
+    expect(max).toBe(3);
   });
 });

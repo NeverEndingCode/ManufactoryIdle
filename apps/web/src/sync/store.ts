@@ -104,6 +104,9 @@ export class GameStore {
   #pausedUntil = 0;
   /** 404s in a row: the first re-syncs, the second is treated as a 401 (W-11). */
   #notFound = 0;
+  /** The batch whose response is being adopted: its actions are in the snapshot already, so the
+   * view stops counting it as pending from that adoption until the outbox settles it. */
+  #settlingId: number | null = null;
 
   /** The one GET request in flight, if any; triggers coalesce into it. */
   #getting = false;
@@ -147,11 +150,17 @@ export class GameStore {
       clock: d.clock,
       authHeader: () => this.#authHeader(),
       baseVersion: () => this.#snapshot?.stateVersion ?? 0,
-      onOutcome: async (_b, o) => {
+      onOutcome: async (b, o) => {
+        if (o.kind === "adopt") this.#settlingId = b.id;
         await this.#handle(o, "post", this.#clock.now());
       },
       isPaused: () => Math.max(0, this.#pausedUntil - this.#clock.now()),
-      onChange: () => this.#emit(),
+      onChange: () => {
+        if (this.#settlingId !== null && this.#outbox.inFlight?.id !== this.#settlingId) {
+          this.#settlingId = null;
+        }
+        this.#emit();
+      },
       ...(d.random ? { random: d.random } : {}),
     });
     this.#view = this.#makeView();
@@ -189,6 +198,10 @@ export class GameStore {
     this.#stopped = false;
     this.#checkPersistence();
     this.#outbox.start();
+    // stop() cleared the flush timer; the taps it left pending still go out.
+    if (this.#taps.pending > 0 && !this.#holding) {
+      this.#armFlush(Math.max(this.#clock.now(), this.#lastFlushAt + TAP_FLUSH_EVERY_MS));
+    }
     this.#armTick();
     this.#track(this.#loadHealth());
     if (this.#tokens.get() !== null) this.#wantGet(true);
@@ -356,7 +369,9 @@ export class GameStore {
     this.#emit();
     const key = newIdempotencyKey(this.#random);
     const auth = this.#authHeader();
-    if (auth === null) {
+    // No identity, or a 429/503 pause: a request now would only be refused. The outbox holds
+    // the batch under this key and sends it when the pause ends.
+    if (auth === null || this.#pausedUntil > this.#clock.now()) {
       void this.#outbox.enqueue([action], TAP_LABEL, { key });
       return;
     }
@@ -737,10 +752,11 @@ export class GameStore {
 
   #makeView(): StoreView {
     const head = this.#outbox.inFlight;
+    const pending = head ? [head, ...this.#outbox.queued] : [...this.#outbox.queued];
     return {
       status: this.#status(),
       snapshot: this.#snapshot,
-      pending: head ? [head, ...this.#outbox.queued] : [...this.#outbox.queued],
+      pending: pending.filter((b) => b.id !== this.#settlingId),
       notices: this.#notices,
       failures: this.#failures,
       taps: { pending: this.#taps.pending, lastTapAt: this.#lastTapAt, holding: this.#holding },

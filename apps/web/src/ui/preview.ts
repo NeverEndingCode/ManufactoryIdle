@@ -4,6 +4,7 @@
 import {
   applyBatch,
   D,
+  DECIMAL_ZERO,
   format,
   scheduleDetail,
   type Action,
@@ -64,9 +65,20 @@ function compute(s: Snapshot, actions: readonly Action[]): Preview {
   const credited = q === null || credit.size === 0 ? base : creditedState(base, q);
   const r = applyBatch(credited, s.content, actions, base.seed);
   if (r.rejected) return { ok: false, reason: r.reason };
+  // A short item the action also refunds can only be credited to `bound`, which leaves a
+  // residue of a few ULPs in its liquid stock after the spend. The purchase at the moment it
+  // becomes affordable drains it to exactly zero, so snap it there: EMPTY, not FLOWING.
+  let snapped = r.state;
+  for (const itemId of credit.keys()) {
+    snapped = {
+      ...snapped,
+      stored: { ...snapped.stored, [itemId]: DECIMAL_ZERO },
+      quantum: { ...snapped.quantum, [itemId]: DECIMAL_ZERO },
+    };
+  }
 
   const before = s.display.solution;
-  const detail = scheduleDetail(r.state, s.content);
+  const detail = scheduleDetail(snapped, s.content);
   const after = detail.solution;
   const deltas: RateDelta[] = [];
   for (const itemId of s.content.stockItemIds) {
@@ -82,7 +94,7 @@ function compute(s: Snapshot, actions: readonly Action[]): Preview {
     ok: true,
     credit,
     effects: r.effects,
-    state: r.state,
+    state: snapped,
     solution: after,
     detailState: detail.state,
     deltas,
