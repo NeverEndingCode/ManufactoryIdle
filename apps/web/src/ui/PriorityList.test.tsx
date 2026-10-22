@@ -42,7 +42,7 @@ const REJECTED = {
 } as unknown as Outcome;
 
 function mount(s: Snapshot, store: FakeStore = fakeStore(s)) {
-  const r = render(<PriorityList store={store} snapshot={s} pending={[]} />);
+  const r = render(<PriorityList store={store} snapshot={s} />);
   return { store, ...r };
 }
 
@@ -87,6 +87,33 @@ const FRESH_ORDER = [
   "item:iron_ore",
   "item:biomass",
 ];
+
+/** Rows 40 px tall from y 0, and a pointer-capture spy (jsdom has neither). */
+function layoutRows() {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const li = this.closest("li[data-entry]");
+    const i = li === null ? 0 : [...li.parentElement!.children].indexOf(li);
+    return {
+      top: i * 40,
+      height: 40,
+      bottom: i * 40 + 40,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: i * 40,
+      toJSON() {},
+    } as DOMRect;
+  });
+  const capture = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: capture,
+  });
+  return capture;
+}
 
 describe("PriorityList", () => {
   it("5. Alt+↑ is one optimistic REORDER_PRIORITY, focus follows, and a rejection reverts", async () => {
@@ -179,28 +206,7 @@ describe("PriorityList", () => {
   });
 
   it("6b. the drag handle: pointer capture, a translateY ghost, drop on release; cancel reverts", () => {
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
-      this: HTMLElement,
-    ) {
-      const li = this.closest("li[data-entry]");
-      const i = li === null ? 0 : [...li.parentElement!.children].indexOf(li);
-      return {
-        top: i * 40,
-        height: 40,
-        bottom: i * 40 + 40,
-        left: 0,
-        right: 0,
-        width: 0,
-        x: 0,
-        y: i * 40,
-        toJSON() {},
-      } as DOMRect;
-    });
-    const capture = vi.fn();
-    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
-      configurable: true,
-      value: capture,
-    });
+    const capture = layoutRows();
     const { store } = mount(fresh);
     const handle = screen.getByRole("button", { name: `Drag to reorder ${nameOf("iron_ore")}` });
     // Cancel first: no send, no ghost.
@@ -226,6 +232,49 @@ describe("PriorityList", () => {
     expect(order().slice(0, 3)).toEqual(["power", "item:iron_ore", "item:iron_plate"]);
     expect(row("item:iron_ore").style.transform).toBe("");
     delete (HTMLElement.prototype as { setPointerCapture?: unknown }).setPointerCapture;
+  });
+
+  it("6c. a drag ends with no send on lost capture or Escape", () => {
+    layoutRows();
+    const { store } = mount(fresh);
+    const handle = screen.getByRole("button", { name: `Drag to reorder ${nameOf("iron_ore")}` });
+    fireEvent.pointerDown(handle, { pointerId: 3, clientY: 180, button: 0 });
+    fireEvent.pointerMove(handle, { pointerId: 3, clientY: 50 });
+    expect(list().querySelector("[data-drop]")).not.toBeNull();
+    fireEvent.lostPointerCapture(handle, { pointerId: 3 });
+    expect(row("item:iron_ore").style.transform).toBe("");
+    expect(list().querySelector("[data-drop]")).toBeNull();
+    expect(list().querySelector("[data-dragging]")).toBeNull();
+    // A late pointerup after the capture is gone drops nothing.
+    fireEvent.pointerUp(handle, { pointerId: 3, clientY: 50 });
+    expect(store.send).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(handle, { pointerId: 4, clientY: 180, button: 0 });
+    fireEvent.pointerMove(handle, { pointerId: 4, clientY: 50 });
+    fireEvent.keyDown(handle, { key: "Escape" });
+    expect(list().querySelector("[data-dragging]")).toBeNull();
+    fireEvent.pointerUp(handle, { pointerId: 4, clientY: 50 });
+    expect(store.send).not.toHaveBeenCalled();
+    expect(order()).toEqual(FRESH_ORDER);
+    delete (HTMLElement.prototype as { setPointerCapture?: unknown }).setPointerCapture;
+  });
+
+  it("6d. a move is announced politely, and so is its undoing", async () => {
+    const { store } = mount(fresh);
+    const status = list().parentElement!.querySelector<HTMLElement>("[data-announce]")!;
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.textContent).toBe("");
+    const settle = deferred(store);
+    altKey(row("item:iron_rod"), "ArrowUp");
+    expect(status.textContent).toBe(`${nameOf("iron_rod")} moved to position 2 of 6`);
+    await settle(REJECTED);
+    expect(status.textContent).toBe(`${nameOf("iron_rod")} move undone`);
+
+    // A confirmed power move is announced too.
+    altKey(row("power"), "ArrowDown");
+    expect(status.textContent).toBe(`${nameOf("iron_rod")} move undone`);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Move" }));
+    expect(status.textContent).toBe("Power moved to position 2 of 6");
   });
 
   it("7. Simple / Advanced: the indicator, mode, target, reserve; power has none", () => {

@@ -15,11 +15,10 @@ import {
   type PointerEvent,
 } from "react";
 import { MAX_RESERVE_PERCENT, type Action, type PriorityMode } from "@manufactory/engine";
-import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { stateClass } from "./derive.js";
-import { Guarded } from "./Drawer.js";
+import { Guarded } from "./Guarded.js";
 import styles from "./PriorityList.module.css";
 import {
   dropIndex,
@@ -51,7 +50,6 @@ interface Settings {
 export interface PriorityListProps {
   store: Pick<GameStore, "send">;
   snapshot: Snapshot;
-  pending: readonly Batch[];
   /** Scroll this entry's row into view and focus it (a split bar's tap, §13.1). */
   focusEntry?: string | null;
   /** Called once focusEntry has been taken, so the same entry can be asked for again. */
@@ -96,13 +94,7 @@ interface DragStart {
   mids: number[];
 }
 
-export function PriorityList({
-  store,
-  snapshot,
-  pending: _pending,
-  focusEntry = null,
-  onFocused,
-}: PriorityListProps) {
+export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: PriorityListProps) {
   const rows = useMemo(() => visiblePriority(snapshot), [snapshot]);
   const serverAll = useMemo(() => snapshot.state.priority.map((e) => e.id), [snapshot]);
   const order = usePendingSetting<readonly string[]>(serverAll, {
@@ -118,6 +110,9 @@ export function PriorityList({
   const rowRefs = useRef(new Map<string, HTMLLIElement>());
   const refocus = useRef<HTMLElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  /** The one polite announcement: a move landed, or was undone (W-20: discrete events only). */
+  const [announce, setAnnounce] = useState("");
+  const orderSeq = useRef(0);
   const warnId = useId();
 
   // A held order for another set of entries can't apply: show the server's.
@@ -154,10 +149,20 @@ export function PriorityList({
 
   const send = (actions: Action[]) => store.send(actions, PRIORITY_LABEL);
 
-  const commitOrder = (next: string[]) => {
+  const commitOrder = (next: string[], id: string) => {
     const active = document.activeElement;
     refocus.current = active instanceof HTMLElement ? active : null;
-    order.run(next, () => send([{ type: "REORDER_PRIORITY", entries: next }]));
+    const name = byId.get(id)?.name ?? id;
+    const shown = next.filter((x) => byId.has(x));
+    setAnnounce(`${name} moved to position ${shown.indexOf(id) + 1} of ${shown.length}`);
+    const seq = ++orderSeq.current;
+    order.run(next, () =>
+      send([{ type: "REORDER_PRIORITY", entries: next }]).then((o) => {
+        // Anything but adoption reverts the control; say so, unless a newer move superseded it.
+        if (o.kind !== "adopt" && seq === orderSeq.current) setAnnounce(`${name} move undone`);
+        return o;
+      }),
+    );
   };
 
   /** One intent, one batch; behind the C.4 confirm when power leaves the top (Q-9). */
@@ -169,14 +174,14 @@ export function PriorityList({
       setConfirm({ id, next });
       return;
     }
-    commitOrder(next);
+    commitOrder(next, id);
   };
 
   const closeConfirm = (go: boolean) => {
     if (confirm === null) return;
     const row = rowRefs.current.get(confirm.id);
     row?.focus();
-    if (go) commitOrder(confirm.next);
+    if (go) commitOrder(confirm.next, confirm.id);
     setConfirm(null);
   };
 
@@ -220,9 +225,29 @@ export function PriorityList({
 
   // ---- W-21: the hand-rolled drag ----------------------------------------------------------
 
+  const endDrag = () => {
+    dragStart.current = null;
+    setDrag(null);
+  };
+
+  // A drag whose row left the list (a snapshot hid it) is over; so is one cut by an unmount.
+  const draggedGone = drag !== null && !visible.includes(drag.id);
+  useEffect(() => {
+    if (!draggedGone) return;
+    dragStart.current = null;
+    setDrag(null);
+  }, [draggedGone]);
+  useEffect(
+    () => () => {
+      dragStart.current = null;
+    },
+    [],
+  );
+
   const onDown = (e: PointerEvent<HTMLButtonElement>, id: string) => {
     if (e.button !== 0 || confirm !== null) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
+    // The midpoints are read once, here: the list doesn't autoscroll during a drag.
     const mids: number[] = [];
     for (const v of visible) {
       if (v === id) continue;
@@ -243,15 +268,23 @@ export function PriorityList({
   const onUp = (e: PointerEvent<HTMLButtonElement>) => {
     const d = dragStart.current;
     if (d === null || d.pointerId !== e.pointerId) return;
-    dragStart.current = null;
-    setDrag(null);
+    endDrag();
     move(d.id, dropIndex(d.mids, e.clientY));
   };
 
+  /** pointercancel, or capture lost without a pointerup (released, or the handle went away):
+   * the drag ends where it started and nothing is sent. */
   const onCancel = (e: PointerEvent<HTMLButtonElement>) => {
     if (dragStart.current?.pointerId !== e.pointerId) return;
-    dragStart.current = null;
-    setDrag(null);
+    endDrag();
+  };
+
+  /** Escape during a drag drops it back, sending nothing. */
+  const onHandleKey = (e: KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== "Escape" || dragStart.current === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    endDrag();
   };
 
   /** The drop slot's marker, on the row it lands before (or after the last). */
@@ -353,6 +386,8 @@ export function PriorityList({
                   onPointerMove={onMove}
                   onPointerUp={onUp}
                   onPointerCancel={onCancel}
+                  onLostPointerCapture={onCancel}
+                  onKeyDown={onHandleKey}
                 >
                   <span aria-hidden="true">⠿</span>
                 </button>
@@ -493,6 +528,11 @@ export function PriorityList({
           );
         })}
       </ol>
+      {/* aria-live without role="status": the notices own the page's one status region
+          (W-20, LaneView test), and this one carries only the list's moves. */}
+      <p aria-live="polite" aria-atomic="true" className={styles.srOnly} data-announce>
+        {announce}
+      </p>
       <p id={`${warnId}-keys`} className={styles.keys}>
         Drag, or focus a row and press Alt+↑ / Alt+↓.
       </p>

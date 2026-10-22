@@ -2,14 +2,7 @@
 // storage and its lane's Quantum Storage, over one pure model (drawerModel). Spends are
 // pessimistic (W-13): a button is busy while its own batch is pending, and the numbers move
 // only with snapshots. Settings (recipe, assignment) are optimistic in the control (Q-10).
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ButtonHTMLAttributes,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   D,
   DECIMAL_ZERO,
@@ -37,6 +30,7 @@ import {
   type LevelSection,
   type MachineSection,
 } from "./machines.js";
+import { Guarded } from "./Guarded.js";
 import { Projection } from "./Projection.js";
 import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
@@ -231,33 +225,6 @@ function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<I
         );
       })}
     </ul>
-  );
-}
-
-/**
- * A button that stays focusable when it is off: aria-disabled plus a click guard, never the
- * native `disabled`, so a focused button that turns busy keeps focus and Escape still reaches
- * the drawer.
- */
-export function Guarded({
-  off,
-  onPress,
-  className = "btn",
-  ...rest
-}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onClick" | "disabled" | "type"> & {
-  off: boolean;
-  onPress(): void;
-}) {
-  return (
-    <button
-      type="button"
-      className={className}
-      {...rest}
-      aria-disabled={off}
-      onClick={() => {
-        if (!off) onPress();
-      }}
-    />
   );
 }
 
@@ -632,7 +599,8 @@ function StorageSection({ ctx }: { ctx: Ctx }) {
 function AssignSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
   const s = ctx.snapshot;
   const pend = usePendingMap<number>(ctx.owner);
-  const keyOf = (recipeId: RecipeId) => `${drawerLabel(ctx.model.itemId, "assign")}:${recipeId}`;
+  /** By recipe only: two drawers on one recipe show the same hold. */
+  const keyOf = (recipeId: RecipeId) => `assign:${recipeId}`;
   const shownOf = (recipeId: RecipeId, server: number) => pend.shown(keyOf(recipeId), server);
   const delta = sec.assign.reduce(
     (acc, r) => acc + shownOf(r.recipeId, r.assigned) - r.assigned,

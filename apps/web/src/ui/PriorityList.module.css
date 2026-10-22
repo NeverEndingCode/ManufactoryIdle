@@ -193,6 +193,7 @@
 }
 
 .pause {
+  min-height: 44px;
   padding: 6px 10px;
 }
 
@@ -256,4 +257,14 @@
   margin: 8px 0 0;
   color: var(--t3);
   font-size: var(--fs-3);
+}
+
+/* Read by screen readers only (the move announcements). */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

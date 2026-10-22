@@ -236,7 +236,6 @@ export function App({ store }: { store: GameStore }) {
                 <PriorityList
                   store={store}
                   snapshot={s}
-                  pending={view.pending}
                   focusEntry={focusEntry}
                   onFocused={() => setFocusEntry(null)}
                 />
