@@ -175,7 +175,7 @@ Each is a spec claim that the code contradicts or that the spec leaves open; the
 
 ## Global Constraints
 
-- **Where to work:** a new worktree **`.claude/worktrees/phase-4c`**, on a new branch **`phase-4c-finish`**, stacked on `phase-4b-play` at 6ecc193 (PR 4b, #24). The user creates it. Never work in the top-level checkout, which is stale, or in another phase's worktree.
+- **Where to work:** a new worktree **`.claude/worktrees/phase-4c`**, on a new branch **`phase-4c-finish`**, stacked on `phase-4b-play` at 6ecc193 (PR 4b, #24), already created. Never work in the top-level checkout, which is stale, or in another phase's worktree.
 - **Commands:**
   - Never run `pnpm format`. It rewrites the whole repo.
   - Verify with `pnpm test`, then `pnpm lint`, then `pnpm typecheck`, one at a time in the foreground. Never run lint or typecheck while a test run is going, and never run any of them in the background: turbo builds race.
