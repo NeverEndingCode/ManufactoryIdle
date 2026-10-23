@@ -85,7 +85,11 @@ export function superTokensClient(origin: string): AccountClient {
             // ResetResult has no "not-allowed": the reason is about the email.
             return { ok: false, kind: "field", fields: [{ id: "email", error: res.reason }] };
         }
-      } catch {
+      } catch (err) {
+        // GENERAL_ERROR: its message reaches the player, as in sign-in (on the email field).
+        if (STGeneralError.isThisError(err)) {
+          return { ok: false, kind: "field", fields: [{ id: "email", error: err.message }] };
+        }
         return { ok: false, kind: "unavailable" };
       }
     },
@@ -101,7 +105,10 @@ export function superTokensClient(origin: string): AccountClient {
           case "RESET_PASSWORD_INVALID_TOKEN_ERROR":
             return { ok: false, kind: "invalid-token" };
         }
-      } catch {
+      } catch (err) {
+        if (STGeneralError.isThisError(err)) {
+          return { ok: false, kind: "field", fields: [{ id: "password", error: err.message }] };
+        }
         return { ok: false, kind: "unavailable" };
       }
     },

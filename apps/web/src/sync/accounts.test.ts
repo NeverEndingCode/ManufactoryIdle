@@ -4,10 +4,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Action } from "@manufactory/engine";
 import type { AccountClient } from "../auth/accounts.js";
-import { MIN_REPOLL_MS } from "./constants.js";
-import { memoryTokenStorage, type TokenStorage } from "./identity.js";
+import { MIN_REPOLL_MS, PARKED_GUEST_TOKEN_KEY } from "./constants.js";
+import { browserTokenStorage, memoryTokenStorage, type TokenStorage } from "./identity.js";
 import { GameStore } from "./store.js";
 import { guestWorld, makeRig, rigAccounts, type TestRig } from "./test-rig.js";
+import type { FetchLike } from "./wire.js";
 
 const ACCOUNT_HAS_FACTORY =
   "This account already has a factory. Your guest factory is kept on this device: sign out to return to it.";
@@ -39,12 +40,24 @@ interface Made {
   client: AccountClient & { calls: string[] };
 }
 
-function storeOn(rig: TestRig, opts: { tokens?: TokenStorage; gate?: Promise<void> } = {}): Made {
+interface StoreOpts {
+  tokens?: TokenStorage;
+  parked?: TokenStorage;
+  gate?: Promise<void>;
+  signOutFails?: boolean;
+  /** Wraps rig.fetch, to fake a response the server wouldn't give. */
+  fetch?: FetchLike;
+}
+
+function storeOn(rig: TestRig, opts: StoreOpts = {}): Made {
   const tokens = opts.tokens ?? memoryTokenStorage();
-  const parked = memoryTokenStorage();
-  const client = rigAccounts(rig, opts.gate ? { gate: opts.gate } : {});
+  const parked = opts.parked ?? memoryTokenStorage();
+  const client = rigAccounts(rig, {
+    ...(opts.gate ? { gate: opts.gate } : {}),
+    ...(opts.signOutFails ? { signOutFails: true } : {}),
+  });
   const store = new GameStore({
-    fetch: rig.fetch,
+    fetch: opts.fetch ?? rig.fetch,
     clock: rig.clock,
     tokens,
     parked,
@@ -58,9 +71,9 @@ function storeOn(rig: TestRig, opts: { tokens?: TokenStorage; gate?: Promise<voi
 }
 
 /** A started guest store on a sessions rig, optionally with a gated rigAccounts. */
-async function guestStart(gate?: Promise<void>) {
+async function guestStart(gate?: Promise<void>, opts: Omit<StoreOpts, "gate"> = {}) {
   const rig = await newRig();
-  const made = storeOn(rig, gate ? { gate } : {});
+  const made = storeOn(rig, { ...opts, ...(gate ? { gate } : {}) });
   await made.store.start();
   await made.store.idle();
   expect(made.store.getView().identity).toBe("guest");
@@ -320,6 +333,7 @@ describe("GameStore accounts (W-14 to W-16)", () => {
     expect(view.identity).toBe("guest");
     expect(view.account).toBeNull();
     expect(view.notices).toContainEqual({ kind: "signed-out", text: SIGNED_OUT });
+    expect(view.notices.some((n) => n.kind === "account-has-factory")).toBe(false);
     expect(worldCalls(rig, from).some((c) => c.url === "/api/guests")).toBe(false);
   });
 
@@ -380,7 +394,7 @@ describe("GameStore accounts (W-14 to W-16)", () => {
   });
 
   it("12. a lost claim response retries the same claim after 1 s, still held", async () => {
-    const { rig, store } = await guestStart();
+    const { rig, store, tokens, parked } = await guestStart();
     const from = rig.fetch.calls.length;
     rig.fetch.dropNextResponse = true;
     expect((await store.signUp("r@x", "hunter2hunter2")).ok).toBe(true);
@@ -395,5 +409,339 @@ describe("GameStore accounts (W-14 to W-16)", () => {
     expect(calls.slice(0, 2).map((c) => c.url)).toEqual(["/api/auth/claim", "/api/auth/claim"]);
     expect(calls[1]!.body).toEqual(calls[0]!.body);
     expect(store.getView().auth).toBe("idle");
+    // The first claim committed; the repeat is idempotent (migration 003), not a 409.
+    expect(tokens.get()).toBeNull();
+    expect(parked.get()).toBeNull();
+    expect(store.getView().identity).toBe("session");
+    expect(store.getView().notices.some((n) => n.kind === "account-has-factory")).toBe(false);
+  });
+});
+
+/** A Storage stand-in (as identity.test.ts); `failKey`'s writes throw, as a full quota would. */
+function stubStorage(failKey?: string): Storage & { map: Map<string, string> } {
+  const map = new Map<string, string>();
+  return {
+    map,
+    get length() {
+      return map.size;
+    },
+    key: (i: number) => [...map.keys()][i] ?? null,
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      if (k === failKey) throw new DOMException("full", "QuotaExceededError");
+      map.set(k, v);
+    },
+    removeItem: (k: string) => void map.delete(k),
+    clear: () => map.clear(),
+  };
+}
+
+/** Waits, a macrotask at a time, until `done()` (for tests where idle() would wait on a held
+ * response). */
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 500 && !done(); i++) await turn();
+  expect(done()).toBe(true);
+}
+
+describe("GameStore accounts: never lose a guest token (fix round 1)", () => {
+  it("B. an occupied park is never overwritten, and sign-out never overwrites a token", async () => {
+    const rig = await newRig();
+    const g0 = await guestWorld(rig);
+    const g1 = await guestWorld(rig);
+    const tokens = memoryTokenStorage();
+    const parked = memoryTokenStorage();
+    tokens.set(g1.guestToken);
+    parked.set(g0.guestToken);
+    rig.session.user = "u:o@x";
+    const { store } = storeOn(rig, { tokens, parked });
+    await store.start();
+    await store.idle();
+    expect(store.getView().identity).toBe("session");
+    expect(tokens.get()).toBe(g1.guestToken);
+    expect(parked.get()).toBe(g0.guestToken);
+    for (const g of getsSince(rig, 4)) expect(g.headers.authorization).toBeUndefined();
+
+    const from = rig.fetch.calls.length;
+    expect(await store.signOut()).toBe(true);
+    await store.idle();
+    expect(tokens.get()).toBe(g1.guestToken);
+    expect(parked.get()).toBe(g0.guestToken);
+    expect(getsSince(rig, from)[0]!.headers.authorization).toBe(`Guest ${g1.guestToken}`);
+  });
+
+  it("B. a guest boot with both keys holding different tokens keeps the park", async () => {
+    const rig = await newRig();
+    const g0 = await guestWorld(rig);
+    const g1 = await guestWorld(rig);
+    const tokens = memoryTokenStorage();
+    const parked = memoryTokenStorage();
+    tokens.set(g1.guestToken);
+    parked.set(g0.guestToken);
+    const { store } = storeOn(rig, { tokens, parked });
+    await store.start();
+    await store.idle();
+    expect(tokens.get()).toBe(g1.guestToken);
+    expect(parked.get()).toBe(g0.guestToken);
+    expect(getsSince(rig, 4)[0]!.headers.authorization).toBe(`Guest ${g1.guestToken}`);
+    expect(store.getView().snapshot!.state.seed).toEqual(
+      (g1.world.state as { seed: unknown }).seed,
+    );
+  });
+
+  it("B. a park that falls back to memory keeps the stored token, and warns", async () => {
+    const { gate, open } = gated();
+    const ls = stubStorage(PARKED_GUEST_TOKEN_KEY);
+    const tokens = browserTokenStorage(ls);
+    const parked = browserTokenStorage(ls, PARKED_GUEST_TOKEN_KEY);
+    const { rig, store } = await guestStart(gate, { tokens, parked });
+    rig.session.user = "u:a@x";
+    expect((await rig.fetch("/api/world")).status).toBe(200);
+    rig.session.user = null;
+    const guestToken = tokens.get()!;
+    const signing = store.signIn("a@x", "hunter2hunter2");
+    open();
+    expect((await signing).ok).toBe(true);
+    await store.idle();
+    expect(rig.fetch.calls.some((c) => c.url === "/api/auth/claim")).toBe(true);
+    expect(parked.get()).toBe(guestToken);
+    expect(parked.persistent).toBe(false);
+    expect(tokens.get()).toBe(guestToken);
+    expect(ls.map.get("mi.guestToken")).toBe(guestToken);
+    expect(store.getView().notices.map((n) => n.kind)).toContain("ephemeral-token");
+    const last = getsSince(rig).at(-1)!;
+    expect(last.headers.authorization).toBeUndefined();
+
+    const from = rig.fetch.calls.length;
+    expect(await store.signOut()).toBe(true);
+    await store.idle();
+    expect(tokens.get()).toBe(guestToken);
+    expect(parked.get()).toBeNull();
+    expect(getsSince(rig, from)[0]!.headers.authorization).toBe(`Guest ${guestToken}`);
+  });
+
+  it("C. a claim 404 that isn't the API's unknown-guest parks the token", async () => {
+    let fakes = 0;
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      if (url === "/api/auth/claim" && fakes++ === 0) {
+        return new Response('{"error":"not found"}', { status: 404 });
+      }
+      return holder.rig!.fetch(url, init);
+    };
+    const rig = await newRig();
+    holder.rig = rig;
+    const { store, tokens, parked } = storeOn(rig, { fetch });
+    await store.start();
+    await store.idle();
+    const guestToken = tokens.get()!;
+    expect((await store.signUp("p@x", "hunter2hunter2")).ok).toBe(true);
+    await store.idle();
+    expect(parked.get()).toBe(guestToken);
+    expect(tokens.get()).toBeNull();
+    expect(store.getView().notices.map((n) => n.kind)).toContain("client-bug");
+    expect(store.getView().identity).toBe("session");
+    expect(store.getView().snapshot!.state.seed).toEqual((await accountWorld(rig, "u:p@x"))!.seed);
+  });
+
+  it("D. a guest-creation retry that falls due mid-sign-in sends nothing", async () => {
+    let guestAttempts = 0;
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      if (url === "/api/guests" && guestAttempts++ === 0) throw new TypeError("network");
+      return holder.rig!.fetch(url, init);
+    };
+    const { gate, open } = gated();
+    const rig = await newRig();
+    holder.rig = rig;
+    const { store, tokens } = storeOn(rig, { fetch, gate });
+    await store.start();
+    await store.idle();
+    expect(guestAttempts).toBe(1);
+    expect(store.getView().identity).toBe("guest");
+    const signing = store.signUp("g@x", "hunter2hunter2");
+    await rig.advance(10_000);
+    expect(guestAttempts).toBe(1);
+    open();
+    expect((await signing).ok).toBe(true);
+    await store.idle();
+    await rig.advance(10_000);
+    expect(guestAttempts).toBe(1);
+    expect(tokens.get()).toBeNull();
+    expect(rig.fetch.calls.some((c) => c.url === "/api/auth/claim")).toBe(false);
+    expect(store.getView().identity).toBe("session");
+    expect(store.getView().snapshot!.state.seed).toEqual((await accountWorld(rig, "u:g@x"))!.seed);
+  });
+
+  it("D. a keepalive response that lands after a reset is ignored (the epoch)", async () => {
+    const { rig, store } = await guestStart();
+    rig.session.user = "u:k@x";
+    expect((await rig.fetch("/api/world")).status).toBe(200);
+    rig.session.user = null;
+    const account = (await accountWorld(rig, "u:k@x"))!;
+    await rig.advance(60_000);
+    store.pressTap();
+    store.releaseTap();
+    const release = rig.fetch.hold("POST", "/api/actions");
+    store.flushTaps({ keepalive: true });
+    await until(() => rig.fetch.calls.some((c) => c.url === "/api/actions"));
+    rig.clock.settleWith = null;
+
+    expect((await store.signIn("k@x", "hunter2hunter2")).ok).toBe(true);
+    await until(() => {
+      const seed = store.getView().snapshot?.state.seed;
+      return seed !== undefined && JSON.stringify(seed) === JSON.stringify(account.seed);
+    });
+    expect(store.getView().snapshot!.stateVersion).toBe(0);
+    release();
+    await store.idle();
+    // The guest world's v1 (the tap) is not adopted over the account's v0.
+    expect(store.getView().snapshot!.state.seed).toEqual(account.seed);
+    expect(store.getView().snapshot!.stateVersion).toBe(0);
+    expect(store.getView().identity).toBe("session");
+  });
+
+  it("E. a dead parked token restored at sign-out quietly becomes a new guest", async () => {
+    const rig = await newRig();
+    const dead = "D".repeat(43);
+    const tokens = memoryTokenStorage();
+    tokens.set(dead);
+    rig.session.user = "u:d@x";
+    const { store, parked } = storeOn(rig, { tokens });
+    await store.start();
+    await store.idle();
+    expect(parked.get()).toBe(dead);
+    const from = rig.fetch.calls.length;
+    expect(await store.signOut()).toBe(true);
+    await store.idle();
+    const view = store.getView();
+    expect(getsSince(rig, from)[0]!.headers.authorization).toBe(`Guest ${dead}`);
+    expect(worldCalls(rig, from).filter((c) => c.url === "/api/guests")).toHaveLength(1);
+    expect(tokens.get()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(tokens.get()).not.toBe(dead);
+    expect(parked.get()).toBeNull();
+    expect(view.notices.some((n) => n.kind === "guest-expired")).toBe(false);
+    expect(view.notices).toContainEqual({ kind: "signed-out", text: SIGNED_OUT });
+    expect(view.status).toBe("ready");
+    expect(view.identity).toBe("guest");
+  });
+
+  it("F. a 503 claim retries the same claim while held", async () => {
+    let fakes = 0;
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      if (url === "/api/auth/claim" && fakes++ === 0) {
+        return new Response('{"error":"x"}', { status: 503, headers: { "retry-after": "1" } });
+      }
+      return holder.rig!.fetch(url, init);
+    };
+    const rig = await newRig();
+    holder.rig = rig;
+    const { store, tokens } = storeOn(rig, { fetch });
+    await store.start();
+    await store.idle();
+    const from = rig.fetch.calls.length;
+    expect((await store.signUp("q@x", "hunter2hunter2")).ok).toBe(true);
+    await store.idle();
+    expect(store.getView().auth).toBe("claiming");
+    await rig.advance(999);
+    expect(fakes).toBe(1);
+    expect(worldCalls(rig, from)).toEqual([]); // the 503 was faked: nothing reached the world
+    await rig.advance(1);
+    await store.idle();
+    expect(fakes).toBe(2);
+    expect(worldCalls(rig, from)[0]!.url).toBe("/api/auth/claim");
+    expect(store.getView().auth).toBe("idle");
+    expect(tokens.get()).toBeNull();
+  });
+
+  it("F. a 401 claim releases: the held batch goes out as the guest, with client-bug", async () => {
+    const { gate, open } = gated();
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      // The cookie didn't stick.
+      if (url === "/api/auth/claim") holder.rig!.session.user = null;
+      return holder.rig!.fetch(url, init);
+    };
+    const rig = await newRig();
+    holder.rig = rig;
+    const { store, tokens } = storeOn(rig, { fetch, gate });
+    await store.start();
+    await store.idle();
+    const guestToken = tokens.get()!;
+    const from = rig.fetch.calls.length;
+    const signing = store.signUp("z@x", "hunter2hunter2");
+    const sent = store.send([reorder(store)], "reorder");
+    open();
+    expect((await signing).ok).toBe(true);
+    await store.idle();
+    expect((await sent).kind).toBe("adopt");
+    const after = worldCalls(rig, from);
+    expect(after[0]!.url).toBe("/api/auth/claim");
+    const post = after.find((c) => c.url === "/api/actions")!;
+    expect(post.headers.authorization).toBe(`Guest ${guestToken}`);
+    const view = store.getView();
+    expect(view.identity).toBe("guest");
+    expect(view.account).toBeNull();
+    expect(view.auth).toBe("idle");
+    expect(view.notices.map((n) => n.kind)).toContain("client-bug");
+    expect(tokens.get()).toBe(guestToken);
+    expect(view.snapshot!.stateVersion).toBe(1);
+  });
+
+  it("F. stop() and start() mid-hold: nothing is sent while stopped, then the claim", async () => {
+    const { gate, open } = gated();
+    const { rig, store, tokens } = await guestStart(gate);
+    const from = rig.fetch.calls.length;
+    const signing = store.signUp("s@x", "hunter2hunter2");
+    const sent = store.send([reorder(store)], "reorder");
+    store.stop();
+    open();
+    expect((await signing).ok).toBe(true);
+    await store.idle();
+    expect(worldCalls(rig, from)).toEqual([]);
+    expect(rig.clock.pendingTimers).toBe(0);
+    await store.start();
+    await store.idle();
+    expect((await sent).kind).toBe("adopt");
+    expect(worldCalls(rig, from).map((c) => c.url)).toEqual(["/api/auth/claim", "/api/actions"]);
+    expect(tokens.get()).toBeNull();
+    expect(store.getView().identity).toBe("session");
+  });
+
+  it("F. stop() and start() mid-claim: the repeat claim is idempotent", async () => {
+    const { rig, store, tokens, parked } = await guestStart();
+    const seed = store.getView().snapshot!.state.seed;
+    rig.fetch.dropNextResponse = true;
+    expect((await store.signUp("m@x", "hunter2hunter2")).ok).toBe(true);
+    await store.idle();
+    expect(store.getView().auth).toBe("claiming");
+    store.stop();
+    expect(rig.clock.pendingTimers).toBe(0);
+    await store.start();
+    await store.idle();
+    const claims = rig.fetch.calls.filter((c) => c.url === "/api/auth/claim");
+    expect(claims).toHaveLength(2);
+    expect(store.getView().auth).toBe("idle");
+    expect(tokens.get()).toBeNull();
+    expect(parked.get()).toBeNull();
+    expect(store.getView().snapshot!.state.seed).toEqual(seed);
+    expect(store.getView().notices.some((n) => n.kind === "account-has-factory")).toBe(false);
+  });
+
+  it("F. a failed sign-out returns false, keeps the session and releases", async () => {
+    const rig = await newRig();
+    rig.session.user = "u:f@x";
+    const { store } = storeOn(rig, { signOutFails: true });
+    await store.start();
+    await store.idle();
+    expect(await store.signOut()).toBe(false);
+    const view = store.getView();
+    expect(view.auth).toBe("idle");
+    expect(view.identity).toBe("session");
+    const from = rig.fetch.calls.length;
+    await rig.advance(MIN_REPOLL_MS);
+    store.onFocus();
+    await store.idle();
+    expect(getsSince(rig, from)[0]!.headers["x-test-user"]).toBe("u:f@x");
   });
 });

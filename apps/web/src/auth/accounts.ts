@@ -19,6 +19,8 @@ export type ResetResult =
 export interface AccountClient {
   /** Idempotent; the store calls it once health says accounts: true. */
   init(): void;
+  /** False on any failure. At boot a transient refresh failure therefore demotes a signed-in
+   * player to a guest (the parked token returns), and a later sign-in's 409 re-parks it. */
   hasSession(): Promise<boolean>;
   signUp(email: string, password: string): Promise<AuthResult>;
   signIn(email: string, password: string): Promise<AuthResult>;

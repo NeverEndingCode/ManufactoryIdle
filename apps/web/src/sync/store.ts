@@ -113,7 +113,8 @@ function plateauText(offlineCapMs: number): string {
 }
 
 type Cause = "get" | "post";
-type Adoption = "adopted" | "stale" | "failed";
+/** "ignored": the response belongs to a world the store has since left (#epoch). */
+type Adoption = "adopted" | "stale" | "failed" | "ignored";
 
 export class GameStore {
   readonly #fetch: FetchLike;
@@ -171,6 +172,12 @@ export class GameStore {
   #claimRun: Promise<void> | null = null;
   #claimTimer: number | null = null;
   #claimRetries = 0;
+  /** The world epoch: #resetWorld bumps it. Every request captures it when sent, and a
+   * response from an older epoch is ignored (#handle, #adopt): it is about a world we left. */
+  #epoch = 0;
+  /** The guest token came from the park (S-7) and hasn't loaded a world since. A 401 on it is
+   * a claim that committed before its tab closed: quietly make a new guest (fix round 1, E). */
+  #tokenFromPark = false;
 
   // The tap (Q-11). Two timers, both on the ClientClock: the 10 Hz repeat while held, and
   // the one flush timer, which is never due before #lastFlushAt + TAP_FLUSH_EVERY_MS.
@@ -203,9 +210,10 @@ export class GameStore {
       clock: d.clock,
       authHeader: () => this.#authHeader(),
       baseVersion: () => this.#snapshot?.stateVersion ?? 0,
-      onOutcome: async (b, o) => {
-        await this.#handle(o, "post", this.#clock.now(), b.id);
+      onOutcome: async (b, o, sentIn) => {
+        await this.#handle(o, "post", this.#clock.now(), sentIn, b.id);
       },
+      epoch: () => this.#epoch,
       isPaused: () => Math.max(0, this.#pausedUntil - this.#clock.now()),
       onChange: () => {
         if (this.#settlingId !== null && this.#outbox.inFlight?.id !== this.#settlingId) {
@@ -215,6 +223,8 @@ export class GameStore {
       },
       ...(d.random ? { random: d.random } : {}),
     });
+    // Nothing is sent until boot knows the identity (S-3).
+    this.#outbox.stop();
     this.#view = this.#makeView();
   }
 
@@ -437,6 +447,7 @@ export class GameStore {
       baseVersion: this.#snapshot?.stateVersion ?? 0,
       actions: [action],
     };
+    const epoch = this.#epoch;
     this.#track(
       (async () => {
         let outcome: Outcome;
@@ -455,7 +466,9 @@ export class GameStore {
           outcome = { kind: "retry" };
         }
         if (this.#stopped) return;
-        await this.#handle(outcome, "post", this.#clock.now());
+        // Taps for a world we left (a reset since) are not resent to the new one.
+        if (epoch !== this.#epoch) return;
+        await this.#handle(outcome, "post", this.#clock.now(), epoch);
         if (outcome.kind === "retry" || outcome.kind === "paused") {
           void this.#outbox.enqueue([action], TAP_LABEL, { key });
         }
@@ -465,7 +478,10 @@ export class GameStore {
 
   /** After guest-expired (or a refused guest creation): drop the token, POST /api/guests. */
   newFactory(): Promise<void> {
+    // Never under a session or a sign-in: the token may be about to be claimed or parked.
+    if (this.#auth !== "idle" || this.#identity === "session") return this.idle();
     this.#tokens.clear();
+    this.#tokenFromPark = false;
     this.#resetWorld();
     this.#emit();
     this.#createGuest();
@@ -475,6 +491,7 @@ export class GameStore {
   /** Forgets the world on screen: the next one is another world (a new guest, a claim's 409,
    * a sign-out), which isAdoptable must not compare with this one. */
   #resetWorld(): void {
+    this.#epoch += 1;
     this.#halted = false;
     this.#snapshot = null;
     this.#repoll = { streak: 0 };
@@ -557,11 +574,17 @@ export class GameStore {
   }
 
   /** S-4: from now until #release(), nothing world-shaped is sent. The tap hold ends and its
-   * taps join the outbox; the boundary timer and GET triggers stop; the outbox stops (a
-   * batch whose response lands later stays at the head and resends with its key). Resolves
-   * once the GET, guest creation and outbox attempt in flight have landed. */
+   * taps join the outbox; the boundary timer, the guest-creation retry and GET triggers stop;
+   * the outbox stops. A batch whose response lands after the stop is not reported: it stays at
+   * the head and, after a 200 claim, resends with its key (a replay if it committed). After a
+   * 409 or 404 it is dropped with the held batches and settles as "unauthorized" even if it
+   * committed to the guest's world: misreported, but nothing is lost, since that world is
+   * parked (409) or gone (404). Resolves once the GET, guest creation and outbox attempt in
+   * flight have landed. */
   async #hold(): Promise<void> {
     this.#auth = "held";
+    if (this.#guestTimer !== null) this.#clock.clearTimeout(this.#guestTimer);
+    this.#guestTimer = null;
     if (this.#holding) {
       this.#holding = false;
       this.#clearRepeat();
@@ -582,7 +605,7 @@ export class GameStore {
     if (this.#stopped) return;
     this.#outbox.start();
     this.#arm();
-    this.#wantGet(false);
+    this.#resume();
   }
 
   #claimOnce(): void {
@@ -605,19 +628,32 @@ export class GameStore {
       this.#afterClaim();
       return;
     }
+    const epoch = this.#epoch;
     let outcome: Outcome;
+    /** Only the API's own 404 deletes the token; a proxy's or a deploy's 404 parks it. */
+    let unknownGuest = false;
     try {
-      outcome = await classify(
-        await this.#fetch("/api/auth/claim", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ guestToken }),
-        }).catch(() => null),
-      );
+      const res = await this.#fetch("/api/auth/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ guestToken }),
+      }).catch(() => null);
+      if (res?.status === 404) {
+        const body = (await res
+          .clone()
+          .json()
+          .catch(() => null)) as { error?: unknown } | null;
+        unknownGuest = body?.error === "unknown-guest";
+      }
+      outcome = await classify(res);
     } catch {
       outcome = { kind: "retry" };
     }
     const receivedAt = this.#clock.now();
+    if (epoch !== this.#epoch) {
+      console.error("claim: a response for a world the store has left");
+      return;
+    }
     // The token moves happen even after stop(): the server has decided, and start() resumes.
     switch (outcome.kind) {
       case "adopt":
@@ -625,7 +661,7 @@ export class GameStore {
         this.#tokens.clear();
         this.#settleClaim();
         if (this.#stopped) return;
-        await this.#adopt(outcome.body, "get", receivedAt);
+        await this.#adopt(outcome.body, "get", receivedAt, epoch);
         this.#afterClaim();
         return;
       case "unauthorized":
@@ -653,8 +689,9 @@ export class GameStore {
       }
       default:
         // 404 unknown-guest: the guest is gone. 409 already-has-world: park the token, never
-        // delete it (S-6). Any other 4xx is a bug: park too, so no world is ever lost.
-        if (outcome.kind === "no-world") this.#tokens.clear();
+        // delete it (S-6). Any other 4xx (or a 404 that isn't the API's) is a bug: park too,
+        // so no world is ever lost.
+        if (unknownGuest) this.#tokens.clear();
         else this.#park(guestToken);
         this.#settleClaim();
         // Batches made for the guest's world must never reach the account's.
@@ -665,8 +702,8 @@ export class GameStore {
             { kind: "account-has-factory", text: TEXT["account-has-factory"] },
             false,
           );
-        } else if (outcome.kind === "client-bug") {
-          console.error(`claim: ${outcome.status}`, outcome.body);
+        } else if (!unknownGuest) {
+          console.error("claim:", outcome);
           this.#setNotice({ kind: "client-bug", text: TEXT["client-bug"] }, false);
         }
         this.#afterClaim();
@@ -688,10 +725,36 @@ export class GameStore {
     else this.#arm();
   }
 
-  /** S-6: at most one guest token across both keys. An occupied park is never overwritten. */
+  /** S-6: at most one guest token across both keys. A token is never dropped unless it is
+   * safely in the park: an occupied park is never overwritten (the token then stays where it
+   * is), and a park that fell back to memory keeps the stored token too. Under a session the
+   * guest token is never sent, so leaving it in place is harmless. */
   #park(token: string): void {
-    if (this.#parked.get() === null) this.#parked.set(token);
-    this.#tokens.clear();
+    const held = this.#parked.get();
+    if (held !== null && held !== token) {
+      console.error("park: occupied by another guest token; this one stays in place");
+      return;
+    }
+    this.#parked.set(token);
+    if (this.#parked.persistent || !this.#tokens.persistent) this.#tokens.clear();
+    else console.error("park: storage fell back to memory; the guest token stays stored");
+    this.#checkPersistence();
+  }
+
+  /** S-7: the parked token back into the guest key. A different token already there is never
+   * overwritten (the park then stays), and the park is cleared only once the token is stored
+   * as durably as it was. */
+  #unpark(): void {
+    const parked = this.#parked.get();
+    if (parked === null) return;
+    if (this.#tokens.get() === null) this.#tokens.set(parked);
+    if (this.#tokens.get() !== parked) {
+      console.error("unpark: both keys hold different guest tokens; the parked one is kept");
+      return;
+    }
+    this.#tokenFromPark = true;
+    if (this.#tokens.persistent || !this.#parked.persistent) this.#parked.clear();
+    this.#checkPersistence();
   }
 
   /** S-7: a sign-out, or a lost session. Back to the parked guest, or a new one. The account's
@@ -702,11 +765,8 @@ export class GameStore {
     this.#account = null;
     this.#auth = "idle";
     this.#resetWorld();
-    const parked = this.#parked.get();
-    if (parked !== null) {
-      this.#tokens.set(parked);
-      this.#parked.clear();
-    }
+    this.#unpark();
+    this.#dropNotice("account-has-factory", false);
     this.#setNotice({ kind, text: TEXT[kind] }, false);
     this.#emit();
     if (this.#stopped) return;
@@ -798,6 +858,8 @@ export class GameStore {
     if (health.accounts === true && this.#accounts) {
       this.#accountsState = "on";
       this.#accounts.init();
+      // A transient refresh failure here reads as no session: the player boots as a guest
+      // (the parked token returns, S-7), and a later sign-in's 409 parks it again.
       try {
         session = await this.#accounts.hasSession();
       } catch {
@@ -819,10 +881,8 @@ export class GameStore {
     } else {
       this.#identity = "guest";
       // A parked token only exists while signed in: the session ended while away (S-7).
-      const parked = this.#parked.get();
-      if (parked !== null) {
-        if (this.#tokens.get() === null) this.#tokens.set(parked);
-        this.#parked.clear();
+      if (this.#parked.get() !== null) {
+        this.#unpark();
         this.#setNotice({ kind: "session-ended", text: TEXT["session-ended"] }, false);
       }
     }
@@ -833,13 +893,17 @@ export class GameStore {
 
   /** W-14: the banner, once the token lives only in memory. Storage can fail mid-session. */
   #checkPersistence(): void {
-    if (this.#tokens.persistent || this.#ephemeralShown) return;
+    if (this.#ephemeralShown) return;
+    const parkAtRisk = !this.#parked.persistent && this.#parked.get() !== null;
+    if (this.#tokens.persistent && !parkAtRisk) return;
     this.#ephemeralShown = true;
     this.#setNotice({ kind: "ephemeral-token", text: TEXT["ephemeral-token"] });
   }
 
   #createGuest(): void {
     if (this.#stopped || this.#guesting) return;
+    // Never during a sign-in, a claim or a sign-out, and never under a session (S-4).
+    if (this.#auth !== "idle" || this.#identity === "session") return;
     const guesting = this.#postGuest().finally(() => {
       this.#guesting = null;
     });
@@ -848,6 +912,7 @@ export class GameStore {
   }
 
   async #postGuest(): Promise<void> {
+    const epoch = this.#epoch;
     let outcome: Outcome;
     try {
       outcome = await classify(
@@ -858,14 +923,21 @@ export class GameStore {
     }
     const receivedAt = this.#clock.now();
     if (this.#stopped && outcome.kind !== "adopt") return;
+    // A guest made for a world we left: kept only if a guest is still exactly what's wanted
+    // (newFactory joins the creation in flight); never under a session or a sign-in.
+    const wanted =
+      this.#identity === "guest" && this.#auth === "idle" && this.#tokens.get() === null;
+    if (epoch !== this.#epoch && !wanted) return;
+    const adoptIn = this.#epoch;
     switch (outcome.kind) {
       case "adopt": {
         const { guestToken, world } = outcome.body as unknown as GuestResponse;
         // Kept even after stop(): the guest exists now, and the next start() must reuse it.
         this.#tokens.set(guestToken);
+        this.#tokenFromPark = false;
         if (this.#stopped) return;
         this.#checkPersistence();
-        await this.#adopt(world, "get", receivedAt);
+        await this.#adopt(world, "get", receivedAt, adoptIn);
         return;
       }
       case "paused":
@@ -928,6 +1000,7 @@ export class GameStore {
   }
 
   async #runGet(): Promise<void> {
+    const epoch = this.#epoch;
     let outcome: Outcome;
     try {
       const auth = this.#authHeader();
@@ -941,11 +1014,12 @@ export class GameStore {
     const receivedAt = this.#clock.now();
     this.#getting = false;
     if (this.#stopped) return;
-    const result = await this.#handle(outcome, "get", receivedAt);
+    const result = await this.#handle(outcome, "get", receivedAt, epoch);
     // A GET dropped as stale (W-6) re-arms from the snapshot it lost to. Nothing else re-arms
     // here: a failure's deferred retry is its re-trigger, and re-arming from a boundary already
-    // past would fire at once and skip the backoff.
+    // past would fire at once and skip the backoff. A GET for a world we left asks again.
     if (result === "stale") this.#arm();
+    else if (result === "ignored") this.#wantGet(true);
   }
 
   /** One handler for every response, GET and POST alike (W-11). */
@@ -953,12 +1027,14 @@ export class GameStore {
     o: Outcome,
     cause: Cause,
     receivedAt: number,
+    epoch: number,
     settling?: number,
   ): Promise<Adoption | void> {
     if (this.#stopped) return;
+    if (epoch !== this.#epoch) return "ignored";
     switch (o.kind) {
       case "adopt":
-        return this.#adopt(o.body, cause, receivedAt, settling);
+        return this.#adopt(o.body, cause, receivedAt, epoch, settling);
       case "rejected":
         this.#failures = 0;
         this.#setNotice({ kind: "rejected", text: o.body.reason });
@@ -1010,6 +1086,17 @@ export class GameStore {
       this.#leaveSession("session-ended");
       return;
     }
+    if (this.#tokenFromPark) {
+      // A parked token whose claim committed (its tab closed before the answer): the world is
+      // the account's now. Quietly start a new guest instead of the guest-expired wall.
+      this.#tokenFromPark = false;
+      this.#outbox.clear({ kind: "unauthorized" });
+      this.#tokens.clear();
+      this.#resetWorld();
+      this.#emit();
+      this.#createGuest();
+      return;
+    }
     this.#halted = true;
     this.#clearBoundary();
     this.#clearDeferred();
@@ -1023,6 +1110,7 @@ export class GameStore {
     body: WorldResponse,
     cause: Cause,
     receivedAt: number,
+    epoch: number,
     settling?: number,
   ): Promise<Adoption> {
     let next: Snapshot;
@@ -1041,6 +1129,8 @@ export class GameStore {
       return "failed";
     }
     if (this.#stopped) return "failed";
+    // The content load can outlast a reset: then this body is about a world we left.
+    if (epoch !== this.#epoch) return "ignored";
     // A whole exchange worked: only now do the failure counters reset.
     this.#failures = 0;
     this.#notFound = 0;
@@ -1056,6 +1146,8 @@ export class GameStore {
     // From the swap on, the snapshot counts this batch's actions: the view stops listing it.
     if (settling !== undefined) this.#settlingId = settling;
     this.#snapshot = next;
+    // A world loaded on this token: a later 401 on it is a real expiry, not a dead park (E).
+    if (this.#identity === "guest") this.#tokenFromPark = false;
     this.#repoll = nextRepoll(this.#repoll, next, cause);
     // Q-13: the one celebration W-18 allows.
     if (prev !== null && next.state.tier > prev.state.tier) {

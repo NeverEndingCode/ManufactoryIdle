@@ -267,10 +267,11 @@ export async function guestWorld(
 }
 
 /** An AccountClient over the rig's simulated cookie. signUp/signIn await `gate`, then set
- * session.user = `u:${email}`; a "wrong" password is wrong-credentials. signOut clears it. */
+ * session.user = `u:${email}`; a "wrong" password is wrong-credentials. signOut clears it, or
+ * with `signOutFails` (the server unreachable) keeps it and reports false. */
 export function rigAccounts(
   rig: TestRig,
-  opts: { gate?: Promise<void> } = {},
+  opts: { gate?: Promise<void>; signOutFails?: boolean } = {},
 ): AccountClient & { calls: string[] } {
   const calls: string[] = [];
   const sign = async (name: string, email: string, password: string): Promise<AuthResult> => {
@@ -293,6 +294,7 @@ export function rigAccounts(
     signIn: (email, password) => sign("signIn", email, password),
     async signOut() {
       calls.push("signOut");
+      if (opts.signOutFails) return false;
       rig.session.user = null;
       return true;
     },

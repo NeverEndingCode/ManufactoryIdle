@@ -22,9 +22,12 @@ export interface OutboxDeps {
   clock: ClientClock;
   authHeader: () => string | null;
   baseVersion: () => number;
-  /** Every attempt's outcome, retries included. A returned promise is awaited before the
-   * batch settles or the next one sends, so its adoption sets the next baseVersion. */
-  onOutcome: (b: Batch, o: Outcome) => void | Promise<void>;
+  /** Every attempt's outcome, retries included, with the `epoch()` read when it was sent. A
+   * returned promise is awaited before the batch settles or the next one sends, so its
+   * adoption sets the next baseVersion. */
+  onOutcome: (b: Batch, o: Outcome, sentIn: number) => void | Promise<void>;
+  /** The store's world epoch (#resetWorld bumps it). Omitted: always 0. */
+  epoch?: () => number;
   /** Local ms until the shared 429/503 pause ends, 0 if not paused. */
   isPaused: () => number;
   /** inFlight or queued changed. */
@@ -170,6 +173,7 @@ export class Outbox {
   }
 
   async #send(batch: Batch): Promise<void> {
+    const sentIn = this.#d.epoch?.() ?? 0;
     const auth = this.#d.authHeader();
     const body: ActionsRequest = {
       idempotencyKey: batch.key,
@@ -194,7 +198,7 @@ export class Outbox {
     }
     if (this.#stopped) return;
     try {
-      await this.#d.onOutcome(batch, outcome);
+      await this.#d.onOutcome(batch, outcome, sentIn);
     } catch (err) {
       console.error("outbox onOutcome", err);
     }
