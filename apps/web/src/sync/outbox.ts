@@ -17,17 +17,19 @@ export interface Batch {
 /** The floor on any pause or retry wait, so a `Retry-After: 0` can't make a tight loop. */
 export const MIN_WAIT_MS = 1_000;
 
-export interface OutboxDeps {
+/** `S`: what the owner stamps on each send (the store's world epoch and identity), handed back
+ * with that send's outcome. */
+export interface OutboxDeps<S = undefined> {
   fetch: FetchLike;
   clock: ClientClock;
   authHeader: () => string | null;
   baseVersion: () => number;
-  /** Every attempt's outcome, retries included, with the `epoch()` read when it was sent. A
+  /** Every attempt's outcome, retries included, with the `stamp()` read when it was sent. A
    * returned promise is awaited before the batch settles or the next one sends, so its
    * adoption sets the next baseVersion. */
-  onOutcome: (b: Batch, o: Outcome, sentIn: number) => void | Promise<void>;
-  /** The store's world epoch (#resetWorld bumps it). Omitted: always 0. */
-  epoch?: () => number;
+  onOutcome: (b: Batch, o: Outcome, sentWith: S | undefined) => void | Promise<void>;
+  /** Read as each attempt is sent. Omitted: undefined. */
+  stamp?: () => S;
   /** Local ms until the shared 429/503 pause ends, 0 if not paused. */
   isPaused: () => number;
   /** inFlight or queued changed. */
@@ -43,8 +45,8 @@ const SETTLED = new Set<Outcome["kind"]>([
   "no-world",
 ]);
 
-export class Outbox {
-  readonly #d: OutboxDeps;
+export class Outbox<S = undefined> {
+  readonly #d: OutboxDeps<S>;
   #nextId = 1;
   #head: Batch | null = null;
   #queue: Batch[] = [];
@@ -55,7 +57,7 @@ export class Outbox {
   #retries = 0;
   #stopped = false;
 
-  constructor(d: OutboxDeps) {
+  constructor(d: OutboxDeps<S>) {
     this.#d = d;
   }
 
@@ -173,7 +175,7 @@ export class Outbox {
   }
 
   async #send(batch: Batch): Promise<void> {
-    const sentIn = this.#d.epoch?.() ?? 0;
+    const sentWith = this.#d.stamp?.();
     const auth = this.#d.authHeader();
     const body: ActionsRequest = {
       idempotencyKey: batch.key,
@@ -198,7 +200,7 @@ export class Outbox {
     }
     if (this.#stopped) return;
     try {
-      await this.#d.onOutcome(batch, outcome, sentIn);
+      await this.#d.onOutcome(batch, outcome, sentWith);
     } catch (err) {
       console.error("outbox onOutcome", err);
     }

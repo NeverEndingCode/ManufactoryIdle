@@ -750,7 +750,7 @@ describe("GameStore accounts: never lose a guest token (fix round 1)", () => {
   });
 });
 
-describe("GameStore accounts: fix round 2", () => {
+describe("GameStore accounts: fix rounds 2 and 3", () => {
   it("1. a foreign 401 on a token from the park keeps it and shows guest-expired", async () => {
     const dead = "D".repeat(43);
     let foreign = false;
@@ -782,21 +782,22 @@ describe("GameStore accounts: fix round 2", () => {
     expect(worldCalls(rig, from).some((c) => c.url === "/api/guests")).toBe(false);
   });
 
-  it("2. a claim answered after an epoch bump settles and releases the hold", async () => {
-    // The lever: a guest keepalive sent before the sign-in, held, then answered 401 while the
-    // claim is out. Under the new session that reads as a lost session: #leaveSession resets
-    // the world (an epoch bump) mid-claim. The claim's answer then arrives from the old epoch.
+  it("3. a guest 401 that lands after the sign-in never ends the session", async () => {
+    // A guest keepalive sent before the sign-in, held, then answered with the API's 401 while
+    // the claim is out (the hold doesn't wait on keepalives). It is about the guest token.
     let openKeepalive!: () => void;
     const keepaliveGate = new Promise<void>((r) => (openKeepalive = r));
     let openClaim!: () => void;
     const claimGate = new Promise<void>((r) => (openClaim = r));
     let claimSent = false;
     let keepaliveSent = false;
+    let keepaliveAnswered = false;
     const holder: { rig?: TestRig } = {};
     const fetch: FetchLike = async (url, init) => {
       if (url === "/api/actions" && init?.keepalive) {
         keepaliveSent = true;
         await keepaliveGate;
+        keepaliveAnswered = true;
         return new Response('{"error":"unauthorized"}', {
           status: 401,
           headers: { "www-authenticate": "Guest" },
@@ -810,9 +811,10 @@ describe("GameStore accounts: fix round 2", () => {
     };
     const rig = await newRig();
     holder.rig = rig;
-    const { store } = storeOn(rig, { fetch });
+    const { store, tokens, parked } = storeOn(rig, { fetch });
     await store.start();
     await store.idle();
+    const guestToken = tokens.get()!;
     await rig.advance(60_000);
     store.pressTap();
     store.releaseTap();
@@ -823,17 +825,38 @@ describe("GameStore accounts: fix round 2", () => {
     expect((await store.signUp("w@x", "hunter2hunter2")).ok).toBe(true);
     await until(() => claimSent);
     openKeepalive();
-    await until(() => store.getView().identity === "guest"); // the epoch bump
+    await until(() => keepaliveAnswered);
+    for (let i = 0; i < 20; i++) await turn();
+    let view = store.getView();
+    expect(view.identity).toBe("session");
+    expect(view.account).toEqual({ email: "w@x" });
+    expect(view.notices.some((n) => n.kind === "session-ended")).toBe(false);
+    expect(tokens.get()).toBe(guestToken);
+    expect(parked.get()).toBeNull();
+
     openClaim();
     await store.idle();
+    view = store.getView();
+    expect(view.identity).toBe("session");
+    expect(view.auth).toBe("idle");
+    expect(view.notices.some((n) => n.kind === "session-ended")).toBe(false);
+    expect(view.notices.some((n) => n.kind === "account-has-factory")).toBe(false);
+    expect(tokens.get()).toBeNull(); // the claim's 200, not the 401, moved it
+    expect(view.snapshot!.state.seed).toEqual((await accountWorld(rig, "u:w@x"))!.seed);
+  });
 
-    expect(store.getView().auth).toBe("idle");
-    // The claim settled: a restart doesn't claim again, and the outbox runs.
-    store.stop();
+  it("3. a session POST that 401s still ends the session", async () => {
+    const rig = await newRig();
+    rig.session.user = "u:t@x";
+    const { store } = storeOn(rig);
     await store.start();
     await store.idle();
-    expect(rig.fetch.calls.filter((c) => c.url === "/api/auth/claim")).toHaveLength(1);
-    expect((await store.send([reorder(store)], "reorder")).kind).toBe("adopt");
-    expect(store.getView().auth).toBe("idle");
+    rig.session.user = null; // the refresh failed: the cookie is gone
+    expect((await store.send([reorder(store)], "reorder")).kind).toBe("unauthorized");
+    await store.idle();
+    const view = store.getView();
+    expect(view.identity).toBe("guest");
+    expect(view.notices).toContainEqual({ kind: "session-ended", text: SESSION_ENDED });
+    expect(view.status).toBe("ready");
   });
 });

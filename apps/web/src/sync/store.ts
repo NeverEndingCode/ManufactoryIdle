@@ -115,6 +115,12 @@ function plateauText(offlineCapMs: number): string {
 }
 
 type Cause = "get" | "post";
+/** What every request is sent with: the world epoch and the identity it went out under. */
+interface Sent {
+  epoch: number;
+  as: Identity;
+}
+
 /** "ignored": the response belongs to a world the store has since left (#epoch). */
 type Adoption = "adopted" | "stale" | "failed" | "ignored";
 
@@ -125,7 +131,7 @@ export class GameStore {
   readonly #parked: TokenStorage;
   readonly #accounts: AccountClient | undefined;
   readonly #content: ContentCache;
-  readonly #outbox: Outbox;
+  readonly #outbox: Outbox<Sent>;
   readonly #random: GameStoreDeps["random"];
 
   #snapshot: Snapshot | null = null;
@@ -212,10 +218,10 @@ export class GameStore {
       clock: d.clock,
       authHeader: () => this.#authHeader(),
       baseVersion: () => this.#snapshot?.stateVersion ?? 0,
-      onOutcome: async (b, o, sentIn) => {
-        await this.#handle(o, "post", this.#clock.now(), sentIn, b.id);
+      onOutcome: async (b, o, sent) => {
+        await this.#handle(o, "post", this.#clock.now(), sent ?? this.#sent(), b.id);
       },
-      epoch: () => this.#epoch,
+      stamp: () => this.#sent(),
       isPaused: () => Math.max(0, this.#pausedUntil - this.#clock.now()),
       onChange: () => {
         if (this.#settlingId !== null && this.#outbox.inFlight?.id !== this.#settlingId) {
@@ -449,7 +455,7 @@ export class GameStore {
       baseVersion: this.#snapshot?.stateVersion ?? 0,
       actions: [action],
     };
-    const epoch = this.#epoch;
+    const sent = this.#sent();
     this.#track(
       (async () => {
         let outcome: Outcome;
@@ -469,8 +475,8 @@ export class GameStore {
         }
         if (this.#stopped) return;
         // Taps for a world we left (a reset since) are not resent to the new one.
-        if (epoch !== this.#epoch) return;
-        await this.#handle(outcome, "post", this.#clock.now(), epoch);
+        if (sent.epoch !== this.#epoch) return;
+        await this.#handle(outcome, "post", this.#clock.now(), sent);
         if (outcome.kind === "retry" || outcome.kind === "paused") {
           void this.#outbox.enqueue([action], TAP_LABEL, { key });
         }
@@ -630,7 +636,7 @@ export class GameStore {
       this.#afterClaim();
       return;
     }
-    const epoch = this.#epoch;
+    const sent = this.#sent();
     let outcome: Outcome;
     /** Only the API's own 404 deletes the token; a proxy's or a deploy's 404 parks it. */
     let unknownGuest = false;
@@ -652,11 +658,12 @@ export class GameStore {
       outcome = { kind: "retry" };
     }
     const receivedAt = this.#clock.now();
-    // The store moved to another world while the claim was out (a reset mid-claim). The answer
-    // still decides where the guest token goes (W-16: moved, never lost), but its world is not
-    // adopted and nothing is retried: the claim settles and the hold is released, so auth and
-    // the outbox never stay stranded.
-    const stale = epoch !== this.#epoch;
+    // The store moved to another world or identity while the claim was out. No public path does
+    // that today (the hold blocks every reset, and a guest 401 can't end the session, #handle),
+    // so this is a guard, logged. The answer still decides where the guest token goes (W-16:
+    // moved, never lost), but its world is not adopted and nothing is retried: the claim
+    // settles and the hold is released, so auth and the outbox never stay stranded.
+    const stale = sent.epoch !== this.#epoch || sent.as !== this.#identity;
     if (stale) console.error("claim: answered after the store left its world; releasing");
     // The token moves happen even after stop(): the server has decided, and start() resumes.
     switch (outcome.kind) {
@@ -669,7 +676,7 @@ export class GameStore {
           return;
         }
         if (this.#stopped) return;
-        await this.#adopt(outcome.body, "get", receivedAt, epoch);
+        await this.#adopt(outcome.body, "get", receivedAt, sent.epoch);
         this.#afterClaim();
         return;
       case "unauthorized":
@@ -816,6 +823,10 @@ export class GameStore {
     return token === null ? null : `Guest ${token}`;
   }
 
+  #sent(): Sent {
+    return { epoch: this.#epoch, as: this.#identity };
+  }
+
   #hasIdentity(): boolean {
     return (
       this.#identity === "session" || (this.#identity === "guest" && this.#tokens.get() !== null)
@@ -929,7 +940,7 @@ export class GameStore {
   }
 
   async #postGuest(): Promise<void> {
-    const epoch = this.#epoch;
+    const sent = this.#sent();
     let outcome: Outcome;
     try {
       outcome = await classify(
@@ -944,7 +955,7 @@ export class GameStore {
     // (newFactory joins the creation in flight); never under a session or a sign-in.
     const wanted =
       this.#identity === "guest" && this.#auth === "idle" && this.#tokens.get() === null;
-    if (epoch !== this.#epoch && !wanted) return;
+    if ((sent.epoch !== this.#epoch || sent.as !== this.#identity) && !wanted) return;
     const adoptIn = this.#epoch;
     switch (outcome.kind) {
       case "adopt": {
@@ -1017,7 +1028,7 @@ export class GameStore {
   }
 
   async #runGet(): Promise<void> {
-    const epoch = this.#epoch;
+    const sent = this.#sent();
     let outcome: Outcome;
     try {
       const auth = this.#authHeader();
@@ -1031,7 +1042,7 @@ export class GameStore {
     const receivedAt = this.#clock.now();
     this.#getting = false;
     if (this.#stopped) return;
-    const result = await this.#handle(outcome, "get", receivedAt, epoch);
+    const result = await this.#handle(outcome, "get", receivedAt, sent);
     // A GET dropped as stale (W-6) re-arms from the snapshot it lost to. Nothing else re-arms
     // here: a failure's deferred retry is its re-trigger, and re-arming from a boundary already
     // past would fire at once and skip the backoff. A GET for a world we left asks again.
@@ -1044,14 +1055,20 @@ export class GameStore {
     o: Outcome,
     cause: Cause,
     receivedAt: number,
-    epoch: number,
+    sent: Sent,
     settling?: number,
   ): Promise<Adoption | void> {
     if (this.#stopped) return;
-    if (epoch !== this.#epoch) return "ignored";
+    if (sent.epoch !== this.#epoch) return "ignored";
+    // A 401 or 404 is about the identity the request carried. One sent as a guest that lands
+    // after a sign-in says nothing about the session: it never ends it or touches a token.
+    if ((o.kind === "unauthorized" || o.kind === "no-world") && sent.as !== this.#identity) {
+      console.error(`${o.kind} for a request sent as ${sent.as}, now ${this.#identity}: dropped`);
+      return "ignored";
+    }
     switch (o.kind) {
       case "adopt":
-        return this.#adopt(o.body, cause, receivedAt, epoch, settling);
+        return this.#adopt(o.body, cause, receivedAt, sent.epoch, settling);
       case "rejected":
         this.#failures = 0;
         this.#setNotice({ kind: "rejected", text: o.body.reason });
