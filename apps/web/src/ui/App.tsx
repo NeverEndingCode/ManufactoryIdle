@@ -2,17 +2,18 @@
 // reset-password page. The lanes pane (tabs and the visible lane), the detail pane (the
 // drawer, or a hint), the priority list and the dock slot. The settings sheet (S-11) is state,
 // not a route. The store is created and started outside React (main.tsx).
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ItemId, LaneId } from "@manufactory/engine";
+import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
-import { bottleneckRow, unlockedLanes } from "./derive.js";
+import { bottleneckRow, unlockedLanes, type BottleneckModel } from "./derive.js";
 import { Drawer } from "./Drawer.js";
 import { Handbook } from "./Handbook.js";
 import layout from "./Layout.module.css";
 import { LaneView } from "./LaneView.js";
 import styles from "./LaneView.module.css";
-import { AnnounceContext, createAnnouncer } from "./announce.js";
+import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
 import { Notices } from "./Notices.js";
 import { PowerDock } from "./PowerDock.js";
 import { useNotation } from "./notation.js";
@@ -72,6 +73,37 @@ function showsChip(view: ReturnType<typeof useGame>): boolean {
   );
 }
 
+/** What the bottleneck announcement keys on: the framed item, a frameless one, or none. */
+function bottleneckKey(b: BottleneckModel | null): string | null {
+  if (b === null) return null;
+  return b.itemId === null ? "\u0000frameless" : `item:${b.itemId}`;
+}
+
+/**
+ * S-15 / W-20: "Bottleneck: <advice>" when the framed item changes between adopted snapshots,
+ * "No bottleneck" when it clears. Never on the first snapshot seen (again after the snapshot
+ * goes away: a new factory), and never for a new snapshot with the same framed item, so never
+ * at 4 Hz. A frameless bottleneck is already a notice line inside the region: not said twice.
+ */
+function useBottleneckAnnouncement(
+  announcer: Announcer,
+  s: Snapshot | null,
+  bottleneck: BottleneckModel | null,
+) {
+  const key = s === null ? undefined : bottleneckKey(bottleneck);
+  const text = bottleneck?.text ?? null;
+  const framed = bottleneck !== null && bottleneck.itemId !== null;
+  /** The key last seen; undefined before the first snapshot. */
+  const seen = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const before = seen.current;
+    seen.current = key;
+    if (key === undefined || before === undefined || before === key) return;
+    if (key === null) announcer.announce("No bottleneck");
+    else if (framed) announcer.announce(`Bottleneck: ${text}`);
+  }, [announcer, key, text, framed]);
+}
+
 export function App({ store }: { store: GameStore }) {
   const view = useGame(store);
   const [route, navigate] = useRoute();
@@ -124,6 +156,7 @@ export function App({ store }: { store: GameStore }) {
   const s = view.snapshot;
   const lanes = useMemo(() => (s ? unlockedLanes(s) : []), [s]);
   const bottleneck = useMemo(() => (s ? bottleneckRow(s) : null), [s]);
+  useBottleneckAnnouncement(announcer, s, bottleneck);
   const [picked, setPicked] = useState<LaneId | null>(null);
   const laneId = lanes.some((l) => l.id === picked) ? picked : (lanes[0]?.id ?? null);
   const tabRefs = useRef(new Map<LaneId, HTMLButtonElement>());
@@ -134,6 +167,26 @@ export function App({ store }: { store: GameStore }) {
   // The handbook is a route, not state: below 600 px it is the shown view while it is open.
   const shown: View = panes === 1 && onHandbook ? "handbook" : pane;
   const [openItem, setOpenItem] = useState<ItemId | null>(null);
+
+  // The fixed dock's real height, as --dock-h on the layout, so the column reserves exactly
+  // what the dock covers (it wraps taller at 320 px). Without ResizeObserver, the CSS's 6rem.
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const hasLayout = route.kind !== "reset-password" && s !== null && laneId !== null;
+  useEffect(() => {
+    const host = layoutRef.current;
+    const dock = dockRef.current;
+    if (!hasLayout || host === null || dock === null || typeof ResizeObserver !== "function")
+      return;
+    const ro = new ResizeObserver((entries) => {
+      const e = entries[entries.length - 1];
+      if (e === undefined) return;
+      const h = e.borderBoxSize?.[0]?.blockSize ?? e.contentRect.height;
+      host.style.setProperty("--dock-h", `${Math.ceil(h)}px`);
+    });
+    ro.observe(dock);
+    return () => ro.disconnect();
+  }, [hasLayout]);
   const [focusEntry, setFocusEntry] = useState<string | null>(null);
 
   const viewRefs = useRef(new Map<View, HTMLButtonElement>());
@@ -289,6 +342,7 @@ export function App({ store }: { store: GameStore }) {
             <p className="app-loading">Loading your factory…</p>
           ) : (
             <div
+              ref={layoutRef}
               className={`layout ${layout.layout}`}
               data-panes={panes}
               data-view={shown}
@@ -415,7 +469,7 @@ export function App({ store }: { store: GameStore }) {
                   />
                 </div>
               )}
-              <div className={layout.dock} data-dock-slot>
+              <div ref={dockRef} className={layout.dock} data-dock-slot>
                 <PowerDock store={store} snapshot={s} taps={view.taps} pending={view.pending} />
               </div>
             </div>

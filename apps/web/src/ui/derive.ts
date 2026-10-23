@@ -48,6 +48,8 @@ export interface RowModel {
   netPerSecond: number;
   /** P-1. */
   satisfaction: number;
+  /** The display solve's production, items/s: the sweep's and the conveyor's speed (S-14). */
+  production: number;
   tag: ItemStateTag;
   /** True when the item's priority entry is paused. */
   paused: boolean;
@@ -130,6 +132,7 @@ export function laneRows(
       name: item.name,
       netPerSecond: s.schedule.items[item.id]?.netPerSecond ?? 0,
       satisfaction: satisfaction(solution, item.id),
+      production: solution.itemRates.get(item.id)?.production ?? 0,
       tag: itemStateTag(content, s.display.state, item.id),
       paused: state.priority.some((e) => e.itemId === item.id && e.paused),
       idle: isIdle(solution, item.id),

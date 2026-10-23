@@ -112,14 +112,20 @@ button {
   font-size: var(--fs-2);
 }
 
+/* The one live region; its visible notices are in .notice-list, so an announcement alone
+   (visually hidden) takes no room. */
 .notices {
+  position: relative;
+}
+
+.notice-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-bottom: 10px;
 }
 
-.notices:empty {
+.notice-list:empty {
   display: none;
 }
 

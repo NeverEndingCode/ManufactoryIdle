@@ -44,36 +44,33 @@ export function Notices({ store, view, bottleneck }: NoticesProps) {
     shown.push({ kind: "bottleneck", text: bottleneck.text });
 
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      aria-atomic="false"
-      className="notices"
-      // The hidden announcement alone takes no room.
-      style={shown.length === 0 ? { marginBottom: 0 } : undefined}
-    >
-      {shown.map((n) => (
-        <div key={n.kind} className="notice" data-notice={n.kind}>
-          <span>{n.text}</span>
-          {n.kind === "guest-expired" && (
-            <button type="button" className="btn" onClick={() => void store.newFactory()}>
-              Start a new factory
-            </button>
-          )}
-          {n.kind === "guest-rate-limited" && (
-            <RetryCountdown retryAt={n.retryAt ?? 0} store={store} />
-          )}
-          {TOASTS.has(n.kind as Notice["kind"]) && (
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={() => store.dismiss(n.kind as Notice["kind"])}
-            >
-              Dismiss
-            </button>
-          )}
-        </div>
-      ))}
+    <div role="status" aria-live="polite" aria-atomic="false" className="notices">
+      {/* The visible notices; empty, it takes no room (base.css), so the hidden announcement
+          alone never leaves a margin. */}
+      <div className="notice-list">
+        {shown.map((n) => (
+          <div key={n.kind} className="notice" data-notice={n.kind}>
+            <span>{n.text}</span>
+            {n.kind === "guest-expired" && (
+              <button type="button" className="btn" onClick={() => void store.newFactory()}>
+                Start a new factory
+              </button>
+            )}
+            {n.kind === "guest-rate-limited" && (
+              <RetryCountdown retryAt={n.retryAt ?? 0} store={store} />
+            )}
+            {TOASTS.has(n.kind as Notice["kind"]) && (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => store.dismiss(n.kind as Notice["kind"])}
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
       {said.text !== "" && (
         // Keyed by seq: a new node per announcement, so the same words twice are read twice.
         <span key={said.seq} data-announce style={VISUALLY_HIDDEN}>

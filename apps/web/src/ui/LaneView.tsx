@@ -5,6 +5,7 @@ import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { BottleneckFrame } from "./BottleneckFrame.js";
+import { Conveyor } from "./Conveyor.js";
 import { laneRows, type BottleneckModel } from "./derive.js";
 import { ItemRow } from "./ItemRow.js";
 import styles from "./LaneView.module.css";
@@ -37,6 +38,7 @@ export function LaneView({
   const [notation] = useNotation();
   const rows = useMemo(() => laneRows(snapshot, laneId, notation), [snapshot, laneId, notation]);
   const now = useCallback(() => store.now(), [store]);
+  const production = useMemo(() => rows.reduce((sum, r) => sum + r.production, 0), [rows]);
   return (
     <section
       role="tabpanel"
@@ -44,6 +46,7 @@ export function LaneView({
       aria-labelledby={`lane-tab-${laneId}`}
       className={styles.panel}
     >
+      <Conveyor production={production} />
       <ul className={styles.rows}>
         {rows.map((row) => {
           const framed = bottleneck !== null && bottleneck.itemId === row.itemId;

@@ -86,14 +86,21 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
   return b.every((x) => set.has(x));
 }
 
-/** The drag in progress: the rows' midpoints (without the dragged row) are read once. */
+/** The drag in progress: the rows' midpoints (without the dragged row) are read once. Every y
+ * is a document coordinate (client y + window.scrollY), so a page scroll mid-drag moves the
+ * pointer over the rows instead of shifting where they seem to be. */
 interface DragStart {
   id: string;
   pointerId: number;
   startY: number;
   from: number;
   mids: number[];
+  /** The pointer's last client y, for a scroll with no pointer move. */
+  clientY: number;
 }
+
+/** A client y as a document y. */
+const docY = (clientY: number) => clientY + window.scrollY;
 
 export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: PriorityListProps) {
   const rows = useMemo(() => visiblePriority(snapshot), [snapshot]);
@@ -244,35 +251,58 @@ export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: 
     },
     [],
   );
+  // The page can scroll under a held pointer (a wheel, or the touch scroller): follow it.
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    const onScroll = () => {
+      const d = dragStart.current;
+      if (d === null) return;
+      const y = docY(d.clientY);
+      setDrag({ id: d.id, dy: y - d.startY, to: dropIndex(d.mids, y) });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [dragging]);
 
   const onDown = (e: PointerEvent<HTMLButtonElement>, id: string) => {
     if (e.button !== 0 || confirm !== null) return;
     // Safari and macOS Firefox don't focus a button on pointerdown; Escape needs the focus.
     e.currentTarget.focus();
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    // The midpoints are read once, here: the list doesn't autoscroll during a drag.
+    // The midpoints are read once, here, in document coordinates: the list doesn't autoscroll
+    // during a drag, and a page scroll doesn't move them.
     const mids: number[] = [];
     for (const v of visible) {
       if (v === id) continue;
       const rect = rowRefs.current.get(v)?.getBoundingClientRect();
-      if (rect !== undefined) mids.push(rect.top + rect.height / 2);
+      if (rect !== undefined) mids.push(docY(rect.top + rect.height / 2));
     }
     const from = visible.indexOf(id);
-    dragStart.current = { id, pointerId: e.pointerId, startY: e.clientY, from, mids };
+    dragStart.current = {
+      id,
+      pointerId: e.pointerId,
+      startY: docY(e.clientY),
+      from,
+      mids,
+      clientY: e.clientY,
+    };
     setDrag({ id, dy: 0, to: from });
   };
 
   const onMove = (e: PointerEvent<HTMLButtonElement>) => {
     const d = dragStart.current;
     if (d === null || d.pointerId !== e.pointerId) return;
-    setDrag({ id: d.id, dy: e.clientY - d.startY, to: dropIndex(d.mids, e.clientY) });
+    d.clientY = e.clientY;
+    const y = docY(e.clientY);
+    setDrag({ id: d.id, dy: y - d.startY, to: dropIndex(d.mids, y) });
   };
 
   const onUp = (e: PointerEvent<HTMLButtonElement>) => {
     const d = dragStart.current;
     if (d === null || d.pointerId !== e.pointerId) return;
     endDrag();
-    move(d.id, dropIndex(d.mids, e.clientY));
+    move(d.id, dropIndex(d.mids, docY(e.clientY)));
   };
 
   /** pointercancel, or capture lost without a pointerup (released, or the handle went away):

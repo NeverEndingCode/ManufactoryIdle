@@ -28,7 +28,60 @@
 }
 
 .panel {
+  position: relative;
+  isolation: isolate;
   border-top: var(--hairline) solid var(--line);
+}
+
+/* S-14: the conveyor sits behind the rows at 7%, never competing with text. It clips its own
+   translateX, or the strip (twice the panel's width) would widen the page at 320 px. */
+.conveyor {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  opacity: 0.07;
+  pointer-events: none;
+}
+
+.belt {
+  position: absolute;
+  top: calc(50% - 6px);
+  left: 0;
+  display: flex;
+  width: 200%;
+  height: 12px;
+  transform: translateX(-50%);
+}
+
+.half {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.block {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--t1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .belt {
+    animation: conveyor var(--conveyor-period) linear infinite;
+  }
+}
+
+/* Left to right (S-14): the second half slides into the first's place. */
+@keyframes conveyor {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 .rows {

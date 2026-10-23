@@ -648,9 +648,14 @@ function AssignSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
         <span data-unassigned>{`${free} unassigned`}</span>
       </div>
       {move !== null && moveActions !== null && (
-        <button type="button" className="btn" onClick={() => assign(moveActions)}>
+        // Computed from the server's counts: while any stepper's hold is pending it would
+        // undo or double that step, so it waits.
+        <Guarded
+          off={sec.assign.some((r) => pend.held(keyOf(r.recipeId)))}
+          onPress={() => assign(moveActions)}
+        >
           {`Move ${move.n} idle ${classLabel(s, sec.machineClass, move.n)} to ${nameOf(move.to)}`}
-        </button>
+        </Guarded>
       )}
       <ul className={styles.list}>
         {sec.assign.map((r) => {

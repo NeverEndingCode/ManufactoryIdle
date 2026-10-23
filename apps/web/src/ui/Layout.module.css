@@ -7,8 +7,9 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   /* The sheet's tallest; the column reserves it while the sheet is open (vh, then dvh). */
   --sheet-max: 60vh;
-  /* The fixed power dock's height; the column reserves it below the last rows. */
-  --dock-h: 96px;
+  /* The fixed power dock's height; the column reserves it below the last rows. App measures
+     the dock with a ResizeObserver and sets it inline; this is the fallback without one. */
+  --dock-h: 6rem;
   display: grid;
   gap: 12px 20px;
   min-width: 0;
@@ -140,7 +141,6 @@
   left: 0;
   z-index: 20;
   box-sizing: border-box;
-  min-height: var(--dock-h);
   padding-bottom: var(--safe-bottom);
   border-top: var(--hairline) solid var(--line);
   background: var(--bg);
