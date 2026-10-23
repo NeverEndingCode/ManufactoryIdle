@@ -58,6 +58,8 @@ let fakeGetStatus: number | null = null;
 /** While set, a POST /api/actions with a non-TAP action reaches the server, then its Response
  * waits for this gate. Unlike rig.fetch.hold it never matches a TAP flush, whichever lands first. */
 let gateSpends: Promise<void> | null = null;
+/** While set, a GET /api/content/* waits for this gate, after calling `contentEntered`. */
+let gateContent: { gate: Promise<void>; entered: () => void } | null = null;
 
 function resetKnobs() {
   log = [];
@@ -68,6 +70,7 @@ function resetKnobs() {
   repin = null;
   fakeGetStatus = null;
   gateSpends = null;
+  gateContent = null;
 }
 
 afterEach(async () => {
@@ -104,10 +107,22 @@ function storeFor(tokens: TokenStorage): GameStore {
       });
     }
     if (url.startsWith("/api/content/")) {
+      if (gateContent !== null) {
+        const { gate, entered } = gateContent;
+        gateContent = null;
+        entered();
+        await gate;
+      }
       if (failContent) return new Response('{"error":"unknown content"}', { status: 404 });
       if (repin !== null && url === `/api/content/${repin.to}`) {
         return live.fetch(`/api/content/${repin.from}`, init);
       }
+    }
+    if (method === "POST" && url === "/api/actions" && repin !== null) {
+      const res = await live.fetch(url, init);
+      const body = (await res.json()) as Record<string, unknown>;
+      body.contentChecksum = repin.to;
+      return new Response(JSON.stringify(body), { status: res.status });
     }
     if (method === "GET" && url === "/api/world") {
       if (dropGets > 0) {
@@ -885,5 +900,40 @@ describe("GameStore taps, polling and tiers (Q-11, Q-13, Q-18)", () => {
     expect(tapPosts()).toHaveLength(1);
     expect(store.getView().snapshot!.state.tapStacks).toBe(3);
     expect(max).toBe(3);
+  });
+
+  it("32. taps in flight stay counted while the response's new bundle loads", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    const before = store.getView().snapshot!;
+    repin = {
+      from: before.contentChecksum,
+      to: before.contentChecksum.replace(/^./, (c) => (c === "f" ? "e" : "f")),
+    };
+    let open!: () => void;
+    let entered!: () => void;
+    const reached = new Promise<void>((r) => (entered = r));
+    gateContent = { gate: new Promise<void>((r) => (open = r)), entered };
+    const stacks = () => {
+      const v = store.getView();
+      return dockModel(v.snapshot!, v.taps, store.now(), v.pending).stacks;
+    };
+    for (let i = 0; i < 3; i++) {
+      store.pressTap();
+      store.releaseTap();
+    }
+    const advancing = rig.advance(1_000); // the flush fires; its response waits on the bundle
+    await reached;
+    expect(store.getView().snapshot).toBe(before); // not adopted yet
+    expect(stacks()).toBe(3);
+    store.pressTap(); // any emit: the old snapshot doesn't have the 3 yet
+    expect(stacks()).toBe(4);
+    store.releaseTap();
+    open();
+    await advancing;
+    await store.idle();
+    expect(store.getView().snapshot!.contentChecksum).toBe(repin.to);
+    // The 3 are in the snapshot now and no longer pending: never counted twice.
+    expect(stacks()).toBeLessThanOrEqual(4);
   });
 });

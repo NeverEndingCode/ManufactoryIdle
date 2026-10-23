@@ -4,6 +4,7 @@ import {
   D,
   liquid,
   MAX_ACTION_COUNT,
+  toCanonical,
   type Action,
   type Effect,
   type IndexedContent,
@@ -11,6 +12,8 @@ import {
 import type { Snapshot } from "../sync/snapshot.js";
 import { fixtureState, freshState, loadSlice, snapshotOf, type Slice } from "./test-fixtures.js";
 import { affordability, creditFor, isSpend, maxAffordableCount, quote, stockAt } from "./quote.js";
+import { shownStock } from "../sync/interpolate.js";
+import { preview } from "./preview.js";
 import { buyAction, drawerModel, type MachineSection } from "./machines.js";
 
 let slice: Slice;
@@ -234,4 +237,26 @@ describe("affordability reads creditFor (S-18)", () => {
     }
     return unaffordableFinite;
   }
+
+  it("8. stock a few ULPs under the cost is short, though cost minus stock rounds to 0", () => {
+    const action: Action = { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1, recipeId: "make_iron_plate" };
+    const base = freshState(slice);
+    const q = quote(slice.content, base, action);
+    const [itemId, cost] = [...q.cost][0]!;
+    const have = cost.times(1 - 4e-16);
+    // The precondition: Decimal's minus can't see the gap, its compare can.
+    expect(cost.gt(have)).toBe(true);
+    expect(cost.minus(have).eq(0)).toBe(true);
+    const zero = (r: Readonly<Record<string, ReturnType<typeof D>>>) => ({ ...r, [itemId]: D(0) });
+    const state = { ...base, stored: { ...base.stored, [itemId]: have }, quantum: zero(base.quantum), bound: zero(base.bound) };
+    expect(creditFor(state, q).has(itemId)).toBe(true);
+    const fed = snapshotOf(slice, state);
+    // The shown stock is the schedule's canonical text, which carries 15 digits.
+    const items = { ...fed.schedule.items, [itemId]: { stock: toCanonical(have), netPerSecond: 1 } };
+    const snap = { ...fed, schedule: { ...fed.schedule, items } };
+    expect(shownStock(snap, itemId, snap.schedule.atMs).lt(cost)).toBe(true);
+    const a = affordability(snap, action, snap.schedule.atMs);
+    expect(a.affordable).toBe(false);
+    expect(preview(snap, [action]).ok).toBe(true);
+  });
 });

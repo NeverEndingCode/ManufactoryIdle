@@ -8,6 +8,7 @@ import {
   applyBatch,
   initialWorld,
   installedMachines,
+  laneClassKey,
   resolve,
   type Action,
   type ItemId,
@@ -67,27 +68,33 @@ function reorders(s: Snapshot): Action[] {
   return out;
 }
 
-/** The lane-class's section, fresh from the snapshot. */
-function sectionFor(s: Snapshot, lane: string, machineClass: string): MachineSection {
-  return sections(s).find((x) => x.lane === lane && x.machineClass === machineClass)!;
+/** One lane-class's drawer section, from an item one of its recipes makes; null when no
+ * machine is installed there. Builds one drawerModel, not one per lane-class. */
+function sectionOf(s: Snapshot, ids: readonly string[]): MachineSection | null {
+  const first = s.content.recipes.get(ids[0]!);
+  if (!first || installedMachines(s.display.state, first.lane, first.machineClass) === 0) {
+    return null;
+  }
+  for (const id of ids) {
+    const item: ItemId = s.content.recipes.get(id)!.primaryOutput;
+    if (!s.content.items.has(item)) continue;
+    const sec = drawerModel(s, item).machines;
+    if (sec && sec.lane === first.lane && sec.machineClass === first.machineClass) return sec;
+  }
+  return null;
 }
 
-/** Each installed lane-class's drawer section, from an item one of its recipes makes. */
+/** The lane-class's section, fresh from the snapshot: only its own drawerModel is built. */
+function sectionFor(s: Snapshot, lane: string, machineClass: string): MachineSection {
+  return sectionOf(s, s.content.recipesByLaneClass.get(laneClassKey(lane, machineClass)) ?? [])!;
+}
+
+/** Each installed lane-class's drawer section. */
 function sections(s: Snapshot): MachineSection[] {
   const out: MachineSection[] = [];
   for (const ids of s.content.recipesByLaneClass.values()) {
-    const first = s.content.recipes.get(ids[0]!);
-    if (!first || installedMachines(s.display.state, first.lane, first.machineClass) === 0)
-      continue;
-    for (const id of ids) {
-      const item: ItemId = s.content.recipes.get(id)!.primaryOutput;
-      if (!s.content.items.has(item)) continue;
-      const sec = drawerModel(s, item).machines;
-      if (sec && sec.lane === first.lane && sec.machineClass === first.machineClass) {
-        out.push(sec);
-        break;
-      }
-    }
+    const sec = sectionOf(s, ids);
+    if (sec) out.push(sec);
   }
   return out;
 }

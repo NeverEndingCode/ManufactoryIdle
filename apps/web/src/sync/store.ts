@@ -151,8 +151,7 @@ export class GameStore {
       authHeader: () => this.#authHeader(),
       baseVersion: () => this.#snapshot?.stateVersion ?? 0,
       onOutcome: async (b, o) => {
-        if (o.kind === "adopt") this.#settlingId = b.id;
-        await this.#handle(o, "post", this.#clock.now());
+        await this.#handle(o, "post", this.#clock.now(), b.id);
       },
       isPaused: () => Math.max(0, this.#pausedUntil - this.#clock.now()),
       onChange: () => {
@@ -574,11 +573,16 @@ export class GameStore {
   }
 
   /** One handler for every response, GET and POST alike (W-11). */
-  async #handle(o: Outcome, cause: Cause, receivedAt: number): Promise<Adoption | void> {
+  async #handle(
+    o: Outcome,
+    cause: Cause,
+    receivedAt: number,
+    settling?: number,
+  ): Promise<Adoption | void> {
     if (this.#stopped) return;
     switch (o.kind) {
       case "adopt":
-        return this.#adopt(o.body, cause, receivedAt);
+        return this.#adopt(o.body, cause, receivedAt, settling);
       case "rejected":
         this.#failures = 0;
         this.#setNotice({ kind: "rejected", text: o.body.reason });
@@ -634,7 +638,12 @@ export class GameStore {
   }
 
   /** Content first (a re-pin loads the new bundle, W-5), then the ordering check (W-6). */
-  async #adopt(body: WorldResponse, cause: Cause, receivedAt: number): Promise<Adoption> {
+  async #adopt(
+    body: WorldResponse,
+    cause: Cause,
+    receivedAt: number,
+    settling?: number,
+  ): Promise<Adoption> {
     let next: Snapshot;
     try {
       const content = await this.#content.get(body.contentChecksum);
@@ -663,6 +672,8 @@ export class GameStore {
       return "stale";
     }
     const prev = this.#snapshot;
+    // From the swap on, the snapshot counts this batch's actions: the view stops listing it.
+    if (settling !== undefined) this.#settlingId = settling;
     this.#snapshot = next;
     this.#repoll = nextRepoll(this.#repoll, next, cause);
     // Q-13: the one celebration W-18 allows.

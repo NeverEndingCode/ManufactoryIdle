@@ -6,6 +6,8 @@ import {
   D,
   DECIMAL_ZERO,
   format,
+  liquid,
+  SPEND_RESIDUAL_TOLERANCE,
   scheduleDetail,
   type Action,
   type Bottleneck,
@@ -65,11 +67,17 @@ function compute(s: Snapshot, actions: readonly Action[]): Preview {
   const credited = q === null || credit.size === 0 ? base : creditedState(base, q);
   const r = applyBatch(credited, s.content, actions, base.seed);
   if (r.rejected) return { ok: false, reason: r.reason };
-  // A short item the action also refunds can only be credited to `bound`, which leaves a
+  // A credited item the action also refunds can only be credited to `bound`, which leaves a
   // residue of a few ULPs in its liquid stock after the spend. The purchase at the moment it
-  // becomes affordable drains it to exactly zero, so snap it there: EMPTY, not FLOWING.
+  // becomes affordable drains every credited item to exactly zero, so snap a residue there:
+  // EMPTY, not FLOWING. A residue past SPEND_RESIDUAL_TOLERANCE is a bug, not rounding.
   let snapped = r.state;
   for (const itemId of credit.keys()) {
+    const residue = liquid(snapped, itemId);
+    if (residue.lte(DECIMAL_ZERO)) continue;
+    if (residue.gt(q!.cost.get(itemId)!.times(SPEND_RESIDUAL_TOLERANCE))) {
+      throw new Error(`preview: "${itemId}" is left with a residue of ${residue.toString()}`);
+    }
     snapped = {
       ...snapped,
       stored: { ...snapped.stored, [itemId]: DECIMAL_ZERO },
