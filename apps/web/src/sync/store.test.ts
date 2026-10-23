@@ -934,6 +934,6 @@ describe("GameStore taps, polling and tiers (Q-11, Q-13, Q-18)", () => {
     await store.idle();
     expect(store.getView().snapshot!.contentChecksum).toBe(repin.to);
     // The 3 are in the snapshot now and no longer pending: never counted twice.
-    expect(stacks()).toBeLessThanOrEqual(4);
+    expect(stacks()).toBe(4);
   });
 });

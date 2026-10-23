@@ -97,7 +97,7 @@ export function appInfoFor(apiDomain: string, websiteDomain: string) {
     apiDomain,
     websiteDomain,
     apiBasePath: "/auth" as const,
-    // Where the web client mounts the pre-built UI's routes; reset-password mail links use it.
+    // Where the web client mounts its account routes; reset-password mail links use it.
     websiteBasePath: "/account" as const,
   };
 }

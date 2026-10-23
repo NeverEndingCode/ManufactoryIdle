@@ -59,6 +59,11 @@ function relativeChange(d: RateDelta): number {
   return Math.abs(d.after - d.before) / Math.max(Math.abs(d.before), RATE_TOLERANCE);
 }
 
+/** A broken invariant in compute: the drawer shows "preview unavailable" instead of crashing. */
+class PreviewInvariantError extends Error {}
+
+export const PREVIEW_UNAVAILABLE = "preview unavailable";
+
 function compute(s: Snapshot, actions: readonly Action[]): Preview {
   const base = s.display.state;
   const spend = actions.find(isSpend);
@@ -76,7 +81,7 @@ function compute(s: Snapshot, actions: readonly Action[]): Preview {
     const residue = liquid(snapped, itemId);
     if (residue.lte(DECIMAL_ZERO)) continue;
     if (residue.gt(q!.cost.get(itemId)!.times(SPEND_RESIDUAL_TOLERANCE))) {
-      throw new Error(`preview: "${itemId}" is left with a residue of ${residue.toString()}`);
+      throw new PreviewInvariantError(`preview: "${itemId}" is left with a residue of ${residue.toString()}`);
     }
     snapped = {
       ...snapped,
@@ -126,7 +131,14 @@ export function preview(s: Snapshot, actions: readonly Action[]): Preview {
   const key = JSON.stringify(actions);
   const hit = bySnapshot.get(key);
   if (hit !== undefined) return hit;
-  const p = compute(s, actions);
+  let p: Preview;
+  try {
+    p = compute(s, actions);
+  } catch (err) {
+    if (!(err instanceof PreviewInvariantError)) throw err;
+    console.error(err.message);
+    p = { ok: false, reason: PREVIEW_UNAVAILABLE };
+  }
   bySnapshot.set(key, p);
   return p;
 }
