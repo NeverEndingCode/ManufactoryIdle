@@ -8,6 +8,7 @@ import { BottleneckFrame } from "./BottleneckFrame.js";
 import { laneRows, type BottleneckModel } from "./derive.js";
 import { ItemRow } from "./ItemRow.js";
 import styles from "./LaneView.module.css";
+import { useNotation } from "./notation.js";
 
 export interface LaneViewProps {
   store: Pick<GameStore, "now" | "send">;
@@ -32,7 +33,11 @@ export function LaneView({
   onOpen,
   onSplit,
 }: LaneViewProps) {
-  const rows = useMemo(() => laneRows(snapshot, laneId), [snapshot, laneId]);
+  // The rows' cap text is formatted inside laneRows (fmt reads the notation store), so the
+  // notation is a memo key the rule can't see (S-11).
+  const [notation] = useNotation();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const rows = useMemo(() => laneRows(snapshot, laneId), [snapshot, laneId, notation]);
   const now = useCallback(() => store.now(), [store]);
   return (
     <section

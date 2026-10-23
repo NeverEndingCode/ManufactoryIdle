@@ -85,6 +85,9 @@ describe("LaneView", () => {
       expect(t.tabIndex).toBe(0);
       expect(document.activeElement).toBe(t);
     };
+    // Tab past the header's buttons (4c: Handbook, Settings) to the lanes' one tab stop.
+    await user.tab();
+    await user.tab();
     await user.tab();
     expectOn(/Iron/);
     await user.keyboard("{ArrowRight}");
@@ -104,6 +107,9 @@ describe("LaneView", () => {
     const user = userEvent.setup();
     mount(fakeStore(tier8));
     await user.tab();
+    await user.tab();
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: /Iron/ }));
     await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
     expect(screen.getByRole("tab", { name: /Iron/ }).getAttribute("aria-selected")).toBe("true");
     await user.keyboard("{Control>}{ArrowRight}{/Control}");

@@ -5,7 +5,6 @@ import {
   applyBatch,
   D,
   DECIMAL_ZERO,
-  format,
   liquid,
   SPEND_RESIDUAL_TOLERANCE,
   scheduleDetail,
@@ -20,6 +19,7 @@ import {
   type WorldState,
 } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
+import { fmt } from "./notation.js";
 import { rateText } from "./derive.js";
 import { creditedState, creditFor, isSpend, quote } from "./quote.js";
 
@@ -144,7 +144,7 @@ export function preview(s: Snapshot, actions: readonly Action[]): Preview {
 }
 
 function mw(n: number): string {
-  return format(D(n), "hybrid");
+  return fmt(D(n));
 }
 
 function powerChanged(p: { before: PowerReport; after: PowerReport }): boolean {

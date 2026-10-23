@@ -6,7 +6,6 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   D,
   DECIMAL_ZERO,
-  format,
   type Action,
   type Dec,
   type ItemId,
@@ -31,6 +30,7 @@ import {
   type MachineSection,
 } from "./machines.js";
 import { Guarded } from "./Guarded.js";
+import { fmt } from "./notation.js";
 import { Projection } from "./Projection.js";
 import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
@@ -220,7 +220,7 @@ function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<I
             className={isShort ? styles["state-bottleneck"] : undefined}
           >
             <span>{itemName(s, itemId)}</span>
-            <span className="num">{format(need, "hybrid")}</span>
+            <span className="num">{fmt(need)}</span>
           </li>
         );
       })}
@@ -336,7 +336,7 @@ function BuySection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
       </div>
       {sec.ladder !== null && (
         <p data-ladder className={styles.ladder}>
-          <span className="num">{`Ladder ×${format(D(sec.ladder.multiplier), "hybrid")}`}</span>
+          <span className="num">{`Ladder ×${fmt(D(sec.ladder.multiplier))}`}</span>
           <span className="num">{sec.ladder.text}</span>
         </p>
       )}
@@ -401,7 +401,7 @@ function UpgradeSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
 
 function refundText(s: Snapshot, q: Quote): string {
   if (q.refund.size === 0) return "no refund";
-  const parts = [...q.refund].map(([id, v]) => `${format(v, "hybrid")} ${itemName(s, id)}`);
+  const parts = [...q.refund].map(([id, v]) => `${fmt(v)} ${itemName(s, id)}`);
   // C.5: a refund lands in Quantum Storage first, then BOUND.
   return `refunds ${parts.join(", ")}; to Quantum Storage first, then BOUND`;
 }
@@ -563,8 +563,8 @@ function Level<A extends Action>({
       </div>
       <div className={`${styles.kv} num`}>
         {sec.nextCap === null
-          ? `Cap ${format(sec.cap, "hybrid")}, the maximum`
-          : `Cap ${format(sec.cap, "hybrid")} → ${format(sec.nextCap, "hybrid")}`}
+          ? `Cap ${fmt(sec.cap)}, the maximum`
+          : `Cap ${fmt(sec.cap)} → ${fmt(sec.nextCap)}`}
       </div>
       <Spend ctx={ctx} action={sec.buy} verb={verb} text="+1" ariaLabel={`${title} +1`} />
     </div>

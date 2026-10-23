@@ -5,7 +5,6 @@ import {
   assignedTotal,
   bestUnlockedMark,
   D,
-  format,
   getMark,
   installedAt,
   installedMachines,
@@ -27,6 +26,7 @@ import {
   type WorldState,
 } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
+import { currentNotation, fmt } from "./notation.js";
 import { className as classLabel } from "./derive.js";
 
 type UpgradeMark = Extract<Action, { type: "UPGRADE_MARK" }>;
@@ -150,7 +150,7 @@ export function ladderProgress(
   const more = Math.ceil((nextAt - input) / bestDef.rateMultiplier);
   const multiplier = ladderMultiplier(s.content, s.display.state, lane, machineClass);
   const nextMultiplier = softcap(powIntNumber(step, steps + 1), s.content.bundle.softcaps.ladder);
-  const text = `${more} more ${classLabel(s, machineClass, more)} → ×${format(D(nextMultiplier / multiplier), "hybrid")}`;
+  const text = `${more} more ${classLabel(s, machineClass, more)} → ×${fmt(D(nextMultiplier / multiplier))}`;
   return { input, nextAt, more, multiplier, nextMultiplier, text };
 }
 
@@ -291,7 +291,8 @@ function qsSection(s: Snapshot, itemId: ItemId, lane: LaneId): LevelSection<BuyQ
   );
 }
 
-const memo = new WeakMap<Snapshot, Map<ItemId, DrawerModel>>();
+/** Per snapshot, then per (notation, item): the sections carry formatted text (S-11). */
+const memo = new WeakMap<Snapshot, Map<string, DrawerModel>>();
 
 export function drawerModel(s: Snapshot, itemId: ItemId): DrawerModel {
   let bySnapshot = memo.get(s);
@@ -299,7 +300,8 @@ export function drawerModel(s: Snapshot, itemId: ItemId): DrawerModel {
     bySnapshot = new Map();
     memo.set(s, bySnapshot);
   }
-  const hit = bySnapshot.get(itemId);
+  const key = `${currentNotation()}:${itemId}`;
+  const hit = bySnapshot.get(key);
   if (hit !== undefined) return hit;
   const item = s.content.items.get(itemId);
   if (!item) throw new Error(`drawerModel: unknown item "${itemId}"`);
@@ -312,7 +314,7 @@ export function drawerModel(s: Snapshot, itemId: ItemId): DrawerModel {
     storage: storageSection(s, itemId),
     qs: qsSection(s, itemId, item.lane),
   };
-  bySnapshot.set(itemId, m);
+  bySnapshot.set(key, m);
   return m;
 }
 

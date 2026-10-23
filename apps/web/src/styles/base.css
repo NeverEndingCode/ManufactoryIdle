@@ -41,6 +41,7 @@ button {
 
 .app-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 6px 2px 12px;
@@ -52,6 +53,39 @@ button {
   font-size: var(--fs-1);
   font-weight: var(--fw-strong);
   letter-spacing: 0.14em;
+}
+
+/* Below 600 px the title is its initials; the full name stays the heading's aria-label. */
+.title-short {
+  display: none;
+}
+
+@media (max-width: 599px) {
+  .title-full {
+    display: none;
+  }
+
+  .title-short {
+    display: inline;
+  }
+}
+
+/* The header's 44 px buttons: the chip (S-12), Handbook and Settings. They wrap to their own
+   line rather than push the page sideways at 320 px. */
+.app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.app-actions .btn {
+  min-width: 44px;
+}
+
+.btn.chip {
+  border-radius: 999px;
 }
 
 /* The tier readout (Q-13): the tier and next milestone, one compact line per requirement. */

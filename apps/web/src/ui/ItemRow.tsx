@@ -1,11 +1,12 @@
 // F.1's three-line row: name and net rate; the storage bar with shown / cap; the QS and BOUND
 // chips. Then the satisfaction meter, or the split bar on a contested item.
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { format, type ItemId } from "@manufactory/engine";
+import type { ItemId } from "@manufactory/engine";
 import { shownStock, storageFraction, storageTransition } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import { rateText, stateClass, type RowModel } from "./derive.js";
 import styles from "./ItemRow.module.css";
+import { fmt } from "./notation.js";
 import { useTick, useTickSource } from "./use-tick.js";
 
 export interface ItemRowProps {
@@ -55,10 +56,10 @@ export function ItemRow({ row, snapshot, now, onOpen, expanded = false, onSplit 
       {(row.quantum !== null || row.bound !== null) && (
         <div className={styles.chips}>
           {row.quantum !== null && (
-            <span className={`${styles.chip} num`}>{`QS ${format(row.quantum, "hybrid")}`}</span>
+            <span className={`${styles.chip} num`}>{`QS ${fmt(row.quantum)}`}</span>
           )}
           {row.bound !== null && (
-            <span className={`${styles.chip} num`}>{`BOUND ${format(row.bound, "hybrid")}`}</span>
+            <span className={`${styles.chip} num`}>{`BOUND ${fmt(row.bound)}`}</span>
           )}
         </div>
       )}
@@ -92,11 +93,7 @@ function LiveStock({
   now: () => number;
 }) {
   useTick();
-  return (
-    <span data-stock>
-      {format(shownStock(snapshot, itemId, serverNow(snapshot, now())), "hybrid")}
-    </span>
-  );
+  return <span data-stock>{fmt(shownStock(snapshot, itemId, serverNow(snapshot, now())))}</span>;
 }
 
 function prefersReducedMotion(): boolean {

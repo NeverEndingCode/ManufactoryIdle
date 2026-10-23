@@ -5,7 +5,6 @@ import {
   bestUnlockedMark,
   D,
   DECIMAL_ZERO,
-  format,
   isLiveRecipe,
   itemStateTag,
   liquidCap,
@@ -21,6 +20,7 @@ import {
 } from "@manufactory/engine";
 import { isPlateaued, storageFraction } from "../sync/interpolate.js";
 import type { Snapshot } from "../sync/snapshot.js";
+import { fmt } from "./notation.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
 
@@ -31,7 +31,7 @@ export type FrameAction =
 
 /** "+0.333/s": a net rate, signed when positive. */
 export function rateText(net: number): string {
-  return `${net > 0 ? "+" : ""}${format(D(net), "hybrid")}/s`;
+  return `${net > 0 ? "+" : ""}${fmt(D(net))}/s`;
 }
 
 /** The label every bottleneck-buy batch carries; the button is busy while one is pending. */
@@ -128,7 +128,7 @@ export function laneRows(s: Snapshot, laneId: LaneId): RowModel[] {
       tag: itemStateTag(content, s.display.state, item.id),
       paused: state.priority.some((e) => e.itemId === item.id && e.paused),
       idle: isIdle(solution, item.id),
-      capText: format(liquidCap(content, state, item.id), "hybrid"),
+      capText: fmt(liquidCap(content, state, item.id)),
       quantum: nonZero(own(state.quantum, item.id)),
       bound: nonZero(own(state.bound, item.id)),
       split: splitOf(s, item.id),

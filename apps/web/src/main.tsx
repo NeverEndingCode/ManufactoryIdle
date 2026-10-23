@@ -9,6 +9,7 @@ import { browserTokenStorage } from "./sync/identity.js";
 import type { ClientClock } from "./sync/snapshot.js";
 import { GameStore } from "./sync/store.js";
 import { App } from "./ui/App.js";
+import { applyTheme, storedTheme } from "./ui/theme.js";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
@@ -54,6 +55,9 @@ window.addEventListener("online", () => store.onOnline());
 if (document.visibilityState === "hidden") syncVisibility();
 
 void store.start();
+
+// S-11: the stored theme before the first paint, so a light player never sees a dark flash.
+applyTheme(storedTheme());
 
 createRoot(root).render(
   <StrictMode>

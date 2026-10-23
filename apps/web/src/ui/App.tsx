@@ -1,7 +1,8 @@
-// The shell: the header, the notices, then the W-19 panes (Q-7). The lanes pane (tabs and the
-// visible lane), the detail pane (the drawer, or a hint), the priority list and the dock slot
-// (Task 5). The store is created and started outside React (main.tsx).
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+// The shell: the header, the notices, then the route (S-10): the W-19 panes (Q-7) or the
+// reset-password page. The lanes pane (tabs and the visible lane), the detail pane (the
+// drawer, or a hint), the priority list and the dock slot. The settings sheet (S-11) is state,
+// not a route. The store is created and started outside React (main.tsx).
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ItemId, LaneId } from "@manufactory/engine";
 import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
@@ -13,7 +14,11 @@ import styles from "./LaneView.module.css";
 import { AnnounceContext, createAnnouncer } from "./announce.js";
 import { Notices } from "./Notices.js";
 import { PowerDock } from "./PowerDock.js";
+import { useNotation } from "./notation.js";
 import { PriorityList } from "./PriorityList.js";
+import { ResetPassword } from "./ResetPassword.js";
+import { useRoute } from "./route.js";
+import { Settings, type SettingsProps } from "./Settings.js";
 import { TierReadout } from "./TierReadout.js";
 import { usePanes } from "./use-panes.js";
 import { createTickSource, TickContext } from "./use-tick.js";
@@ -45,8 +50,58 @@ function tabTarget(e: KeyboardEvent, i: number, n: number): number | null {
   }
 }
 
+type SheetAt = Pick<SettingsProps, "section" | "mode">;
+
+/** S-12: the "Save your factory" chip, from the first milestone on, for a guest only. */
+function showsChip(view: ReturnType<typeof useGame>): boolean {
+  return (
+    view.accounts === "on" &&
+    view.identity === "guest" &&
+    view.snapshot !== null &&
+    view.snapshot.state.tier >= 1
+  );
+}
+
 export function App({ store }: { store: GameStore }) {
   const view = useGame(store);
+  const [route, navigate] = useRoute();
+  // Every number goes through fmt(): a notation change re-renders the tree (S-11).
+  useNotation();
+  const [sheet, setSheet] = useState<SheetAt | null>(null);
+  const appRef = useRef<HTMLDivElement>(null);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  /** The control that opened the sheet; focus goes back to it, else to Settings. */
+  const sheetOpener = useRef<HTMLElement | null>(null);
+  const returnFocus = useRef(false);
+  const openSheet = (at: SheetAt, opener: HTMLElement | null) => {
+    sheetOpener.current = opener;
+    setSheet(at);
+  };
+  const closeSheet = () => {
+    returnFocus.current = true;
+    setSheet(null);
+  };
+  // S-11: while the sheet is open the background is inert (React 18 has no prop for it), all
+  // but the notices: their live region keeps speaking (a sign-in's outcome lands there). Every
+  // commit, since the panes can mount while it is open. Focus returns once inert is gone.
+  useLayoutEffect(() => {
+    const app = appRef.current;
+    if (app === null) return;
+    for (const el of Array.from(app.children)) {
+      if (el.hasAttribute("data-settings-host") || el.classList.contains("notices")) continue;
+      if (sheet !== null) el.setAttribute("inert", "");
+      else el.removeAttribute("inert");
+    }
+    if (sheet === null && returnFocus.current) {
+      returnFocus.current = false;
+      const back = sheetOpener.current;
+      sheetOpener.current = null;
+      (back !== null && back.isConnected && back !== document.body
+        ? back
+        : settingsButton.current
+      )?.focus();
+    }
+  });
   const ticks = useMemo(() => createTickSource(store), [store]);
   const announcer = useMemo(() => createAnnouncer(), []);
   const s = view.snapshot;
@@ -125,17 +180,70 @@ export function App({ store }: { store: GameStore }) {
     <AnnounceContext.Provider value={announcer}>
       <TickContext.Provider value={ticks}>
         <div
+          ref={appRef}
           className="app"
+          data-route={route.kind}
           data-sync={view.status}
           data-state-version={s === null ? "" : String(s.stateVersion)}
           data-polling={view.polling ? "armed" : "off"}
         >
           <header className="app-header">
-            <h1>Manufactory Idle</h1>
-            {s !== null && <TierReadout snapshot={s} now={() => store.now()} />}
+            {/* Below 600 px the initials, so the header fits at 320 px. */}
+            <h1 aria-label="Manufactory Idle">
+              <span className="title-full" aria-hidden="true">
+                Manufactory Idle
+              </span>
+              <span className="title-short" aria-hidden="true">
+                MI
+              </span>
+            </h1>
+            {s !== null && route.kind !== "reset-password" && (
+              <TierReadout snapshot={s} now={() => store.now()} />
+            )}
+            <div className="app-actions">
+              {showsChip(view) && (
+                <button
+                  type="button"
+                  className="btn chip"
+                  data-save-chip
+                  onClick={(e) =>
+                    openSheet({ section: "account", mode: "sign-up" }, e.currentTarget)
+                  }
+                >
+                  Save your factory
+                </button>
+              )}
+              {/* Task 5 gives the handbook its view; until then the route shows the game. */}
+              <button
+                type="button"
+                className="btn secondary"
+                data-open-handbook
+                onClick={() => navigate({ kind: "handbook", itemId: null })}
+              >
+                Handbook
+              </button>
+              <button
+                ref={settingsButton}
+                type="button"
+                className="btn secondary"
+                data-open-settings
+                aria-haspopup="dialog"
+                onClick={(e) => openSheet({}, e.currentTarget)}
+              >
+                Settings
+              </button>
+            </div>
           </header>
           <Notices store={store} view={view} bottleneck={bottleneck} />
-          {s === null || laneId === null ? (
+          {route.kind === "reset-password" ? (
+            <ResetPassword
+              store={store}
+              onDone={() => {
+                navigate({ kind: "game" });
+                openSheet({ section: "account", mode: "sign-in" }, null);
+              }}
+            />
+          ) : s === null || laneId === null ? (
             <p className="app-loading">Loading your factory…</p>
           ) : (
             <div
@@ -254,6 +362,7 @@ export function App({ store }: { store: GameStore }) {
               </div>
             </div>
           )}
+          {sheet !== null && <Settings store={store} view={view} {...sheet} onClose={closeSheet} />}
         </div>
       </TickContext.Provider>
     </AnnounceContext.Provider>
