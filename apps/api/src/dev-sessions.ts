@@ -7,9 +7,19 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ServerDeps } from "./server.js";
 import type { SessionVerifier } from "./identity.js";
 
-/** supertokens-node 24.0.3's FDIs, from its CHANGELOG (21.0.0: 3.1, 4.0; 4.1; 23.0.1: 4.2). Re-check
- *  against the repo's frontendDriverInterfaceSupported.json at tag v24.0.3 when bumping. */
-export const NODE_FDI: readonly string[] = ["3.1", "4.0", "4.1", "4.2"];
+/** supertokens-node 24.0.3's FDIs, from the repo's frontendDriverInterfaceSupported.json at tag
+ *  v24.0.3 (the npm tarball ships none). Re-check it there when bumping. */
+export const NODE_FDI: readonly string[] = [
+  "1.17",
+  "1.18",
+  "1.19",
+  "2.0",
+  "3.0",
+  "3.1",
+  "4.0",
+  "4.1",
+  "4.2",
+];
 
 export interface FakeSessions {
   accounts: NonNullable<ServerDeps["accounts"]>;

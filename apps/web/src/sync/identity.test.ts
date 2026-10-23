@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GUEST_TOKEN_KEY } from "./constants.js";
+import { GUEST_TOKEN_KEY, PARKED_GUEST_TOKEN_KEY } from "./constants.js";
 import { browserTokenStorage, memoryTokenStorage } from "./identity.js";
 
 /** A Storage stand-in, no jsdom: a Map behind the four methods the client uses. */
@@ -55,6 +55,24 @@ describe("browserTokenStorage (W-14)", () => {
     expect(ls.map.has("mi.guestToken")).toBe(false);
     // The probe leaves nothing behind.
     expect([...ls.map.keys()]).toEqual([]);
+  });
+});
+
+describe("browserTokenStorage, another key (S-6)", () => {
+  it("keeps the parked token under mi.parkedGuestToken, apart from mi.guestToken", () => {
+    const ls = stubStorage();
+    const tokens = browserTokenStorage(ls);
+    const parked = browserTokenStorage(ls, PARKED_GUEST_TOKEN_KEY);
+    tokens.set("guest");
+    parked.set("parked");
+    expect(PARKED_GUEST_TOKEN_KEY).toBe("mi.parkedGuestToken");
+    expect(Object.fromEntries(ls.map)).toEqual({
+      "mi.guestToken": "guest",
+      "mi.parkedGuestToken": "parked",
+    });
+    parked.clear();
+    expect(tokens.get()).toBe("guest");
+    expect(browserTokenStorage(ls, PARKED_GUEST_TOKEN_KEY).get()).toBeNull();
   });
 });
 

@@ -210,15 +210,13 @@ async function dbRow() {
 }
 
 describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
-  it("1. guest start: health, guests, then content; a second store reuses the token", async () => {
+  it("1. guest start: health first (S-3), then guests and content; a second store reuses the token", async () => {
     const { store, tokens } = await setup();
     const calls = log.map((c) => `${c.method} ${c.url.replace(/[0-9a-f]{64}$/, "<sum>")}`);
     expect([...calls].sort()).toEqual(
       ["GET /api/content/<sum>", "GET /api/health", "POST /api/guests"].sort(),
     );
-    const content = calls.indexOf("GET /api/content/<sum>");
-    expect(calls.indexOf("GET /api/health")).toBeLessThan(content);
-    expect(calls.indexOf("POST /api/guests")).toBeLessThan(content);
+    expect(calls[0]).toBe("GET /api/health");
     expect(tokens.get()).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const view = store.getView();
     expect(view.status).toBe("ready");

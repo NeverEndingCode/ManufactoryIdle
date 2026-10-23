@@ -15,6 +15,43 @@ const webDeps = new Set([
   ...Object.keys(webPackage.dependencies ?? {}),
   ...Object.keys(webPackage.devDependencies ?? {}),
 ]);
+
+const SDK_MESSAGE = "W-15: the SDK lives behind src/auth/ (AccountClient); import that instead";
+
+/** The browser code's import bans. `sdk`: supertokens-web-js is allowed (src/auth/ only). */
+function browserImports({ sdk }) {
+  return {
+    // W-4: bare Node builtins (fs, crypto, fs/promises, ...); `node:` is the regex below.
+    paths: [
+      ...builtinModules
+        .filter((name) => !webDeps.has(name))
+        .map((name) => ({ name, message: "W-4: browser code (a Node builtin)" })),
+      ...(sdk ? [] : [{ name: "supertokens-web-js", message: SDK_MESSAGE }]),
+    ],
+    patterns: [
+      ...(sdk ? [] : [{ group: ["supertokens-web-js/*"], message: SDK_MESSAGE }]),
+      {
+        group: ["@manufactory/content", "@manufactory/content/*"],
+        message:
+          "W-4: browser code never imports @manufactory/content (node:fs, node:crypto); content comes from GET /api/content/:checksum",
+      },
+      {
+        group: ["@manufactory/api", "@manufactory/api/*"],
+        message: "P-13: the API is a test dependency only",
+      },
+      {
+        group: ["@manufactory/sim", "@manufactory/sim/*"],
+        message: "the simulator is a Node app",
+      },
+      { regex: "^node:", message: "browser code" },
+      {
+        group: ["**/test-fixtures*", "**/test-rig*"],
+        message: "test-only helpers (Node, the API): never imported by app code",
+      },
+    ],
+  };
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -150,35 +187,7 @@ export default tseslint.config(
       "apps/web/src/ui/test-fixtures.ts",
     ],
     rules: {
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        {
-          // W-4: bare Node builtins (fs, crypto, fs/promises, ...); `node:` is the regex below.
-          paths: builtinModules
-            .filter((name) => !webDeps.has(name))
-            .map((name) => ({ name, message: "W-4: browser code (a Node builtin)" })),
-          patterns: [
-            {
-              group: ["@manufactory/content", "@manufactory/content/*"],
-              message:
-                "W-4: browser code never imports @manufactory/content (node:fs, node:crypto); content comes from GET /api/content/:checksum",
-            },
-            {
-              group: ["@manufactory/api", "@manufactory/api/*"],
-              message: "P-13: the API is a test dependency only",
-            },
-            {
-              group: ["@manufactory/sim", "@manufactory/sim/*"],
-              message: "the simulator is a Node app",
-            },
-            { regex: "^node:", message: "browser code" },
-            {
-              group: ["**/test-fixtures*", "**/test-rig*"],
-              message: "test-only helpers (Node, the API): never imported by app code",
-            },
-          ],
-        },
-      ],
+      "@typescript-eslint/no-restricted-imports": ["error", browserImports({ sdk: false })],
       "no-restricted-syntax": [
         "error",
         {
@@ -186,6 +195,14 @@ export default tseslint.config(
           message: "Q-17: no dynamic import() in browser code; it bypasses the W-4 import ban",
         },
       ],
+    },
+  },
+  {
+    // W-15: the one place the SDK may be imported.
+    files: ["apps/web/src/auth/**/*.{ts,tsx}"],
+    ignores: ["apps/web/src/**/*.test.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": ["error", browserImports({ sdk: true })],
     },
   },
   prettier,

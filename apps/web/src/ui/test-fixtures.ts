@@ -19,6 +19,7 @@ import {
   type IndexedContent,
   type WorldState,
 } from "@manufactory/engine";
+import type { AuthResult, ResetResult } from "../auth/accounts.js";
 import type { Outcome } from "../sync/errors.js";
 import { makeSnapshot, type Snapshot } from "../sync/snapshot.js";
 import type { Notice, StoreView } from "../sync/store.js";
@@ -109,6 +110,12 @@ export interface FakeStore {
   pressTap: Mock<() => void>;
   releaseTap: Mock<() => void>;
   flushTaps: Mock<(opts?: { keepalive?: boolean }) => void>;
+  /** Task 3's accounts; each resolves with a success unless a test says otherwise. */
+  signUp: Mock<(email: string, password: string) => Promise<AuthResult>>;
+  signIn: Mock<(email: string, password: string) => Promise<AuthResult>>;
+  signOut: Mock<() => Promise<boolean>>;
+  sendReset: Mock<(email: string) => Promise<ResetResult>>;
+  submitNewPassword: Mock<(password: string) => Promise<ResetResult>>;
   set(patch: Partial<StoreView>): void;
   tick(ms: number): void;
   readonly tickers: number;
@@ -123,6 +130,10 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     failures: 0,
     taps: { pending: 0, lastTapAt: null, holding: false },
     polling: snapshot !== null,
+    accounts: "off",
+    identity: "guest",
+    account: null,
+    auth: "idle",
   };
   let clock = opts.now ?? CLIENT_T0;
   const listeners = new Set<() => void>();
@@ -144,6 +155,11 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     pressTap: vi.fn(),
     releaseTap: vi.fn(),
     flushTaps: vi.fn(),
+    signUp: vi.fn((email: string) => Promise.resolve<AuthResult>({ ok: true, email })),
+    signIn: vi.fn((email: string) => Promise.resolve<AuthResult>({ ok: true, email })),
+    signOut: vi.fn(() => Promise.resolve(true)),
+    sendReset: vi.fn(() => Promise.resolve<ResetResult>({ ok: true })),
+    submitNewPassword: vi.fn(() => Promise.resolve<ResetResult>({ ok: true })),
     set(patch) {
       view = { ...view, ...patch };
       act(() => listeners.forEach((fn) => fn()));

@@ -152,7 +152,7 @@ describe("fake sessions", () => {
 
   it("rejects an fdi-version the node SDK does not speak", async () => {
     const { post, form } = await open();
-    const bad = await post("/auth/signup", form("a@example.com", "hunter2hunter2"), { "fdi-version": "1.17" });
+    const bad = await post("/auth/signup", form("a@example.com", "hunter2hunter2"), { "fdi-version": "1.16" });
     expect(bad.statusCode).toBe(400);
     expect(bad.body).toContain("fdi-version mismatch");
     const ok = await post("/auth/signup", form("a@example.com", "hunter2hunter2"), { "fdi-version": "4.2,4.1" });

@@ -23,7 +23,7 @@ describe("ContentCache", () => {
     const [a, b] = await Promise.all([cache.get(checksum), cache.get(checksum)]);
     expect(a).toBe(b);
     expect(contentCalls()).toEqual([
-      { method: "GET", url: `/api/content/${checksum}`, body: undefined },
+      { method: "GET", url: `/api/content/${checksum}`, body: undefined, headers: {} },
     ]);
     // And a later get is served from memory.
     await cache.get(checksum);

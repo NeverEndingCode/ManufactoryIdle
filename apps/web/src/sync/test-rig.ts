@@ -3,7 +3,15 @@
 // Excluded from tsconfig.json and from the browser lint block; it is never bundled.
 import { fileURLToPath } from "node:url";
 import { buildServer, type ServerDeps } from "@manufactory/api/server";
-import { guestAuth, migrate, openContentStore, pgliteDb, type Db } from "@manufactory/api/testing";
+import {
+  guestAuth,
+  identityAuth,
+  migrate,
+  openContentStore,
+  pgliteDb,
+  type Db,
+} from "@manufactory/api/testing";
+import type { AccountClient, AuthResult } from "../auth/accounts.js";
 import type { ClientClock } from "./snapshot.js";
 import type { FetchLike, GuestResponse, WorldResponse } from "./wire.js";
 
@@ -21,7 +29,8 @@ export const CLIENT_T0 = 1_000_000;
 export interface RigFetch extends FetchLike {
   /** The next request reaches the server, then the fetch throws TypeError("network"). */
   dropNextResponse: boolean;
-  calls: { method: string; url: string; body?: unknown }[];
+  /** Every request, with the headers it reached the server with (x-test-user included). */
+  calls: { method: string; url: string; body?: unknown; headers: Record<string, string> }[];
   /** The next matching request reaches the server, but its Response is withheld until release() is called. */
   hold(method: string, url: string): () => void;
   /** Holds registered and not yet released. */
@@ -44,16 +53,23 @@ function parseBody(body: RequestInit["body"]): unknown {
   }
 }
 
-export function injectFetch(app: FastifyInstance): RigFetch {
+/** The simulated session cookie: while `user` is non-null, every request carries
+ * `x-test-user: <user>`, which the sessions rig's verifier reads. */
+export interface RigSession {
+  user: string | null;
+}
+
+export function injectFetch(app: FastifyInstance, session: RigSession = { user: null }): RigFetch {
   const holds: { method: string; url: string; gate: Promise<void> }[] = [];
   let active = 0;
 
   const fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? "GET").toUpperCase();
     const url = pathOf(input);
-    fetch.calls.push({ method, url, body: parseBody(init?.body) });
-
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
+    if (session.user !== null) headers["x-test-user"] = session.user;
+    fetch.calls.push({ method, url, body: parseBody(init?.body), headers });
+
     const res = await app.inject({
       method: method as "GET",
       url,
@@ -165,6 +181,8 @@ export class FakeClientClock implements ClientClock {
 
 export interface TestRig {
   app: FastifyInstance;
+  /** The simulated cookie (injectFetch). Only a `sessions: true` rig's server reads it. */
+  session: RigSession;
   db: Db;
   clock: FakeClientClock;
   serverNow(): number;
@@ -177,7 +195,7 @@ export interface TestRig {
 }
 
 export async function makeRig(
-  opts: { limits?: ServerDeps["limits"]; contentDir?: string } = {},
+  opts: { limits?: ServerDeps["limits"]; contentDir?: string; sessions?: boolean } = {},
 ): Promise<TestRig> {
   const db = await pgliteDb();
   await migrate(db);
@@ -186,18 +204,32 @@ export async function makeRig(
   // clocks at its own due time, never a server clock already at the end of the window.
   const clock = new FakeClientClock();
   const serverNow = () => SERVER_T0 + (clock.now() - CLIENT_T0);
+  // sessions: the API's header-based test verifier (identity.test.ts), and accounts present so
+  // /api/health says accounts: true. No /auth/* routes: rigAccounts stands in for the SDK.
+  const verifySession = async (request: { headers: Record<string, unknown> }) => {
+    const h = request.headers["x-test-user"];
+    return typeof h === "string" ? h : null;
+  };
   const app = buildServer({
     db,
     content,
     clock: serverNow,
-    auth: guestAuth(db),
+    ...(opts.sessions
+      ? {
+          auth: identityAuth({ db, content, clock: serverNow, verifySession }),
+          verifySession,
+          accounts: { register() {}, handleError: async () => false },
+        }
+      : { auth: guestAuth(db) }),
     ...(opts.limits ? { limits: opts.limits } : {}),
   });
   await app.ready();
-  const fetch = injectFetch(app);
+  const session: RigSession = { user: null };
+  const fetch = injectFetch(app, session);
   let closed = false;
   return {
     app,
+    session,
     db,
     clock,
     serverNow,
@@ -232,4 +264,45 @@ export async function guestWorld(
   if (res.status !== 200) throw new Error(`GET /api/world: ${res.status}`);
   const world = (await res.json()) as WorldResponse;
   return { guestToken, world, checksum: world.contentChecksum };
+}
+
+/** An AccountClient over the rig's simulated cookie. signUp/signIn await `gate`, then set
+ * session.user = `u:${email}`; a "wrong" password is wrong-credentials. signOut clears it. */
+export function rigAccounts(
+  rig: TestRig,
+  opts: { gate?: Promise<void> } = {},
+): AccountClient & { calls: string[] } {
+  const calls: string[] = [];
+  const sign = async (name: string, email: string, password: string): Promise<AuthResult> => {
+    calls.push(`${name} ${email}`);
+    await opts.gate;
+    if (password === "wrong") return { ok: false, kind: "wrong-credentials" };
+    rig.session.user = `u:${email}`;
+    return { ok: true, email };
+  };
+  return {
+    calls,
+    init() {
+      calls.push("init");
+    },
+    async hasSession() {
+      calls.push("hasSession");
+      return rig.session.user !== null;
+    },
+    signUp: (email, password) => sign("signUp", email, password),
+    signIn: (email, password) => sign("signIn", email, password),
+    async signOut() {
+      calls.push("signOut");
+      rig.session.user = null;
+      return true;
+    },
+    async sendReset(email) {
+      calls.push(`sendReset ${email}`);
+      return { ok: true };
+    },
+    async submitNewPassword() {
+      calls.push("submitNewPassword");
+      return { ok: true };
+    },
+  };
 }

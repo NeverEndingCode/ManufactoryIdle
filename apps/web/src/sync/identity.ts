@@ -26,11 +26,12 @@ export function memoryTokenStorage(): TokenStorage {
 
 const PROBE_KEY = "mi.storageProbe";
 
-/** localStorage under GUEST_TOKEN_KEY; if any access throws, an in-memory store with
- * persistent: false. Even reading the global can throw (Chrome with site data blocked). A
- * probe write at construction catches storage that reads but can't write (Safari's old
- * private mode); a later throw also falls back, keeping the token. */
-export function browserTokenStorage(arg?: Storage): TokenStorage {
+/** localStorage under `key` (GUEST_TOKEN_KEY, or PARKED_GUEST_TOKEN_KEY for S-6); if any
+ * access throws, an in-memory store with persistent: false. Even reading the global can throw
+ * (Chrome with site data blocked). A probe write at construction catches storage that reads
+ * but can't write (Safari's old private mode); a later throw also falls back, keeping the
+ * token. */
+export function browserTokenStorage(arg?: Storage, key: string = GUEST_TOKEN_KEY): TokenStorage {
   let ls: Storage | undefined;
   try {
     ls = arg ?? (globalThis as { localStorage?: Storage }).localStorage;
@@ -42,7 +43,7 @@ export function browserTokenStorage(arg?: Storage): TokenStorage {
   try {
     ls.setItem(PROBE_KEY, "1");
     ls.removeItem(PROBE_KEY);
-    memory.set(ls.getItem(GUEST_TOKEN_KEY) ?? "");
+    memory.set(ls.getItem(key) ?? "");
     if (memory.get() === "") memory.clear();
   } catch {
     return memoryTokenStorage();
@@ -52,7 +53,7 @@ export function browserTokenStorage(arg?: Storage): TokenStorage {
     get() {
       if (!store.persistent) return memory.get();
       try {
-        return ls.getItem(GUEST_TOKEN_KEY);
+        return ls.getItem(key);
       } catch {
         store.persistent = false;
         return memory.get();
@@ -62,7 +63,7 @@ export function browserTokenStorage(arg?: Storage): TokenStorage {
       memory.set(token);
       if (!store.persistent) return;
       try {
-        ls.setItem(GUEST_TOKEN_KEY, token);
+        ls.setItem(key, token);
       } catch {
         store.persistent = false;
       }
@@ -71,7 +72,7 @@ export function browserTokenStorage(arg?: Storage): TokenStorage {
       memory.clear();
       if (!store.persistent) return;
       try {
-        ls.removeItem(GUEST_TOKEN_KEY);
+        ls.removeItem(key);
       } catch {
         store.persistent = false;
       }

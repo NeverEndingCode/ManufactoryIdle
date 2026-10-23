@@ -1,7 +1,8 @@
-// The GameStore (W-6, W-9, W-11, W-14): one framework-free store that owns the snapshot, the
-// one boundary timer, the outbox and the guest identity. React reads it through
-// useSyncExternalStore (use-game.ts).
+// The GameStore (W-6, W-9, W-11, W-14 to W-16): one framework-free store that owns the
+// snapshot, the one boundary timer, the outbox and the identity (a guest token or a session).
+// React reads it through useSyncExternalStore (use-game.ts).
 import type { Action } from "@manufactory/engine";
+import type { AccountClient, AuthResult, ResetResult } from "../auth/accounts.js";
 import {
   MIN_REPOLL_MS,
   OFFLINE_AFTER_FAILURES,
@@ -14,7 +15,7 @@ import {
 } from "./constants.js";
 import { ContentCache } from "./content-cache.js";
 import { classify, type Outcome } from "./errors.js";
-import type { TokenStorage } from "./identity.js";
+import { memoryTokenStorage, type TokenStorage } from "./identity.js";
 import { newIdempotencyKey } from "./ids.js";
 import { isPlateaued } from "./interpolate.js";
 import { MIN_WAIT_MS, Outbox, type Batch } from "./outbox.js";
@@ -40,11 +41,16 @@ export interface Notice {
     | "accounts-unavailable"
     | "ephemeral-token"
     | "plateau"
-    | "tier-up";
+    | "tier-up"
+    | "account-has-factory"
+    | "signed-out"
+    | "session-ended";
   text: string;
   /** guest-rate-limited: the ClientClock time a retry may succeed. */
   retryAt?: number;
 }
+
+export type Identity = "unknown" | "guest" | "session";
 
 export interface StoreView {
   status: SyncStatus;
@@ -58,12 +64,23 @@ export interface StoreView {
   taps: { pending: number; lastTapAt: number | null; holding: boolean };
   /** The boundary timer is armed (Q-18). Mirrored as data-polling="armed|off". */
   polling: boolean;
+  /** GET /api/health's accounts flag; "unknown" until health answers (S-3). */
+  accounts: "unknown" | "off" | "on";
+  identity: Identity;
+  /** Signed in: the email when this tab signed in, else null. */
+  account: { email: string | null } | null;
+  /** "held": a sign-in is in progress (S-4); "claiming": the claim is retrying (S-5). */
+  auth: "idle" | "held" | "claiming";
 }
 
 export interface GameStoreDeps {
   fetch: FetchLike;
   clock: ClientClock;
   tokens: TokenStorage;
+  /** S-6: the guest token parked while signed in. Default: memory. */
+  parked?: TokenStorage;
+  /** W-15: initialised only when health says accounts: true. Omitted: guest-only. */
+  accounts?: AccountClient;
   random?: Pick<Crypto, "getRandomValues"> & Partial<Pick<Crypto, "randomUUID">>;
 }
 
@@ -74,7 +91,21 @@ const TEXT = {
   "guest-rate-limited": "Too many new factories from this address. Try again shortly.",
   "accounts-unavailable": "Accounts are unavailable right now.",
   "ephemeral-token": "This factory will be lost when the tab closes.",
+  "account-has-factory":
+    "This account already has a factory. Your guest factory is kept on this device: sign out to return to it.",
+  "signed-out": "Signed out. Sign in to return to your saved factory.",
+  "session-ended": "Your session ended. Sign in to return to your saved factory.",
 } as const;
+
+const UNAVAILABLE = { ok: false, kind: "unavailable" } as const;
+
+/** Notices about one world, dropped when the store moves to another (#resetWorld). */
+const WORLD_NOTICES = new Set<Notice["kind"]>([
+  "guest-expired",
+  "guest-rate-limited",
+  "plateau",
+  "tier-up",
+]);
 
 function plateauText(offlineCapMs: number): string {
   const hours = offlineCapMs / 3_600_000;
@@ -88,6 +119,8 @@ export class GameStore {
   readonly #fetch: FetchLike;
   readonly #clock: ClientClock;
   readonly #tokens: TokenStorage;
+  readonly #parked: TokenStorage;
+  readonly #accounts: AccountClient | undefined;
   readonly #content: ContentCache;
   readonly #outbox: Outbox;
   readonly #random: GameStoreDeps["random"];
@@ -121,6 +154,24 @@ export class GameStore {
   /** The ephemeral-token banner was raised once; a dismissed one doesn't come back. */
   #ephemeralShown = false;
 
+  // Identity (S-3 to S-7). Nothing world-shaped is sent while it is "unknown" (before health
+  // answers) or while #auth isn't "idle" (a sign-in, its claim, or a sign-out is deciding).
+  #accountsState: StoreView["accounts"] = "unknown";
+  #identity: Identity = "unknown";
+  #account: StoreView["account"] = null;
+  #auth: StoreView["auth"] = "idle";
+  /** The one boot (health, then identity) in flight; a second start() joins it. */
+  #booting: Promise<void> | null = null;
+  #bootTimer: number | null = null;
+  #bootRetries = 0;
+  /** The one GET in flight, for the hold to wait on. */
+  #getRun: Promise<void> | null = null;
+  /** A sign-in succeeded and its claim (S-5) is not decided yet. */
+  #claimPending = false;
+  #claimRun: Promise<void> | null = null;
+  #claimTimer: number | null = null;
+  #claimRetries = 0;
+
   // The tap (Q-11). Two timers, both on the ClientClock: the 10 Hz repeat while held, and
   // the one flush timer, which is never due before #lastFlushAt + TAP_FLUSH_EVERY_MS.
   readonly #taps: TapAccumulator;
@@ -142,6 +193,8 @@ export class GameStore {
     this.#fetch = d.fetch;
     this.#clock = d.clock;
     this.#tokens = d.tokens;
+    this.#parked = d.parked ?? memoryTokenStorage();
+    this.#accounts = d.accounts;
     this.#content = new ContentCache(d.fetch);
     this.#random = d.random;
     this.#taps = new TapAccumulator(() => d.clock.now(), d.clock.now());
@@ -192,19 +245,20 @@ export class GameStore {
 
   // ---- lifecycle ----
 
-  /** First load: health ║ (token ? GET : POST /api/guests) → content(checksum) → snapshot. */
+  /** First load (S-3): health → (accounts: init, hasSession) → session ? GET : token ? GET :
+   * POST /api/guests → content(checksum) → snapshot. A restart resumes the identity it has. */
   start(): Promise<void> {
     this.#stopped = false;
     this.#checkPersistence();
-    this.#outbox.start();
+    if (this.#identity !== "unknown" && this.#auth === "idle") this.#outbox.start();
     // stop() cleared the flush timer; the taps it left pending still go out.
     if (this.#taps.pending > 0 && !this.#holding) {
       this.#armFlush(Math.max(this.#clock.now(), this.#lastFlushAt + TAP_FLUSH_EVERY_MS));
     }
     this.#armTick();
-    this.#track(this.#loadHealth());
-    if (this.#tokens.get() !== null) this.#wantGet(true);
-    else this.#createGuest();
+    if (this.#identity === "unknown") this.#bootOnce();
+    else if (this.#claimPending) this.#claimOnce();
+    else if (this.#auth === "idle") this.#resume();
     return this.idle();
   }
 
@@ -217,6 +271,10 @@ export class GameStore {
     this.#clearTick();
     if (this.#guestTimer !== null) this.#clock.clearTimeout(this.#guestTimer);
     this.#guestTimer = null;
+    if (this.#bootTimer !== null) this.#clock.clearTimeout(this.#bootTimer);
+    this.#bootTimer = null;
+    if (this.#claimTimer !== null) this.#clock.clearTimeout(this.#claimTimer);
+    this.#claimTimer = null;
     this.#holding = false;
     this.#clearRepeat();
     this.#clearFlush();
@@ -368,9 +426,9 @@ export class GameStore {
     this.#emit();
     const key = newIdempotencyKey(this.#random);
     const auth = this.#authHeader();
-    // No identity, or a 429/503 pause: a request now would only be refused. The outbox holds
-    // the batch under this key and sends it when the pause ends.
-    if (auth === null || this.#pausedUntil > this.#clock.now()) {
+    // No identity, a sign-in deciding (S-4), or a 429/503 pause: a request now would be refused
+    // or reach the wrong world. The outbox holds the batch under this key and sends it later.
+    if (!this.#hasIdentity() || this.#auth !== "idle" || this.#pausedUntil > this.#clock.now()) {
       void this.#outbox.enqueue([action], TAP_LABEL, { key });
       return;
     }
@@ -385,7 +443,10 @@ export class GameStore {
         try {
           const res = await this.#fetch("/api/actions", {
             method: "POST",
-            headers: { "content-type": "application/json", authorization: auth },
+            headers: {
+              "content-type": "application/json",
+              ...(auth === null ? {} : { authorization: auth }),
+            },
             body: JSON.stringify(body),
             keepalive: true,
           }).catch(() => null);
@@ -405,18 +466,252 @@ export class GameStore {
   /** After guest-expired (or a refused guest creation): drop the token, POST /api/guests. */
   newFactory(): Promise<void> {
     this.#tokens.clear();
+    this.#resetWorld();
+    this.#emit();
+    this.#createGuest();
+    return this.idle();
+  }
+
+  /** Forgets the world on screen: the next one is another world (a new guest, a claim's 409,
+   * a sign-out), which isAdoptable must not compare with this one. */
+  #resetWorld(): void {
     this.#halted = false;
     this.#snapshot = null;
     this.#repoll = { streak: 0 };
     this.#notFound = 0;
-    this.#clearBoundary();
+    this.#getRetries = 0;
+    this.#settlingId = null;
+    this.#clearBoundary(false);
     this.#clearDeferred();
-    this.#notices = this.#notices.filter(
-      (n) => n.kind !== "guest-expired" && n.kind !== "guest-rate-limited" && n.kind !== "plateau",
-    );
+    this.#notices = this.#notices.filter((n) => !WORLD_NOTICES.has(n.kind));
+  }
+
+  // ---- accounts (W-15, W-16, S-4 to S-7) ----
+
+  signUp(email: string, password: string): Promise<AuthResult> {
+    return this.#signIn((c) => c.signUp(email, password));
+  }
+
+  signIn(email: string, password: string): Promise<AuthResult> {
+    return this.#signIn((c) => c.signIn(email, password));
+  }
+
+  /** S-7: back to the parked guest, or a new one. False (the session kept) when the server
+   * couldn't be reached. */
+  async signOut(): Promise<boolean> {
+    const client = this.#client();
+    if (client === null || this.#identity !== "session" || this.#auth !== "idle") return false;
+    await this.#hold();
+    let ok: boolean;
+    try {
+      ok = await client.signOut();
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      this.#release();
+      return false;
+    }
+    this.#leaveSession("signed-out");
+    return true;
+  }
+
+  sendReset(email: string): Promise<ResetResult> {
+    const client = this.#client();
+    return client === null ? Promise.resolve(UNAVAILABLE) : client.sendReset(email);
+  }
+
+  submitNewPassword(password: string): Promise<ResetResult> {
+    const client = this.#client();
+    return client === null ? Promise.resolve(UNAVAILABLE) : client.submitNewPassword(password);
+  }
+
+  #client(): AccountClient | null {
+    return this.#accountsState === "on" && this.#accounts ? this.#accounts : null;
+  }
+
+  /** S-4: hold, sign in, then claim (S-5) or release. Resolves with the sign-in's result; the
+   * claim runs on (idle() waits for it). */
+  async #signIn(call: (c: AccountClient) => Promise<AuthResult>): Promise<AuthResult> {
+    const client = this.#client();
+    if (client === null || this.#identity !== "guest" || this.#auth !== "idle") return UNAVAILABLE;
+    const drained = this.#hold();
+    let result: AuthResult;
+    try {
+      result = await call(client);
+    } catch {
+      result = UNAVAILABLE;
+    }
+    await drained;
+    if (!result.ok) {
+      this.#release();
+      return result;
+    }
+    this.#identity = "session";
+    this.#account = { email: result.email };
+    this.#claimPending = true;
+    this.#claimRetries = 0;
     this.#emit();
-    this.#createGuest();
-    return this.idle();
+    this.#claimOnce();
+    return result;
+  }
+
+  /** S-4: from now until #release(), nothing world-shaped is sent. The tap hold ends and its
+   * taps join the outbox; the boundary timer and GET triggers stop; the outbox stops (a
+   * batch whose response lands later stays at the head and resends with its key). Resolves
+   * once the GET, guest creation and outbox attempt in flight have landed. */
+  async #hold(): Promise<void> {
+    this.#auth = "held";
+    if (this.#holding) {
+      this.#holding = false;
+      this.#clearRepeat();
+    }
+    const tap = this.#take();
+    if (tap !== null) void this.#outbox.enqueue([tap], TAP_LABEL);
+    this.#outbox.stop();
+    this.#clearBoundary(false);
+    this.#clearDeferred();
+    this.#emit();
+    await Promise.allSettled([this.#outbox.idle(), this.#getRun, this.#guesting]);
+  }
+
+  /** A failed sign-in or sign-out: everything resumes as it was. */
+  #release(): void {
+    this.#auth = "idle";
+    this.#emit();
+    if (this.#stopped) return;
+    this.#outbox.start();
+    this.#arm();
+    this.#wantGet(false);
+  }
+
+  #claimOnce(): void {
+    if (this.#stopped || this.#claimRun !== null || this.#claimTimer !== null) return;
+    const run: Promise<void> = this.#claim().finally(() => {
+      if (this.#claimRun === run) this.#claimRun = null;
+    });
+    this.#claimRun = run;
+    this.#track(run);
+  }
+
+  /** S-5: POST /api/auth/claim { guestToken } under the new session (no Authorization),
+   * retried while held until it answers. Without a guest token there is nothing to claim. */
+  async #claim(): Promise<void> {
+    const guestToken = this.#tokens.get();
+    if (guestToken === null) {
+      this.#settleClaim();
+      this.#outbox.clear({ kind: "unauthorized" });
+      this.#resetWorld();
+      this.#afterClaim();
+      return;
+    }
+    let outcome: Outcome;
+    try {
+      outcome = await classify(
+        await this.#fetch("/api/auth/claim", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ guestToken }),
+        }).catch(() => null),
+      );
+    } catch {
+      outcome = { kind: "retry" };
+    }
+    const receivedAt = this.#clock.now();
+    // The token moves happen even after stop(): the server has decided, and start() resumes.
+    switch (outcome.kind) {
+      case "adopt":
+        // 200: the same player, now the account's, so the held batches' keys still match.
+        this.#tokens.clear();
+        this.#settleClaim();
+        if (this.#stopped) return;
+        await this.#adopt(outcome.body, "get", receivedAt);
+        this.#afterClaim();
+        return;
+      case "unauthorized":
+        // 401: the cookie didn't stick. A failed sign-in: stay a guest.
+        this.#settleClaim();
+        this.#identity = "guest";
+        this.#account = null;
+        this.#setNotice({ kind: "client-bug", text: TEXT["client-bug"] }, false);
+        this.#release();
+        return;
+      case "retry":
+      case "paused": {
+        // A network error, a 5xx, a 503, a 429: the same claim again, still held.
+        if (this.#stopped) return;
+        this.#auth = "claiming";
+        this.#failures += 1;
+        const step = RETRY_STEPS_MS[Math.min(this.#claimRetries++, RETRY_STEPS_MS.length - 1)]!;
+        const wait = outcome.kind === "paused" ? Math.max(step, outcome.retryAfterMs) : step;
+        this.#claimTimer = this.#clock.setTimeout(() => {
+          this.#claimTimer = null;
+          this.#claimOnce();
+        }, wait);
+        this.#emit();
+        return;
+      }
+      default:
+        // 404 unknown-guest: the guest is gone. 409 already-has-world: park the token, never
+        // delete it (S-6). Any other 4xx is a bug: park too, so no world is ever lost.
+        if (outcome.kind === "no-world") this.#tokens.clear();
+        else this.#park(guestToken);
+        this.#settleClaim();
+        // Batches made for the guest's world must never reach the account's.
+        this.#outbox.clear({ kind: "unauthorized" });
+        this.#resetWorld();
+        if (outcome.kind === "rejected") {
+          this.#setNotice(
+            { kind: "account-has-factory", text: TEXT["account-has-factory"] },
+            false,
+          );
+        } else if (outcome.kind === "client-bug") {
+          console.error(`claim: ${outcome.status}`, outcome.body);
+          this.#setNotice({ kind: "client-bug", text: TEXT["client-bug"] }, false);
+        }
+        this.#afterClaim();
+    }
+  }
+
+  #settleClaim(): void {
+    this.#claimPending = false;
+    this.#claimRetries = 0;
+    this.#auth = "idle";
+  }
+
+  /** The claim is decided: the outbox resumes under the session, and the world loads. */
+  #afterClaim(): void {
+    this.#emit();
+    if (this.#stopped) return;
+    this.#outbox.start();
+    if (this.#snapshot === null) this.#wantGet(true);
+    else this.#arm();
+  }
+
+  /** S-6: at most one guest token across both keys. An occupied park is never overwritten. */
+  #park(token: string): void {
+    if (this.#parked.get() === null) this.#parked.set(token);
+    this.#tokens.clear();
+  }
+
+  /** S-7: a sign-out, or a lost session. Back to the parked guest, or a new one. The account's
+   * batches never reach the guest's world. */
+  #leaveSession(kind: "signed-out" | "session-ended"): void {
+    this.#outbox.clear({ kind: "unauthorized" });
+    this.#identity = "guest";
+    this.#account = null;
+    this.#auth = "idle";
+    this.#resetWorld();
+    const parked = this.#parked.get();
+    if (parked !== null) {
+      this.#tokens.set(parked);
+      this.#parked.clear();
+    }
+    this.#setNotice({ kind, text: TEXT[kind] }, false);
+    this.#emit();
+    if (this.#stopped) return;
+    this.#outbox.start();
+    this.#resume();
   }
 
   /** Nothing in flight: no request, no adoption, no content load (P-9). It does NOT wait for
@@ -436,10 +731,24 @@ export class GameStore {
 
   // ---- requests ----
 
+  /** W-14: `Guest <token>`, or nothing under a session (the cookie is the identity). */
   #authHeader(): string | null {
+    if (this.#identity === "session") return null;
     const token = this.#tokens.get();
     this.#checkPersistence();
     return token === null ? null : `Guest ${token}`;
+  }
+
+  #hasIdentity(): boolean {
+    return (
+      this.#identity === "session" || (this.#identity === "guest" && this.#tokens.get() !== null)
+    );
+  }
+
+  /** The identity is known: GET it, or make a guest. */
+  #resume(): void {
+    if (this.#identity === "session" || this.#tokens.get() !== null) this.#wantGet(true);
+    else this.#createGuest();
   }
 
   #track(p: Promise<unknown>): void {
@@ -448,16 +757,78 @@ export class GameStore {
     void tracked.finally(() => this.#work.delete(tracked));
   }
 
-  async #loadHealth(): Promise<void> {
+  #bootOnce(): void {
+    if (this.#stopped || this.#booting !== null || this.#bootTimer !== null) return;
+    const booting: Promise<void> = this.#boot().finally(() => {
+      if (this.#booting === booting) this.#booting = null;
+    });
+    this.#booting = booting;
+    this.#track(booting);
+  }
+
+  /** S-3: health first (retried on RETRY_STEPS_MS, counted toward offline), then the SDK and
+   * its session, then the identity. Nothing world-shaped is sent before health answers. */
+  async #boot(): Promise<void> {
+    let health: HealthResponse | null = null;
     try {
-      const res = await this.#fetch("/api/health");
-      if (!res.ok) return;
-      const health = (await res.json()) as HealthResponse;
-      // Warm the cache: on the common path the world pins the same bundle.
-      await this.#content.get(health.contentChecksum).catch(() => {});
+      const res = await this.#fetch("/api/health").catch(() => null);
+      if (res !== null && res.ok) {
+        const body = (await res.json()) as unknown;
+        if (typeof body === "object" && body !== null) health = body as HealthResponse;
+      }
     } catch {
-      // Health only warms the cache; the world request reports the real failure.
+      health = null;
     }
+    if (this.#stopped) return;
+    if (health === null) {
+      this.#failures += 1;
+      const step = RETRY_STEPS_MS[Math.min(this.#bootRetries++, RETRY_STEPS_MS.length - 1)]!;
+      this.#bootTimer = this.#clock.setTimeout(() => {
+        this.#bootTimer = null;
+        this.#bootOnce();
+      }, step);
+      this.#emit();
+      return;
+    }
+    this.#failures = 0;
+    this.#bootRetries = 0;
+    // Warm the cache: on the common path the world pins the same bundle.
+    this.#track(this.#content.get(health.contentChecksum).catch(() => {}));
+    let session = false;
+    if (health.accounts === true && this.#accounts) {
+      this.#accountsState = "on";
+      this.#accounts.init();
+      try {
+        session = await this.#accounts.hasSession();
+      } catch {
+        session = false;
+      }
+      if (this.#stopped) return;
+    } else {
+      this.#accountsState = "off";
+    }
+    if (session) {
+      this.#identity = "session";
+      this.#account = { email: null };
+      // S-6: a session and a guest token (a claim cut short): park it, never claim.
+      const token = this.#tokens.get();
+      if (token !== null) {
+        this.#park(token);
+        this.#setNotice({ kind: "account-has-factory", text: TEXT["account-has-factory"] }, false);
+      }
+    } else {
+      this.#identity = "guest";
+      // A parked token only exists while signed in: the session ended while away (S-7).
+      const parked = this.#parked.get();
+      if (parked !== null) {
+        if (this.#tokens.get() === null) this.#tokens.set(parked);
+        this.#parked.clear();
+        this.#setNotice({ kind: "session-ended", text: TEXT["session-ended"] }, false);
+      }
+    }
+    this.#emit();
+    this.#outbox.start();
+    this.#resume();
   }
 
   /** W-14: the banner, once the token lives only in memory. Storage can fail mid-session. */
@@ -528,7 +899,8 @@ export class GameStore {
    * only fire when the snapshot is older than MIN_REPOLL_MS (W-9). */
   #wantGet(force: boolean): void {
     if (this.#stopped || this.#halted || this.#getting) return;
-    if (this.#tokens.get() === null) return;
+    // S-3 and S-4: no identity yet, or a sign-in deciding which world is ours.
+    if (this.#auth !== "idle" || !this.#hasIdentity()) return;
     const now = this.#clock.now();
     if (this.#pausedUntil > now) {
       this.#defer(this.#pausedUntil - now, force);
@@ -537,7 +909,11 @@ export class GameStore {
     if (!force && this.#snapshot && now - this.#snapshot.receivedAt < MIN_REPOLL_MS) return;
     this.#clearDeferred();
     this.#getting = true;
-    this.#track(this.#runGet());
+    const run: Promise<void> = this.#runGet().finally(() => {
+      if (this.#getRun === run) this.#getRun = null;
+    });
+    this.#getRun = run;
+    this.#track(run);
   }
 
   #defer(ms: number, force: boolean): void {
@@ -627,8 +1003,13 @@ export class GameStore {
     }
   }
 
-  /** A 401 on a guest token: the 30-day cleanup deleted it. Polling stops (4a has no session). */
+  /** A 401 on a guest token: the 30-day cleanup deleted it, and polling stops. Under a session
+   * (the SDK's refresh failed): back to a guest, never a wall (S-7). */
   #expire(): void {
+    if (this.#identity === "session") {
+      this.#leaveSession("session-ended");
+      return;
+    }
     this.#halted = true;
     this.#clearBoundary();
     this.#clearDeferred();
@@ -696,7 +1077,13 @@ export class GameStore {
   #arm(): void {
     const was = this.#boundaryTimer !== null;
     this.#clearBoundary(false);
-    if (!this.#stopped && !this.#halted && this.#visible && this.#snapshot) {
+    if (
+      !this.#stopped &&
+      !this.#halted &&
+      this.#auth === "idle" &&
+      this.#visible &&
+      this.#snapshot
+    ) {
       const at = nextFetchAt(this.#snapshot, this.#repoll);
       if (at !== null) {
         this.#boundaryTimer = this.#clock.setTimeout(() => {
@@ -772,6 +1159,10 @@ export class GameStore {
       failures: this.#failures,
       taps: { pending: this.#taps.pending, lastTapAt: this.#lastTapAt, holding: this.#holding },
       polling: this.#boundaryTimer !== null,
+      accounts: this.#accountsState,
+      identity: this.#identity,
+      account: this.#account,
+      auth: this.#auth,
     };
   }
 

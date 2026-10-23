@@ -2,6 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles/tokens.css";
 import "./styles/base.css";
+import { superTokensClient } from "./auth/supertokens.js";
+import { PARKED_GUEST_TOKEN_KEY } from "./sync/constants.js";
+import { browserFetch } from "./sync/fetch.js";
 import { browserTokenStorage } from "./sync/identity.js";
 import type { ClientClock } from "./sync/snapshot.js";
 import { GameStore } from "./sync/store.js";
@@ -18,11 +21,14 @@ const browserClock: ClientClock = {
 };
 
 // Created and started once, outside React: StrictMode's mount, cleanup, mount must not
-// stop and restart it.
+// stop and restart it. fetch is late-bound (S-2): the SDK's init() patches window.fetch after
+// this, and game requests must go through the patched one.
 const store = new GameStore({
-  fetch: window.fetch.bind(window),
+  fetch: browserFetch,
   clock: browserClock,
   tokens: browserTokenStorage(),
+  parked: browserTokenStorage(undefined, PARKED_GUEST_TOKEN_KEY),
+  accounts: superTokensClient(location.origin),
   random: crypto,
 });
 
