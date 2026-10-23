@@ -81,6 +81,30 @@ describe("fake sessions", () => {
     ]);
   });
 
+  it("password rules match the real validator, in order, for sign-up and reset", async () => {
+    const { signUp } = await open();
+    const cases: Array<[string, string]> = [
+      ["short1", "Password must contain at least 8 characters, including a number"],
+      ["a1".repeat(50), "Password's length must be lesser than 100 characters"],
+      ["12345678", "Password must contain at least one alphabet"],
+      ["abcdefgh", "Password must contain at least one number"],
+    ];
+    for (const [pw, error] of cases) {
+      expect((await signUp("c@example.com", pw)).json().formFields).toEqual([{ id: "password", error }]);
+    }
+    expect((await signUp("c@example.com", "a1".repeat(49) + "a")).json().status).toBe("OK");
+  });
+
+  it("reset applies the same password rules", async () => {
+    const { app, signUp, post } = await open();
+    await signUp("a@example.com");
+    await post("/auth/user/password/reset/token", { formFields: [{ id: "email", value: "a@example.com" }] });
+    const path = ((await app.inject({ method: "GET", url: "/auth/dev/reset-link?email=a@example.com" })).json() as { link: string }).link;
+    const token = new URL(path, "http://x").searchParams.get("token")!;
+    const res = await post("/auth/user/password/reset", { formFields: [{ id: "password", value: "12345678" }], token });
+    expect(res.json().formFields).toEqual([{ id: "password", error: "Password must contain at least one alphabet" }]);
+  });
+
   it("sign-in: wrong password, then right", async () => {
     const { signUp, post, form } = await open();
     await signUp("a@example.com", "rightpass1");

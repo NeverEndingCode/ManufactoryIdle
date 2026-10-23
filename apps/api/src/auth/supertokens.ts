@@ -90,12 +90,7 @@ export function passwordResetDelivery(
   };
 }
 
-/** Null when SUPERTOKENS_CONNECTION_URI is unset (R-16). Otherwise API_DOMAIN and
- * WEBSITE_DOMAIN are required (cookieSecure follows apiDomain's scheme, so a missing
- * https API_DOMAIN would drop the cookies' Secure flag), and the SDK is initialized.
- *
- * `supertokens.init` is once per process: a second call is a silent no-op that keeps the
- * first config, so call this once (main.ts). It contacts no core until a request needs it. */
+/** The SuperTokens appInfo for one deployment (S-9, W-26). */
 export function appInfoFor(apiDomain: string, websiteDomain: string) {
   return {
     appName: "Manufactory Idle" as const,
@@ -107,6 +102,12 @@ export function appInfoFor(apiDomain: string, websiteDomain: string) {
   };
 }
 
+/** Null when SUPERTOKENS_CONNECTION_URI is unset (R-16). Otherwise API_DOMAIN and
+ * WEBSITE_DOMAIN are required (cookieSecure follows apiDomain's scheme, so a missing
+ * https API_DOMAIN would drop the cookies' Secure flag), and the SDK is initialized.
+ *
+ * `supertokens.init` is once per process: a second call is a silent no-op that keeps the
+ * first config, so call this once (main.ts). It contacts no core until a request needs it. */
 export function superTokensFromEnv(
   env: Env,
   log: { info: Log; warn: Log } = { info: console.log, warn: console.warn },

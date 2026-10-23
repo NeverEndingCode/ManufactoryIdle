@@ -82,10 +82,14 @@ export function fakeSessions(opts: { clock?: () => number } = {}): FakeSessions 
     const v = fields?.find((f) => f.id === id)?.value;
     return typeof v === "string" ? v : "";
   };
-  const passwordError = (p: string): string | null =>
-    p.length >= 8 && /\d/.test(p)
-      ? null
-      : "Password must contain at least 8 characters, including a number";
+  // Mirrors supertokens-node's defaultPasswordValidator (emailpassword/utils.js); first failure wins.
+  const passwordError = (p: string): string | null => {
+    if (p.length < 8) return "Password must contain at least 8 characters, including a number";
+    if (p.length >= 100) return "Password's length must be lesser than 100 characters";
+    if (!/[A-Za-z]/.test(p)) return "Password must contain at least one alphabet";
+    if (!/[0-9]/.test(p)) return "Password must contain at least one number";
+    return null;
+  };
 
   const accounts: FakeSessions["accounts"] = {
     register(app: FastifyInstance) {
