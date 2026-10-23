@@ -8,6 +8,7 @@ import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
 import { bottleneckRow, unlockedLanes } from "./derive.js";
 import { Drawer } from "./Drawer.js";
+import { Handbook } from "./Handbook.js";
 import layout from "./Layout.module.css";
 import { LaneView } from "./LaneView.js";
 import styles from "./LaneView.module.css";
@@ -23,10 +24,16 @@ import { TierReadout } from "./TierReadout.js";
 import { usePanes } from "./use-panes.js";
 import { createTickSource, TickContext } from "./use-tick.js";
 
-type View = "factory" | "priority";
+type View = "factory" | "priority" | "handbook";
+/** Two and three panes: the handbook takes the detail pane, so the switch has two views. */
 const VIEWS: readonly { id: View; name: string }[] = [
   { id: "factory", name: "Factory" },
   { id: "priority", name: "Priority" },
+];
+/** One pane (W-19): the tab bar's third view is the handbook, which is the route. */
+const VIEWS_ONE_PANE: readonly { id: View; name: string }[] = [
+  ...VIEWS,
+  { id: "handbook", name: "Handbook" },
 ];
 
 const openerOf = (itemId: ItemId) =>
@@ -121,7 +128,11 @@ export function App({ store }: { store: GameStore }) {
   const laneId = lanes.some((l) => l.id === picked) ? picked : (lanes[0]?.id ?? null);
   const tabRefs = useRef(new Map<LaneId, HTMLButtonElement>());
   const panes = usePanes();
-  const [shown, setShown] = useState<View>("factory");
+  const [pane, setPane] = useState<Exclude<View, "handbook">>("factory");
+  const onHandbook = route.kind === "handbook";
+  const views = panes === 1 ? VIEWS_ONE_PANE : VIEWS;
+  // The handbook is a route, not state: below 600 px it is the shown view while it is open.
+  const shown: View = panes === 1 && onHandbook ? "handbook" : pane;
   const [openItem, setOpenItem] = useState<ItemId | null>(null);
   const [focusEntry, setFocusEntry] = useState<string | null>(null);
 
@@ -136,7 +147,16 @@ export function App({ store }: { store: GameStore }) {
   };
 
   const sheetOpen = panes === 1 && shown === "factory" && openItem !== null;
+  /** A drawer on screen: the one the header's Handbook button opens the entry of (§13.4). */
+  const drawerItem = !onHandbook && (panes >= 2 || shown === "factory") ? openItem : null;
   const toggle = (itemId: ItemId) => {
+    // W-19: the handbook holds the detail pane; opening a row's drawer goes back to the game.
+    if (onHandbook) {
+      opened.current = true;
+      setOpenItem(itemId);
+      navigate({ kind: "game" });
+      return;
+    }
     opened.current = openItem !== itemId;
     setOpenItem(openItem === itemId ? null : itemId);
   };
@@ -156,20 +176,30 @@ export function App({ store }: { store: GameStore }) {
   const showEntry = (itemId: ItemId) => {
     const entry = s?.state.priority.find((e) => e.kind === "item" && e.itemId === itemId);
     if (entry === undefined) return;
-    if (panes < 3) setShown("priority");
+    if (panes < 3) setPane("priority");
     setFocusEntry(entry.id);
+  };
+
+  /** Below 600 px the handbook view is its route; Factory or Priority leaves it. */
+  const selectView = (next: View) => {
+    if (next === "handbook") {
+      if (!onHandbook) navigate({ kind: "handbook", itemId: null });
+      return;
+    }
+    setPane(next);
+    if (panes === 1 && onHandbook) navigate({ kind: "game" });
   };
 
   const onViewKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const to = tabTarget(
       e,
-      VIEWS.findIndex((v) => v.id === shown),
-      VIEWS.length,
+      views.findIndex((v) => v.id === shown),
+      views.length,
     );
     if (to === null) return;
     e.preventDefault();
-    const next = VIEWS[to]!.id;
-    setShown(next);
+    const next = views[to]!.id;
+    selectView(next);
     viewRefs.current.get(next)?.focus();
   };
 
@@ -223,12 +253,12 @@ export function App({ store }: { store: GameStore }) {
                   Save your factory
                 </button>
               )}
-              {/* Task 5 gives the handbook its view; until then the route shows the game. */}
               <button
                 type="button"
                 className="btn secondary"
                 data-open-handbook
-                onClick={() => navigate({ kind: "handbook", itemId: null })}
+                // §13.4's context-aware icon: the open drawer's entry, else the index.
+                onClick={() => navigate({ kind: "handbook", itemId: drawerItem })}
               >
                 Handbook
               </button>
@@ -271,7 +301,7 @@ export function App({ store }: { store: GameStore }) {
                   className={panes === 1 ? layout.tabbar : layout.switch}
                   onKeyDown={onViewKey}
                 >
-                  {VIEWS.map((v) => (
+                  {views.map((v) => (
                     <button
                       key={v.id}
                       ref={(el) => {
@@ -285,7 +315,7 @@ export function App({ store }: { store: GameStore }) {
                       // Only the shown view's pane is rendered below three panes.
                       aria-controls={shown === v.id ? `pane-${v.id}` : undefined}
                       className={shown === v.id ? `${layout.view} ${layout.on}` : layout.view}
-                      onClick={() => setShown(v.id)}
+                      onClick={() => selectView(v.id)}
                     >
                       {v.name}
                     </button>
@@ -341,15 +371,31 @@ export function App({ store }: { store: GameStore }) {
                   />
                 </div>
               )}
+              {shown === "handbook" && (
+                <div id="pane-handbook" className={layout.lanes}>
+                  <Handbook
+                    snapshot={s}
+                    itemId={route.kind === "handbook" ? route.itemId : null}
+                    onOpen={(itemId) => navigate({ kind: "handbook", itemId })}
+                  />
+                </div>
+              )}
               {/* One stable spot for the drawer at every width, so a pane-count change
-                re-renders it in place (as a sheet below 600 px) instead of remounting it. */}
+                re-renders it in place (as a sheet below 600 px) instead of remounting it. At two
+                and three panes the handbook takes it while its route is open (W-19). */}
               <div className={panes === 1 ? layout.sheetHost : layout.detail}>
-                {openItem !== null && (panes >= 2 || shown === "factory") ? (
+                {panes >= 2 && route.kind === "handbook" ? (
+                  <Handbook
+                    snapshot={s}
+                    itemId={route.itemId}
+                    onOpen={(itemId) => navigate({ kind: "handbook", itemId })}
+                  />
+                ) : drawerItem !== null ? (
                   <Drawer
-                    key={openItem}
+                    key={drawerItem}
                     store={store}
                     snapshot={s}
-                    itemId={openItem}
+                    itemId={drawerItem}
                     pending={view.pending}
                     onClose={close}
                     sheet={panes === 1}

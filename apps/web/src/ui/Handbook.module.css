@@ -1,0 +1,245 @@
+/* The handbook (S-13): rows, not cards, on the drawer's surface. At 320 px nothing scrolls
+   sideways: names ellipsize, numbers sit in .num spans that never shrink, rows wrap (W-19). */
+.handbook {
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border-radius: 9px;
+  background: var(--s2);
+}
+
+.title {
+  overflow: hidden;
+  margin: 0 0 8px;
+  font-size: var(--fs-1);
+  font-weight: var(--fw-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heading,
+.laneName {
+  margin: 14px 0 6px;
+  color: var(--t2);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-strong);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.search {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  background: var(--s1);
+  color: var(--t1);
+  font: inherit;
+}
+
+.muted {
+  color: var(--t2);
+}
+
+.lane {
+  min-width: 0;
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 4px;
+  border: 0;
+  border-bottom: var(--hairline) solid var(--line);
+  background: none;
+  color: var(--t1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Dimmed, and always labelled in text ("tier N"): colour is never the only signal. */
+.locked {
+  color: var(--t3);
+}
+
+.name {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag {
+  flex: 0 0 auto;
+  color: var(--t3);
+  font-size: var(--fs-3);
+  white-space: nowrap;
+}
+
+.handbook :global(.num) {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.glossary dl {
+  margin: 0;
+}
+
+.term {
+  padding: 6px 0;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.term dt {
+  font-weight: var(--fw-strong);
+}
+
+.term dd {
+  margin: 2px 0 0;
+  color: var(--t2);
+  font-size: var(--fs-2);
+}
+
+.entry {
+  min-width: 0;
+}
+
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--t2);
+  font-size: var(--fs-2);
+}
+
+.line {
+  min-width: 0;
+  padding: 6px 0;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.line p {
+  margin: 0;
+}
+
+.lineHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+
+.lineHead .name {
+  flex: 0 1 auto;
+  font-weight: var(--fw-strong);
+}
+
+.io {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+
+.part {
+  display: inline-flex;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.part .name {
+  flex: 0 1 auto;
+}
+
+.arrow {
+  color: var(--t3);
+}
+
+.chain {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.amounts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chips li {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.chip {
+  overflow: hidden;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 999px;
+  background: none;
+  color: var(--t1);
+  font: inherit;
+  font-size: var(--fs-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chip.locked {
+  color: var(--t3);
+}
+
+.static {
+  display: inline-flex;
+  align-items: center;
+  border-style: dashed;
+  color: var(--t2);
+  cursor: default;
+}
+
+.back {
+  margin-top: 14px;
+}
+
+.srOnly {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

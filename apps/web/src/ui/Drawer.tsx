@@ -32,6 +32,7 @@ import {
 import { Guarded } from "./Guarded.js";
 import { fmt, useNotation } from "./notation.js";
 import { Projection } from "./Projection.js";
+import { navigate, routePath } from "./route.js";
 import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
 import { useTick } from "./use-tick.js";
@@ -149,7 +150,21 @@ export function Drawer({
             {sec.className}
           </span>
         )}
-        <button type="button" className={`btn secondary ${styles.close}`} onClick={onClose}>
+        {/* §13.4's context-aware entry: this item's handbook page. A link, so it can open in a
+          new tab too; a plain click stays in the app. */}
+        <a
+          className={`btn secondary ${styles.close} ${styles.handbookLink}`}
+          href={routePath({ kind: "handbook", itemId })}
+          data-handbook-link
+          onClick={(e) => {
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            navigate({ kind: "handbook", itemId });
+          }}
+        >
+          Handbook entry
+        </a>
+        <button type="button" className="btn secondary" onClick={onClose}>
           Close
         </button>
       </div>

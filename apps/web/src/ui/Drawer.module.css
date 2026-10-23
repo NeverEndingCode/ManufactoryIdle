@@ -58,6 +58,14 @@
   margin-left: auto;
 }
 
+/* "Handbook entry": a link dressed as the secondary button, never underlined. */
+.handbookLink {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  text-decoration: none;
+}
+
 .seg {
   display: flex;
   flex-wrap: wrap;
