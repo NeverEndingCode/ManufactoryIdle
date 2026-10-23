@@ -76,6 +76,12 @@ export function navigate(next: Route): void {
   emit();
 }
 
+/** The same, replacing the history entry (the reset page's used link). */
+export function replaceRoute(next: Route): void {
+  history.replaceState(null, "", routePath(next));
+  emit();
+}
+
 export function useRoute(): [Route, (next: Route) => void] {
   const route = useSyncExternalStore(subscribe, read, () => GAME);
   useEffect(() => {

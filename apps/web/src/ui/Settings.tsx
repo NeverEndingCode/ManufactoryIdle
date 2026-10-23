@@ -1,6 +1,8 @@
 // S-11: the settings sheet, a modal dialog with three sections: notation, theme and account.
-// A bottom sheet below 600 px and a centred panel above. Escape (or Close, or the backdrop)
-// closes it; App makes the background inert and returns focus to the opener.
+// A bottom sheet below 600 px and a centred panel above. Escape (anywhere: it listens on the
+// document), Close or the backdrop closes it. Tab wraps inside it, and focus never falls to
+// <body>: whatever unmounts the focused control, the title takes focus. App makes the
+// background inert and returns focus to the opener.
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { GameStore, StoreView } from "../sync/store.js";
 import { AccountSection, type AccountMode } from "./AccountForms.js";
@@ -13,6 +15,17 @@ const THEMES: readonly { id: ThemeChoice; name: string }[] = [
   { id: "dark", name: "Dark" },
   { id: "light", name: "Light" },
 ];
+
+const TABBABLE = "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])";
+
+function tabbables(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) => {
+    if (el.tabIndex < 0 || el.closest("[inert]") !== null) return false;
+    // A radio group is one stop: only its checked radio is in the Tab order.
+    if (el instanceof HTMLInputElement && el.type === "radio" && !el.checked) return false;
+    return true;
+  });
+}
 
 export interface SettingsProps {
   store: Pick<GameStore, "signUp" | "signIn" | "signOut" | "sendReset">;
@@ -27,6 +40,7 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
   const titleId = useId();
   const accountId = useId();
   const title = useRef<HTMLHeadingElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const [notation, setNotation] = useNotation();
   const [theme, setTheme] = useTheme();
   const [accountMode, setAccountMode] = useState<AccountMode>(mode);
@@ -38,10 +52,39 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Escape on the document, so it still works when the focused control has just unmounted.
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      e.preventDefault();
+      close.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Never on <body>: a sign-in that unmounts its form, "Send another", a mode change. Runs
+  // after the children's own focus effects, so it only catches what they left behind.
+  useEffect(() => {
+    const d = dialog.current;
+    if (d !== null && !d.contains(document.activeElement)) title.current?.focus();
+  });
+
+  /** The Tab wrap: past the last control to the first, before the first to the last. */
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== "Escape") return;
-    e.stopPropagation();
-    onClose();
+    if (e.key !== "Tab" || dialog.current === null) return;
+    const all = tabbables(dialog.current);
+    if (all.length === 0) return;
+    const at = all.indexOf(document.activeElement as HTMLElement);
+    if (e.shiftKey && at <= 0) {
+      e.preventDefault();
+      all[all.length - 1]!.focus();
+    } else if (!e.shiftKey && (at === -1 || at === all.length - 1)) {
+      e.preventDefault();
+      all[0]!.focus();
+    }
   };
 
   return (
@@ -53,6 +96,8 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
       }}
     >
       <div
+        ref={dialog}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

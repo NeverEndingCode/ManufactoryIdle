@@ -17,10 +17,11 @@ import {
   type LaneId,
   type RecipeId,
   type Solution,
+  type NotationMode,
 } from "@manufactory/engine";
 import { isPlateaued, storageFraction } from "../sync/interpolate.js";
 import type { Snapshot } from "../sync/snapshot.js";
-import { fmt } from "./notation.js";
+import { currentNotation, fmt } from "./notation.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
 
@@ -115,7 +116,11 @@ function splitOf(s: Snapshot, itemId: ItemId): RowModel["split"] {
   return parts.length >= 2 ? parts : null;
 }
 
-export function laneRows(s: Snapshot, laneId: LaneId): RowModel[] {
+export function laneRows(
+  s: Snapshot,
+  laneId: LaneId,
+  notation: NotationMode = currentNotation(),
+): RowModel[] {
   const { content, state } = s;
   const solution = s.display.solution;
   return content.bundle.items
@@ -128,7 +133,7 @@ export function laneRows(s: Snapshot, laneId: LaneId): RowModel[] {
       tag: itemStateTag(content, s.display.state, item.id),
       paused: state.priority.some((e) => e.itemId === item.id && e.paused),
       idle: isIdle(solution, item.id),
-      capText: fmt(liquidCap(content, state, item.id)),
+      capText: fmt(liquidCap(content, state, item.id), notation),
       quantum: nonZero(own(state.quantum, item.id)),
       bound: nonZero(own(state.bound, item.id)),
       split: splitOf(s, item.id),

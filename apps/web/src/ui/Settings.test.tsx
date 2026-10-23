@@ -6,7 +6,9 @@ import type { AuthResult, ResetResult } from "../auth/accounts.js";
 import { shownStock } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
+import userEvent from "@testing-library/user-event";
 import { App } from "./App.js";
+import { RESET_SENT } from "./AccountForms.js";
 import { setNotation } from "./notation.js";
 import { setTheme, THEME_KEY } from "./theme.js";
 import {
@@ -54,6 +56,12 @@ const settle = () =>
   act(async () => {
     for (let i = 0; i < 4; i++) await Promise.resolve();
   });
+
+/** The shared region's latest announcement (W-20). */
+const announced = () => document.querySelector("[data-announce]")?.textContent ?? null;
+/** Every live region on the page; W-20 allows exactly one. */
+const liveRegions = () =>
+  document.querySelectorAll('[role="status"], [role="alert"], [aria-live]:not([aria-live="off"])');
 
 function never<T>(): Promise<T> {
   return new Promise<T>(() => {});
@@ -134,7 +142,7 @@ describe("Settings (S-11)", () => {
     expect(dialog.querySelector("input[type=email], input[type=password]")).toBeNull();
   });
 
-  it("5. sign-up and sign-in: the call, field errors, a form alert, and the busy submit", async () => {
+  it("5. sign-up and sign-in: the call, field errors, a form error, and the busy submit", async () => {
     const store = fakeStore(fresh);
     store.set({ accounts: "on" });
     mount(store);
@@ -169,6 +177,9 @@ describe("Settings (S-11)", () => {
     expect(described(email)).toContain("This email already exists. Please sign in instead.");
     expect(described(password)).toContain("Password must contain at least one number");
     expect(email.getAttribute("aria-invalid")).toBe("true");
+    // The first invalid input takes focus (its description is read), and a summary is said.
+    expect(document.activeElement).toBe(email);
+    expect(announced()).toBe("Check the 2 highlighted fields.");
 
     // Pending: the submit is aria-disabled until the promise settles, and a second press is a
     // no-op.
@@ -180,7 +191,7 @@ describe("Settings (S-11)", () => {
     fireEvent.submit(signUp);
     expect(store.signUp).toHaveBeenCalledTimes(2);
 
-    // Sign-in: wrong credentials are a form-level alert.
+    // Sign-in: wrong credentials are a form-level error, announced in the one region.
     cleanup();
     mount(store);
     const d2 = openSettings();
@@ -195,9 +206,11 @@ describe("Settings (S-11)", () => {
     fireEvent.click(within(signIn).getByRole("button", { name: "Sign in" }));
     await settle();
     expect(store.signIn).toHaveBeenCalledWith("a@x.example", "nope12345");
-    expect(within(signIn).getByRole("alert").textContent).toBe(
+    expect(signIn.querySelector("[data-form-error]")!.textContent).toBe(
       "That email and password don't match.",
     );
+    expect(announced()).toBe("That email and password don't match.");
+    expect(liveRegions()).toHaveLength(1);
 
     // The store deciding (held, claiming) keeps the submit busy too.
     store.set({ auth: "held" });
@@ -235,7 +248,11 @@ describe("Settings (S-11)", () => {
     store.signOut.mockResolvedValueOnce(false);
     fireEvent.click(within(dialog).getByRole("button", { name: "Sign out" }));
     await settle();
-    expect(within(dialog).getByRole("alert").textContent).toBe("Couldn't sign out. Try again.");
+    expect(dialog.querySelector("[data-form-error]")!.textContent).toBe(
+      "Couldn't sign out. Try again.",
+    );
+    expect(announced()).toBe("Couldn't sign out. Try again.");
+    expect(liveRegions()).toHaveLength(1);
   });
 
   it("7. the chip: accounts on, a guest, tier 1 or more; it opens the sign-up form", () => {
@@ -318,9 +335,11 @@ describe("Settings (S-11)", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Change password" }));
     expect(store.submitNewPassword).toHaveBeenCalledWith("password2");
     await settle();
-    expect(within(form).getByRole("alert").textContent).toBe(
+    expect(form.querySelector("[data-form-error]")!.textContent).toBe(
       "This link has expired or was already used. Ask for a new one.",
     );
+    expect(announced()).toBe("This link has expired or was already used. Ask for a new one.");
+    expect(liveRegions()).toHaveLength(1);
 
     store.submitNewPassword.mockResolvedValueOnce({
       ok: false,
@@ -333,16 +352,176 @@ describe("Settings (S-11)", () => {
     expect(document.getElementById(describedBy)?.textContent).toBe(
       "Password must contain at least 8 characters",
     );
+    expect(document.activeElement).toBe(input);
+    expect(announced()).toBe("Check the highlighted field.");
 
     fireEvent.click(within(form).getByRole("button", { name: "Change password" }));
     await settle();
     expect(store.submitNewPassword).toHaveBeenCalledTimes(3);
-    expect(screen.getByText("Password changed.")).toBeTruthy();
+    expect(within(screen.getByRole("main")).getByText("Password changed.")).toBeTruthy();
+    expect(announced()).toBe("Password changed.");
+    const entries = history.length;
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(history.length).toBe(entries); // replaced: the used link isn't a back target
     expect(location.pathname).toBe("/");
     expect(location.search).toBe("");
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     expect(within(dialog).getByRole("form", { name: "Sign in" })).toBeTruthy();
+    expect(screen.getByRole("tablist", { name: "Lanes" })).toBeTruthy();
+  });
+});
+
+describe("Fix round 1", () => {
+  it("10. the trap: notice controls behind the sheet are inert, Shift+Tab stays in, the region still speaks", async () => {
+    const user = userEvent.setup();
+    const store = fakeStore(fresh);
+    store.set({ accounts: "on", notices: [{ kind: "rejected", text: "That didn't go through." }] });
+    mount(store);
+    const dismiss = screen.getByRole("button", { name: "Dismiss" });
+    const dialog = openSettings();
+    const title = within(dialog).getByRole("heading", { name: "Settings" });
+    expect(document.activeElement).toBe(title);
+    expect(dismiss.hasAttribute("inert")).toBe(true);
+    const region = document.querySelector('[role="status"]')!;
+    expect(region.closest("[inert]")).toBeNull();
+    expect(region.hasAttribute("inert")).toBe(false);
+
+    await user.tab({ shift: true });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(dismiss);
+    // And forward past the last control wraps to the first.
+    const last = document.activeElement as HTMLElement;
+    await user.tab();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(last);
+
+    // A notice button that appears while the sheet is open is covered too.
+    store.set({
+      notices: [
+        { kind: "rejected", text: "That didn't go through." },
+        { kind: "guest-expired", text: "Gone." },
+      ],
+    });
+    expect(screen.getByRole("button", { name: "Start a new factory" }).hasAttribute("inert")).toBe(
+      true,
+    );
+
+    // The sheet's announcements reach the shared region.
+    store.signIn.mockResolvedValueOnce({ ok: false, kind: "wrong-credentials" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in instead" }));
+    const form = within(dialog).getByRole("form", { name: "Sign in" });
+    fireEvent.click(within(form).getByRole("button", { name: "Sign in" }));
+    await settle();
+    expect(region.querySelector("[data-announce]")?.textContent).toBe(
+      "That email and password don't match.",
+    );
+
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(dismiss.hasAttribute("inert")).toBe(false);
+  });
+
+  it("11. a sign-in that flips identity before resolving: announced, focus on the status line, Escape still closes", async () => {
+    const store = fakeStore(fresh);
+    store.set({ accounts: "on" });
+    // As the real store: identity flips (and emits) before signIn's promise resolves.
+    store.signIn.mockImplementationOnce((email: string) => {
+      store.set({ identity: "session", account: { email } });
+      return Promise.resolve<AuthResult>({ ok: true, email });
+    });
+    mount(store);
+    const dialog = openSettings();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in instead" }));
+    const form = within(dialog).getByRole("form", { name: "Sign in" });
+    fill(form, "Email", "a@x.example");
+    fill(form, "Password", "password1");
+    fireEvent.click(within(form).getByRole("button", { name: "Sign in" }));
+    await settle();
+    expect(form.isConnected).toBe(false);
+    expect(announced()).toBe("Signed in as a@x.example");
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(within(dialog).getByText("Signed in as a@x.example"));
+
+    // Escape listens on the document: it works wherever focus is, even on <body>.
+    act(() => (document.activeElement as HTMLElement).blur());
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(settingsButton());
+  });
+
+  it("12. focus never falls to <body>: Send another, and a sign-out that swaps the section", async () => {
+    const store = fakeStore(fresh);
+    store.set({ accounts: "on" });
+    mount(store);
+    const dialog = openSettings();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in instead" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Forgot password?" }));
+    const reset = within(dialog).getByRole("form", { name: "Reset password" });
+    fill(reset, "Email", "a@x.example");
+    fireEvent.click(within(reset).getByRole("button", { name: "Send reset link" }));
+    await settle();
+    expect(document.activeElement).toBe(within(dialog).getByText(RESET_SENT));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send another" }));
+    expect(document.activeElement).toBe(within(reset).getByLabelText("Email"));
+
+    // Signed in, then out: the Sign out button unmounts; the title takes focus.
+    store.set({ identity: "session", account: { email: null } });
+    const out = within(dialog).getByRole("button", { name: "Sign out" });
+    out.focus();
+    store.set({ identity: "guest", account: null });
+    expect(out.isConnected).toBe(false);
+    expect(document.activeElement).toBe(within(dialog).getByRole("heading", { name: "Settings" }));
+  });
+
+  it("13. the reset page waits for health, and says so when accounts are off", async () => {
+    history.replaceState(null, "", "/account/reset-password?token=t");
+    const store = fakeStore(tier8);
+    store.set({ accounts: "unknown" });
+    mount(store);
+    // The chip never shows on the reset page.
+    expect(screen.queryByRole("button", { name: "Save your factory" })).toBeNull();
+    const form = screen.getByRole("form", { name: "Choose a new password" });
+    expect(within(form).getByText("Checking the server…")).toBeTruthy();
+    const submit = within(form).getByRole("button", { name: "Change password" });
+    expect(submit.getAttribute("aria-disabled")).toBe("true");
+    fill(form, "New password", "password2");
+    fireEvent.click(submit);
+    fireEvent.submit(form);
+    expect(store.submitNewPassword).not.toHaveBeenCalled();
+
+    store.set({ accounts: "on" });
+    expect(within(form).queryByText("Checking the server…")).toBeNull();
+    expect(submit.getAttribute("aria-disabled")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Save your factory" })).toBeNull();
+    fireEvent.click(submit);
+    expect(store.submitNewPassword).toHaveBeenCalledWith("password2");
+
+    store.set({ accounts: "off" });
+    expect(screen.queryByRole("form", { name: "Choose a new password" })).toBeNull();
+    expect(screen.getByText("Accounts aren't enabled on this server.")).toBeTruthy();
+    expect(document.querySelector("input[type=password]")).toBeNull();
+  });
+
+  it("14. a popstate route change switches App between the game and the reset page", () => {
+    const store = fakeStore(fresh);
+    store.set({ accounts: "on" });
+    const { container } = mount(store);
+    const app = () => container.querySelector<HTMLElement>(".app")!;
+    expect(app().dataset.route).toBe("game");
+    expect(screen.getByRole("tablist", { name: "Lanes" })).toBeTruthy();
+    act(() => {
+      history.pushState(null, "", "/account/reset-password?token=t");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(app().dataset.route).toBe("reset-password");
+    expect(screen.queryByRole("tablist", { name: "Lanes" })).toBeNull();
+    expect(screen.getByRole("form", { name: "Choose a new password" })).toBeTruthy();
+    act(() => {
+      history.replaceState(null, "", "/");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(app().dataset.route).toBe("game");
     expect(screen.getByRole("tablist", { name: "Lanes" })).toBeTruthy();
   });
 });

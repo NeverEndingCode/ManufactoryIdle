@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { storageTransition } from "../sync/interpolate.js";
@@ -85,10 +85,8 @@ describe("LaneView", () => {
       expect(t.tabIndex).toBe(0);
       expect(document.activeElement).toBe(t);
     };
-    // Tab past the header's buttons (4c: Handbook, Settings) to the lanes' one tab stop.
-    await user.tab();
-    await user.tab();
-    await user.tab();
+    // The lanes' one tab stop (the header's buttons come before it in the Tab order).
+    act(() => tab(/Iron/).focus());
     expectOn(/Iron/);
     await user.keyboard("{ArrowRight}");
     expectOn(/Power/);
@@ -106,9 +104,7 @@ describe("LaneView", () => {
   it("2c. lane tabs leave modified arrows to the browser", async () => {
     const user = userEvent.setup();
     mount(fakeStore(tier8));
-    await user.tab();
-    await user.tab();
-    await user.tab();
+    act(() => screen.getByRole("tab", { name: /Iron/ }).focus());
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: /Iron/ }));
     await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
     expect(screen.getByRole("tab", { name: /Iron/ }).getAttribute("aria-selected")).toBe("true");

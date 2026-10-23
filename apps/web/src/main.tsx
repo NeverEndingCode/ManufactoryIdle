@@ -14,6 +14,10 @@ import { applyTheme, storedTheme } from "./ui/theme.js";
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
 
+// S-11: the stored theme first, before anything else runs or paints, so a light player never
+// sees a dark flash.
+applyTheme(storedTheme());
+
 /** P-8: the monotonic clock and the window's timers; never the device's wall clock. */
 const browserClock: ClientClock = {
   now: () => performance.now(),
@@ -55,9 +59,6 @@ window.addEventListener("online", () => store.onOnline());
 if (document.visibilityState === "hidden") syncVisibility();
 
 void store.start();
-
-// S-11: the stored theme before the first paint, so a light player never sees a dark flash.
-applyTheme(storedTheme());
 
 createRoot(root).render(
   <StrictMode>

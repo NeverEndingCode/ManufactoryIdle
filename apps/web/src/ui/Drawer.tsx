@@ -30,7 +30,7 @@ import {
   type MachineSection,
 } from "./machines.js";
 import { Guarded } from "./Guarded.js";
-import { fmt } from "./notation.js";
+import { fmt, useNotation } from "./notation.js";
 import { Projection } from "./Projection.js";
 import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
@@ -101,7 +101,8 @@ export function Drawer({
   claimFocus,
 }: DrawerProps) {
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
-  const model = drawerModel(snapshot, itemId);
+  const [notation] = useNotation();
+  const model = drawerModel(snapshot, itemId, notation);
   const tabs = tabsOf(model);
   const [picked, setPicked] = useState<Tab>(tabs[0]!);
   const tab = tabs.includes(picked) ? picked : tabs[0]!;

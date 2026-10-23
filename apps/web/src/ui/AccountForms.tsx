@@ -1,7 +1,9 @@
 // W-16 / S-11: the settings sheet's Account section. Sign-up, sign-in and forgot-password
 // forms, or "Signed in" and Sign out. The forms call the store, never the account client;
 // the store does the hold, the claim and the park (Task 3). Real <form>s with labelled inputs;
-// a field error is described-by from its input, a form error is an alert.
+// a field error is described-by from its input, and the first invalid input takes focus. W-20:
+// one polite live region for the page, so outcomes (a form error, a field summary, signed in)
+// are announced through the shared announcer, never with a role="alert" of their own.
 import {
   useEffect,
   useId,
@@ -10,6 +12,7 @@ import {
   type FormEvent,
   type ReactNode,
   type Ref,
+  type RefObject,
 } from "react";
 import type { AuthField, AuthResult, ResetResult } from "../auth/accounts.js";
 import type { GameStore, StoreView } from "../sync/store.js";
@@ -118,12 +121,42 @@ export function Field({
   );
 }
 
-export function FormAlert({ children }: { children: ReactNode }) {
+/** A form-level error: shown here, announced by whoever sets it (W-20: no second region). */
+export function FormError({ children }: { children: ReactNode }) {
   return (
-    <p role="alert" className={styles.formError}>
+    <p className={styles.formError} data-form-error>
       {children}
     </p>
   );
+}
+
+const FIELD_ORDER: readonly AuthField[] = ["email", "password"];
+
+/** The short line announced with field errors; the focused input's description has the rest. */
+export function fieldSummary(errs: FieldErrors): string | null {
+  const n = FIELD_ORDER.filter((k) => errs[k] !== undefined).length;
+  if (n === 0) return null;
+  return n === 1 ? "Check the highlighted field." : `Check the ${n} highlighted fields.`;
+}
+
+/** Focus the first invalid input after the render that marks it, so its error is read. */
+export function useInvalidFocus(
+  refs: Partial<Record<AuthField, RefObject<HTMLInputElement>>>,
+): (errs: FieldErrors) => void {
+  const [seq, setSeq] = useState(0);
+  const target = useRef<AuthField | null>(null);
+  useEffect(() => {
+    const f = target.current;
+    if (f === null) return;
+    target.current = null;
+    refs[f]?.current?.focus();
+  });
+  return (errs) => {
+    const f = FIELD_ORDER.find((k) => errs[k] !== undefined && refs[k] !== undefined);
+    if (f === undefined) return;
+    target.current = f;
+    setSeq(seq + 1);
+  };
 }
 
 function formErrorOf(r: AuthResult): string | null {
@@ -162,10 +195,29 @@ export function AccountSection({
     setSwitched(true);
     onMode(m);
   };
-  const focus = focusFirst || switched;
+  // After the first commit, a SignedIn that mounts is a sign-in that just succeeded: the form
+  // that had focus is gone, so its status line takes focus.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => setSettled(true), []);
+
+  // The store flips identity (and emits) before signUp/signIn resolve, which unmounts the
+  // form before its own callback could run: the success is announced here, on the flip.
+  const announce = useAnnounce();
+  const was = useRef(view.identity);
+  const email = view.account?.email ?? null;
+  useEffect(() => {
+    if (was.current === "guest" && view.identity === "session")
+      announce(email === null ? "Signed in" : `Signed in as ${email}`);
+    was.current = view.identity;
+  }, [view.identity, email, announce]);
+
+  // A form that mounts because the player signed out takes no focus (the sheet's title does);
+  // one opened at Account or by a mode switch does. `was` still holds the identity before
+  // this commit's flip.
+  const focus = (focusFirst || switched) && was.current === view.identity;
 
   if (view.accounts === "off") return <p className={styles.note}>{ACCOUNTS_OFF}</p>;
-  if (view.identity === "session") return <SignedIn store={store} view={view} />;
+  if (view.identity === "session") return <SignedIn store={store} view={view} focus={settled} />;
   if (view.accounts === "unknown" || view.identity === "unknown")
     return <p className={styles.note}>Checking the server…</p>;
   if (mode === "forgot")
@@ -205,6 +257,8 @@ function SignForm({
   const { pending, run } = useRun();
   const announce = useAnnounce();
   const first = useRef<HTMLInputElement>(null);
+  const second = useRef<HTMLInputElement>(null);
+  const focusInvalid = useInvalidFocus({ email: first, password: second });
   const headingId = useId();
   useEffect(() => {
     if (focus) first.current?.focus();
@@ -220,9 +274,14 @@ function SignForm({
     run(
       () => (kind === "sign-up" ? store.signUp(email, password) : store.signIn(email, password)),
       (r) => {
-        setFields(fieldErrorsOf(r));
-        setFormError(formErrorOf(r));
-        if (r.ok) announce(r.email === "" ? "Signed in" : `Signed in as ${r.email}`);
+        // Success is announced by AccountSection, on the identity flip.
+        const errs = fieldErrorsOf(r);
+        const formError = formErrorOf(r);
+        setFields(errs);
+        setFormError(formError);
+        const said = formError ?? fieldSummary(errs);
+        if (said !== null) announce(said);
+        focusInvalid(errs);
       },
     );
   };
@@ -251,8 +310,9 @@ function SignForm({
         value={password}
         onChange={setPassword}
         error={fields.password}
+        inputRef={second}
       />
-      {formError !== null && <FormAlert>{formError}</FormAlert>}
+      {formError !== null && <FormError>{formError}</FormError>}
       <div className={styles.actions}>
         <Guarded submit off={busy} aria-busy={busy || undefined}>
           {title}
@@ -293,8 +353,12 @@ function ForgotForm({
     if (focus) first.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /** "Send another" unmounts itself: the email field takes focus back. */
+  const again = useRef(false);
   useEffect(() => {
     if (sent) done.current?.focus();
+    else if (again.current) first.current?.focus();
+    again.current = false;
   }, [sent]);
 
   // Whatever the server says (sent, unknown, unreachable), the answer is the same: it never
@@ -322,7 +386,14 @@ function ForgotForm({
             {RESET_SENT}
           </p>
           <div className={styles.actions}>
-            <button type="button" className="btn secondary" onClick={() => setSent(false)}>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => {
+                again.current = true;
+                setSent(false);
+              }}
+            >
               Send another
             </button>
           </div>
@@ -355,16 +426,33 @@ function ForgotForm({
   );
 }
 
-function SignedIn({ store, view }: { store: AccountStore; view: StoreView }) {
+function SignedIn({
+  store,
+  view,
+  focus,
+}: {
+  store: AccountStore;
+  view: StoreView;
+  /** A sign-in just succeeded: take focus from the form that unmounted. */
+  focus: boolean;
+}) {
   const { pending, run } = useRun();
   const [failed, setFailed] = useState(false);
+  const announce = useAnnounce();
+  const status = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (focus) status.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const busy = pending || view.auth !== "idle";
   const email = view.account?.email ?? null;
   return (
     <div className={styles.form}>
-      <p className={styles.signedIn}>{email === null ? "Signed in" : `Signed in as ${email}`}</p>
+      <p ref={status} tabIndex={-1} className={styles.signedIn} data-signed-in>
+        {email === null ? "Signed in" : `Signed in as ${email}`}
+      </p>
       {view.parked && <p className={styles.note}>{PARKED_LINE}</p>}
-      {failed && <FormAlert>{SIGN_OUT_FAILED}</FormAlert>}
+      {failed && <FormError>{SIGN_OUT_FAILED}</FormError>}
       <div className={styles.actions}>
         <Guarded
           className="btn secondary"
@@ -374,7 +462,10 @@ function SignedIn({ store, view }: { store: AccountStore; view: StoreView }) {
             setFailed(false);
             run(
               () => store.signOut(),
-              (ok) => setFailed(!ok),
+              (ok) => {
+                setFailed(!ok);
+                if (!ok) announce(SIGN_OUT_FAILED);
+              },
             );
           }}
         >

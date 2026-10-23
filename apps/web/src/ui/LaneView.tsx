@@ -33,11 +33,9 @@ export function LaneView({
   onOpen,
   onSplit,
 }: LaneViewProps) {
-  // The rows' cap text is formatted inside laneRows (fmt reads the notation store), so the
-  // notation is a memo key the rule can't see (S-11).
+  // The rows carry formatted text: the notation is a memo key (S-11).
   const [notation] = useNotation();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const rows = useMemo(() => laneRows(snapshot, laneId), [snapshot, laneId, notation]);
+  const rows = useMemo(() => laneRows(snapshot, laneId, notation), [snapshot, laneId, notation]);
   const now = useCallback(() => store.now(), [store]);
   return (
     <section

@@ -1,8 +1,19 @@
 // W-16 / S-9: the reset link lands on /account/reset-password?token=…&tenantId=public. The
-// SDK reads the token from the location itself; this page asks for the new password only.
+// SDK reads the token from the location itself; this page asks for the new password only. A
+// cold load from the email link waits for /api/health: until it answers there is no client.
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import type { GameStore } from "../sync/store.js";
-import { Field, fieldErrorsOf, FormAlert, useRun, type FieldErrors } from "./AccountForms.js";
+import type { GameStore, StoreView } from "../sync/store.js";
+import {
+  ACCOUNTS_OFF,
+  Field,
+  fieldErrorsOf,
+  fieldSummary,
+  FormError,
+  useInvalidFocus,
+  useRun,
+  type FieldErrors,
+} from "./AccountForms.js";
+import { useAnnounce } from "./announce.js";
 import { Guarded } from "./Guarded.js";
 import styles from "./Settings.module.css";
 
@@ -11,9 +22,11 @@ const UNAVAILABLE = "Couldn't reach the server. Try again.";
 
 export function ResetPassword({
   store,
+  view,
   onDone,
 }: {
   store: Pick<GameStore, "submitNewPassword">;
+  view: Pick<StoreView, "accounts">;
   /** "Sign in": back to the game, with the sheet open on the sign-in form. */
   onDone(): void;
 }) {
@@ -22,31 +35,41 @@ export function ResetPassword({
   const [formError, setFormError] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
   const { pending, run } = useRun();
+  const announce = useAnnounce();
+  const input = useRef<HTMLInputElement>(null);
+  const focusInvalid = useInvalidFocus({ password: input });
   const headingId = useId();
   const doneRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (changed) doneRef.current?.focus();
   }, [changed]);
 
+  const checking = view.accounts === "unknown";
+  const busy = pending || checking;
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (pending) return;
+    if (busy) return;
     run(
       () => store.submitNewPassword(password),
       (r) => {
-        setFields(fieldErrorsOf(r));
+        const errs = fieldErrorsOf(r);
+        setFields(errs);
         if (r.ok) {
           setFormError(null);
           setChanged(true);
+          announce("Password changed.");
           return;
         }
-        setFormError(
+        const formError =
           r.kind === "invalid-token"
             ? INVALID_TOKEN
             : r.kind === "unavailable"
               ? UNAVAILABLE
-              : null,
-        );
+              : null;
+        setFormError(formError);
+        const said = formError ?? fieldSummary(errs);
+        if (said !== null) announce(said);
+        focusInvalid(errs);
       },
     );
   };
@@ -66,6 +89,14 @@ export function ResetPassword({
     );
   }
 
+  if (view.accounts === "off") {
+    return (
+      <main className={styles.page} data-reset="off">
+        <p className={styles.note}>{ACCOUNTS_OFF}</p>
+      </main>
+    );
+  }
+
   return (
     <main className={styles.page} data-reset="form">
       <form aria-labelledby={headingId} className={styles.form} noValidate onSubmit={onSubmit}>
@@ -79,10 +110,12 @@ export function ResetPassword({
           value={password}
           onChange={setPassword}
           error={fields.password}
+          inputRef={input}
         />
-        {formError !== null && <FormAlert>{formError}</FormAlert>}
+        {formError !== null && <FormError>{formError}</FormError>}
+        {checking && <p className={styles.note}>Checking the server…</p>}
         <div className={styles.actions}>
-          <Guarded submit off={pending} aria-busy={pending || undefined}>
+          <Guarded submit off={busy} aria-busy={busy || undefined}>
             Change password
           </Guarded>
         </div>

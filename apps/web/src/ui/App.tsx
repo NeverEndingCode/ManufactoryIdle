@@ -17,7 +17,7 @@ import { PowerDock } from "./PowerDock.js";
 import { useNotation } from "./notation.js";
 import { PriorityList } from "./PriorityList.js";
 import { ResetPassword } from "./ResetPassword.js";
-import { useRoute } from "./route.js";
+import { replaceRoute, useRoute } from "./route.js";
 import { Settings, type SettingsProps } from "./Settings.js";
 import { TierReadout } from "./TierReadout.js";
 import { usePanes } from "./use-panes.js";
@@ -52,6 +52,9 @@ function tabTarget(e: KeyboardEvent, i: number, n: number): number | null {
 
 type SheetAt = Pick<SettingsProps, "section" | "mode">;
 
+/** What goes inert inside the notices while the sheet is open; the region itself never does. */
+const NOTICE_CONTROLS = "button, a, input, select, textarea, [tabindex]";
+
 /** S-12: the "Save your factory" chip, from the first milestone on, for a guest only. */
 function showsChip(view: ReturnType<typeof useGame>): boolean {
   return (
@@ -81,16 +84,23 @@ export function App({ store }: { store: GameStore }) {
     returnFocus.current = true;
     setSheet(null);
   };
-  // S-11: while the sheet is open the background is inert (React 18 has no prop for it), all
-  // but the notices: their live region keeps speaking (a sign-in's outcome lands there). Every
-  // commit, since the panes can mount while it is open. Focus returns once inert is gone.
+  // S-11: while the sheet is open the background is inert (React 18 has no prop for it). The
+  // notices' live region is the exception (W-20: the one region keeps speaking, and the
+  // sheet's announcements land there), so only the controls inside it go inert. Every commit,
+  // since panes and notice buttons can mount while it is open. Focus returns once inert is
+  // gone.
   useLayoutEffect(() => {
     const app = appRef.current;
     if (app === null) return;
+    const open = sheet !== null;
     for (const el of Array.from(app.children)) {
-      if (el.hasAttribute("data-settings-host") || el.classList.contains("notices")) continue;
-      if (sheet !== null) el.setAttribute("inert", "");
-      else el.removeAttribute("inert");
+      if (el.hasAttribute("data-settings-host")) continue;
+      if (el.classList.contains("notices")) {
+        for (const c of Array.from(el.querySelectorAll(NOTICE_CONTROLS)))
+          c.toggleAttribute("inert", open);
+        continue;
+      }
+      el.toggleAttribute("inert", open);
     }
     if (sheet === null && returnFocus.current) {
       returnFocus.current = false;
@@ -201,7 +211,7 @@ export function App({ store }: { store: GameStore }) {
               <TierReadout snapshot={s} now={() => store.now()} />
             )}
             <div className="app-actions">
-              {showsChip(view) && (
+              {showsChip(view) && route.kind !== "reset-password" && (
                 <button
                   type="button"
                   className="btn chip"
@@ -238,8 +248,10 @@ export function App({ store }: { store: GameStore }) {
           {route.kind === "reset-password" ? (
             <ResetPassword
               store={store}
+              view={view}
               onDone={() => {
-                navigate({ kind: "game" });
+                // The used link isn't a page to go back to.
+                replaceRoute({ kind: "game" });
                 openSheet({ section: "account", mode: "sign-in" }, null);
               }}
             />

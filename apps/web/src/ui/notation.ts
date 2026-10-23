@@ -1,7 +1,7 @@
 // S-11 / W-17: the number notation, one small external store. Every number on screen goes
 // through fmt(), never the engine's format with a literal mode (a source scan enforces it).
 // Components that show numbers re-render on a change because App reads useNotation(); the
-// per-snapshot memos (laneRows in LaneView, drawerModel) key on the mode too.
+// per-snapshot memos (laneRows in LaneView, drawerModel) take the mode as an argument.
 import { useSyncExternalStore } from "react";
 import { D, format, type Dec, type NotationMode } from "@manufactory/engine";
 
@@ -67,9 +67,9 @@ function subscribe(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
-/** The engine's format in the player's notation. */
-export function fmt(value: Dec): string {
-  return format(value, mode);
+/** The engine's format in the player's notation, or in `as` (a memo that keys on it). */
+export function fmt(value: Dec, as: NotationMode = mode): string {
+  return format(value, as);
 }
 
 export function useNotation(): [NotationMode, (m: NotationMode) => void] {
