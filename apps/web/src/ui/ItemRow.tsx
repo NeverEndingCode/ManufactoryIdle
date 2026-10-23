@@ -1,10 +1,10 @@
 // F.1's three-line row: name and net rate; the storage bar with shown / cap; the QS and BOUND
 // chips. Then the satisfaction meter, or the split bar on a contested item.
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { D, format } from "@manufactory/engine";
+import { format, type ItemId } from "@manufactory/engine";
 import { shownStock, storageFraction, storageTransition } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
-import { stateClass, type RowModel } from "./derive.js";
+import { rateText, stateClass, type RowModel } from "./derive.js";
 import styles from "./ItemRow.module.css";
 import { useTick, useTickSource } from "./use-tick.js";
 
@@ -13,19 +13,38 @@ export interface ItemRowProps {
   snapshot: Snapshot;
   /** The client clock (store.now), stable across renders. */
   now: () => number;
+  /** §13.1: the first line opens the drawer for this item. */
+  onOpen?: (itemId: ItemId) => void;
+  /** This item's drawer is open. */
+  expanded?: boolean;
+  /** §13.1: tapping the split bar goes to this item's entry in the priority list. */
+  onSplit?: (itemId: ItemId) => void;
 }
 
-export function rateText(net: number): string {
-  return `${net > 0 ? "+" : ""}${format(D(net), "hybrid")}/s`;
-}
-
-export function ItemRow({ row, snapshot, now }: ItemRowProps) {
+export function ItemRow({ row, snapshot, now, onOpen, expanded = false, onSplit }: ItemRowProps) {
+  const top = (
+    <>
+      <span className={styles.name}>{row.name}</span>
+      <span className={`${styles.rate} num`}>{rateText(row.netPerSecond)}</span>
+    </>
+  );
   return (
     <div className={styles.row}>
-      <div className={styles.top}>
-        <span className={styles.name}>{row.name}</span>
-        <span className={`${styles.rate} num`}>{rateText(row.netPerSecond)}</span>
-      </div>
+      {onOpen === undefined ? (
+        <div className={styles.top}>{top}</div>
+      ) : (
+        <button
+          type="button"
+          className={`${styles.top} ${styles.open}`}
+          aria-expanded={expanded}
+          // Only a rendered id: #detail exists while this item's drawer is open.
+          aria-controls={expanded ? "detail" : undefined}
+          data-open-row
+          onClick={() => onOpen(row.itemId)}
+        >
+          {top}
+        </button>
+      )}
       <div className={styles.storage}>
         <StorageBar snapshot={snapshot} itemId={row.itemId} name={row.name} now={now} />
         <span className={`${styles.amount} num`}>
@@ -43,7 +62,21 @@ export function ItemRow({ row, snapshot, now }: ItemRowProps) {
           )}
         </div>
       )}
-      {row.split === null ? <SatisfactionMeter row={row} /> : <SplitBar split={row.split} />}
+      {row.split === null ? (
+        <SatisfactionMeter row={row} />
+      ) : onSplit === undefined ? (
+        <SplitBar split={row.split} />
+      ) : (
+        <button
+          type="button"
+          className={styles.splitButton}
+          aria-label={`${row.name} split: show in the priority list`}
+          data-split
+          onClick={() => onSplit(row.itemId)}
+        >
+          <SplitBar split={row.split} />
+        </button>
+      )}
     </div>
   );
 }

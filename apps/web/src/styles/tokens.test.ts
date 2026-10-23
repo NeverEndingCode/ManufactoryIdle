@@ -97,6 +97,13 @@ function isStateSelector(selectorList: string): boolean {
 }
 
 describe("the CSS source", () => {
+  it("titles are unique", () => {
+    const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
+    const prefixes = [...source.matchAll(/^\s*it\("(\d+[a-z]?\.)/gm)].map((m) => m[1]!);
+    const repeated = prefixes.filter((p, i) => prefixes.indexOf(p) !== i);
+    expect(repeated).toEqual([]);
+  });
+
   it("has the files the tests read", () => {
     expect(files.map((f) => relative(SRC, f)).sort()).toEqual(
       expect.arrayContaining(["styles/tokens.css", "styles/base.css", "ui/ItemRow.module.css"]),
@@ -152,7 +159,7 @@ describe("the CSS source", () => {
     );
   });
 
-  it("8a. the matcher takes whole class tokens", () => {
+  it("8c. the state-class matcher takes whole class tokens", () => {
     expect(isStateSelector(".frame")).toBe(true);
     expect(isStateSelector(".frame::before")).toBe(true);
     expect(isStateSelector(".frame .label")).toBe(true);

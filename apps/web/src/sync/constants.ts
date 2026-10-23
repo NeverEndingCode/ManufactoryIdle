@@ -22,5 +22,7 @@ export const TAP_REPEAT_MS = 100;
 export const TAP_FLUSH_EVERY_MS = 1_000;
 /** ...and this long after release. */
 export const TAP_FLUSH_AFTER_RELEASE_MS = 300;
+/** Q-11: the outbox label of a tap flush. */
+export const TAP_LABEL = "tap";
 /** W-16: the guest token's localStorage key. */
 export const GUEST_TOKEN_KEY = "mi.guestToken";

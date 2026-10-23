@@ -56,12 +56,13 @@ export class Outbox {
     this.#d = d;
   }
 
-  /** Queues one batch (FIFO), its key made NOW (W-10); resolves when the batch is settled
-   * (adopt / rejected / client-bug / unauthorized / no-world). */
-  enqueue(actions: Action[], label: string): Promise<Outcome> {
+  /** Queues one batch (FIFO), its key made NOW (W-10) unless `opts.key` carries one from an
+   * earlier send of the same intent (the keepalive tap flush, Q-11); resolves when the batch
+   * is settled (adopt / rejected / client-bug / unauthorized / no-world). */
+  enqueue(actions: Action[], label: string, opts: { key?: string } = {}): Promise<Outcome> {
     const batch: Batch = {
       id: this.#nextId++,
-      key: newIdempotencyKey(this.#d.random),
+      key: opts.key ?? newIdempotencyKey(this.#d.random),
       actions,
       label,
     };

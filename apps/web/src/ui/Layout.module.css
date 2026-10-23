@@ -1,0 +1,156 @@
+/* Q-7 / W-19, on viewport width only. data-panes comes from usePanes (matchMedia), so the
+   CSS and the React switch can never disagree. > 1000 px: lanes | detail | priority.
+   600–1000 px: lanes (or priority, by the switch) | detail. < 600 px: one column, a bottom
+   tab bar, the drawer as a bottom sheet above it. No column may push the page sideways. */
+.layout {
+  --tabbar-h: 56px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* The sheet's tallest; the column reserves it while the sheet is open (vh, then dvh). */
+  --sheet-max: 60vh;
+  /* The fixed power dock's height; the column reserves it below the last rows. */
+  --dock-h: 96px;
+  display: grid;
+  gap: 12px 20px;
+  min-width: 0;
+  padding-bottom: calc(var(--dock-h) + var(--safe-bottom));
+}
+
+.layout > * {
+  min-width: 0;
+}
+
+.layout[data-panes="3"] {
+  grid-template-areas: "lanes detail priority";
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.85fr);
+}
+
+.layout[data-panes="2"] {
+  grid-template-areas:
+    "switch detail"
+    "lanes detail";
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+}
+
+@supports (height: 100dvh) {
+  .layout {
+    --sheet-max: 60dvh;
+  }
+}
+
+.layout[data-panes="1"] {
+  --sheet-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--dock-h));
+  grid-template-columns: minmax(0, 1fr);
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--dock-h));
+}
+
+/* The open sheet must not cover the last rows: reserve its height below them. */
+.layout[data-panes="1"][data-sheet="open"] {
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--dock-h) + var(--sheet-max));
+}
+
+.lanes,
+.priority {
+  grid-area: lanes;
+}
+
+.layout[data-panes="3"] .priority {
+  grid-area: priority;
+}
+
+.layout[data-panes="1"] .lanes,
+.layout[data-panes="1"] .priority {
+  grid-area: auto;
+}
+
+/* Sticky, and scrollable on its own: a tall drawer never runs off the viewport. */
+.detail {
+  position: sticky;
+  top: 10px;
+  align-self: start;
+  grid-area: detail;
+  max-height: calc(100vh - 20px - var(--dock-h));
+  max-height: calc(100dvh - 20px - var(--dock-h));
+  overflow-y: auto;
+}
+
+/* Below 600 px the drawer is a fixed sheet; its host takes no room of its own. */
+.sheetHost {
+  display: contents;
+}
+
+.hint {
+  margin: 0;
+  padding: 12px;
+  border: var(--hairline) dashed var(--line2);
+  border-radius: 9px;
+  color: var(--t3);
+  font-size: var(--fs-2);
+}
+
+.switch {
+  display: flex;
+  grid-area: switch;
+  gap: 6px;
+}
+
+.tabbar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 25;
+  display: flex;
+  height: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--bg);
+}
+
+.view {
+  min-height: 44px;
+  padding: 6px 13px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--t2);
+  font-size: var(--fs-2);
+  cursor: pointer;
+}
+
+.tabbar .view {
+  flex: 1;
+  border-radius: 0;
+}
+
+.view.on {
+  color: var(--accent);
+  font-weight: var(--fw-strong);
+}
+
+.switch .view.on {
+  background: var(--s2);
+}
+
+/* The power dock: fixed along the bottom, above the tab bar below 600 px (as in the MVP). */
+.dock {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  min-height: var(--dock-h);
+  padding-bottom: var(--safe-bottom);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--bg);
+}
+
+.layout[data-panes="1"] .dock {
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: 0;
+}
+
+.dock:empty {
+  display: none;
+}

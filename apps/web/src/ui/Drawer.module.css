@@ -1,0 +1,268 @@
+/* The buy drawer (the MVP's .drawer): a raised surface, rows not cards, hairlines (W-17).
+   Under 600 px it is a bottom sheet over the column (Q-7). Nothing scrolls sideways at 320 px:
+   button rows wrap, names ellipsize, numbers never leave the screen (W-19). */
+.drawer {
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border-radius: 9px;
+  background: var(--s2);
+}
+
+.sheet {
+  position: fixed;
+  right: 0;
+  bottom: var(--sheet-bottom, 0px);
+  left: 0;
+  z-index: 30;
+  max-height: var(--sheet-max, 60vh);
+  overflow-y: auto;
+  border-top: var(--hairline) solid var(--line2);
+  border-radius: 12px 12px 0 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sheet {
+    animation: rise 180ms ease-out;
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+
+.title {
+  overflow: hidden;
+  flex: 1 1 8em;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-1);
+  font-weight: var(--fw-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close {
+  margin-left: auto;
+}
+
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 10px;
+}
+
+.segBtn {
+  min-height: 44px;
+  padding: 6px 11px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 7px;
+  background: none;
+  color: var(--t2);
+  font-size: var(--fs-2);
+  cursor: pointer;
+}
+
+.segBtn.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--fw-strong);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kv {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  color: var(--t2);
+  font-size: var(--fs-2);
+}
+
+.select {
+  min-height: 44px;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 7px;
+  background: var(--s1);
+  color: var(--t1);
+  font: inherit;
+}
+
+.ladder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--t2);
+  font-size: var(--fs-2);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.item:last-child {
+  border-bottom: 0;
+}
+
+.subhead {
+  color: var(--t1);
+  font-weight: var(--fw-strong);
+}
+
+.spend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.btnrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.btnrow > :global(.btn) {
+  max-width: 100%;
+}
+
+.cost {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-2);
+}
+
+.cost li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+  color: var(--t2);
+}
+
+.cost li > span:first-child {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Short: the bottleneck red (a state colour, W-17) plus the countdown's words, never colour
+   alone (W-20). */
+.cost li.state-bottleneck {
+  color: var(--state-bottleneck);
+}
+
+.muted {
+  margin: 0;
+  color: var(--t3);
+  font-size: var(--fs-3);
+}
+
+.radio {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 44px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.radio input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.assign {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 0;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.assign:last-child {
+  border-bottom: 0;
+}
+
+.assignName {
+  overflow: hidden;
+  flex: 1 1 7em;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepper > :global(.btn) {
+  min-width: 44px;
+  padding: 8px 0;
+}
+
+.preview {
+  padding: 8px 10px;
+  border: var(--hairline) solid var(--line2);
+  border-radius: 7px;
+  font-size: var(--fs-2);
+}
+
+.caption {
+  margin-bottom: 4px;
+  color: var(--t3);
+  font-size: var(--fs-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}

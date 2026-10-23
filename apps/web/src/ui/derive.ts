@@ -1,14 +1,14 @@
-// The lane view's display derivations: pure, and computed once per snapshot, except
-// affordability, which the 4 Hz text tick re-reads (W-7, W-13). Rates and the boundary
+// The lane view's display derivations: pure, and computed once per snapshot (W-7);
+// affordability lives in quote.ts (W-13). Rates and the boundary
 // always come from the server's schedule; only the solution comes from the display solve.
 import {
   bestUnlockedMark,
+  D,
   DECIMAL_ZERO,
   format,
   isLiveRecipe,
   itemStateTag,
   liquidCap,
-  machineCostRange,
   POWER_ITEM,
   type Action,
   type Dec,
@@ -19,10 +19,20 @@ import {
   type RecipeId,
   type Solution,
 } from "@manufactory/engine";
-import { isPlateaued, shownStock } from "../sync/interpolate.js";
-import { plateauAtMs, type Snapshot } from "../sync/snapshot.js";
+import { isPlateaued, storageFraction } from "../sync/interpolate.js";
+import type { Snapshot } from "../sync/snapshot.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
+
+/** The frame's one button (P-3, Q-5): the sim `bottleneck` policy's four actions. */
+export type FrameAction =
+  | BuyMachine
+  | Extract<Action, { type: "BUY_STORAGE" | "BUY_QS" | "SET_RESERVE" }>;
+
+/** "+0.333/s": a net rate, signed when positive. */
+export function rateText(net: number): string {
+  return `${net > 0 ? "+" : ""}${format(D(net), "hybrid")}/s`;
+}
 
 /** The label every bottleneck-buy batch carries; the button is busy while one is pending. */
 export const BOTTLENECK_BUY_LABEL = "bottleneck buy";
@@ -131,8 +141,8 @@ export interface BottleneckModel {
   laneId: LaneId | null;
   itemId: ItemId | null;
   text: string;
-  /** P-3. */
-  buy: BuyMachine | null;
+  /** P-3, Q-5. */
+  action: FrameAction | null;
 }
 
 function itemName(s: Snapshot, itemId: ItemId): string {
@@ -153,7 +163,7 @@ function clears(n: number): string {
 }
 
 /** The power entry, or the engine's "power" target. */
-function isPowerTarget(s: Snapshot, limitingTarget: string): boolean {
+export function isPowerTarget(s: Snapshot, limitingTarget: string): boolean {
   if (limitingTarget === "power") return true;
   return s.state.priority.some((e) => e.id === limitingTarget && e.kind === "power");
 }
@@ -194,30 +204,50 @@ function recipeRow(
   const text = isPowerTarget(s, limitingTarget)
     ? `Power is limited by ${limiter.toLowerCase()}. ${more}`
     : `Limiting ${targetName(s, limitingTarget)}. ${more}`;
-  // A generator's primary output is the power pseudo-item, which has no row: frame its fuel.
-  const itemId =
-    generator
-      ? (recipe.inputPerSecond.keys().next().value ?? null)
-      : recipe.primaryOutput;
+  // A generator's primary output is the power pseudo-item, which has no row: frame its
+  // scarcest stock input (Q-5).
+  const itemId = generator ? scarcestInput(s, [...recipe.inputPerSecond.keys()]) : recipe.primaryOutput;
   return {
     laneId: itemId === null ? null : (s.content.items.get(itemId)?.lane ?? null),
     itemId,
     text,
-    buy: machineBuy(s, recipeId, machinesToClear),
+    action: machineBuy(s, recipeId, machinesToClear),
   };
+}
+
+/** Q-5: among the inputs that render as rows, the lowest P-1 satisfaction; ties to the lower
+ * storage fraction at atMs, then authored order. With none shown, the first input. */
+function scarcestInput(s: Snapshot, inputs: readonly ItemId[]): ItemId | null {
+  const shown = inputs.filter((id) => isShownItem(s, id));
+  if (shown.length === 0) return inputs[0] ?? null;
+  const solution = s.display.solution;
+  const atMs = s.schedule.atMs;
+  let best = shown[0]!;
+  for (const id of shown.slice(1)) {
+    const a = satisfaction(solution, id);
+    const b = satisfaction(solution, best);
+    if (a < b || (a === b && storageFraction(s, id, atMs) < storageFraction(s, best, atMs))) {
+      best = id;
+    }
+  }
+  return best;
+}
+
+function isShownItem(s: Snapshot, itemId: ItemId): boolean {
+  const item = s.content.items.get(itemId);
+  const lane = item === undefined ? undefined : s.content.lanes.get(item.lane);
+  return (
+    item !== undefined &&
+    lane !== undefined &&
+    item.tier <= s.state.tier &&
+    lane.unlockTier <= s.state.tier
+  );
 }
 
 /** The frame needs a rendered row: an item in an unlocked lane, at or under the tier. */
 function shownAsRow(s: Snapshot, m: BottleneckModel): BottleneckModel {
   if (m.itemId === null) return m;
-  const item = s.content.items.get(m.itemId);
-  const lane = item === undefined ? undefined : s.content.lanes.get(item.lane);
-  const visible =
-    item !== undefined &&
-    lane !== undefined &&
-    item.tier <= s.state.tier &&
-    lane.unlockTier <= s.state.tier;
-  return visible ? m : { ...m, laneId: null, itemId: null, buy: null };
+  return isShownItem(s, m.itemId) ? m : { ...m, laneId: null, itemId: null, action: null };
 }
 
 /** P-2: the one framed row in the whole factory, from the display solve's bottleneck. */
@@ -238,7 +268,7 @@ function bottleneckModel(s: Snapshot): BottleneckModel | null {
           laneId: null,
           itemId: null,
           text: `Power is short, limiting ${targetName(s, b.limitingTarget)}. Build a generator.`,
-          buy: null,
+          action: null,
         };
       return recipeRow(s, b.generatorRecipeId, b.limitingTarget, b.machinesToClear);
     case "storage": {
@@ -247,11 +277,17 @@ function bottleneckModel(s: Snapshot): BottleneckModel | null {
         b.upgrade === null
           ? `${itemName(s, b.itemId)} is at its cap, limiting ${targetName(s, b.limitingTarget)}.`
           : `${itemName(s, b.itemId)} is at its cap, limiting ${targetName(s, b.limitingTarget)}. More ${what} clears it.`;
+      const lane = s.content.items.get(b.itemId)?.lane ?? null;
       return {
-        laneId: s.content.items.get(b.itemId)?.lane ?? null,
+        laneId: lane,
         itemId: b.itemId,
         text,
-        buy: null,
+        action:
+          b.upgrade === "storage"
+            ? { type: "BUY_STORAGE", itemId: b.itemId, levels: 1 }
+            : b.upgrade === "quantum" && lane !== null
+              ? { type: "BUY_QS", lane, levels: 1 }
+              : null,
       };
     }
     case "reserve":
@@ -259,39 +295,12 @@ function bottleneckModel(s: Snapshot): BottleneckModel | null {
         laneId: s.content.items.get(b.itemId)?.lane ?? null,
         itemId: b.itemId,
         text: `${itemName(s, b.itemId)} never banks, limiting ${targetName(s, b.limitingTarget)}. Reserve ${Math.round(b.percent * 100)}% of it to clear it.`,
-        buy: null,
+        action:
+          (own(s.state.reserve, b.itemId) ?? 0) === b.percent
+            ? null
+            : { type: "SET_RESERVE", itemId: b.itemId, percent: b.percent },
       };
   }
-}
-
-export type Affordability =
-  | { affordable: true }
-  /** inMs null: not reachable on current rates. */
-  | { affordable: false; inMs: number | null };
-
-/** From interpolated liquid plus bound, against the purchase's cost (W-13, P-3). */
-export function affordability(s: Snapshot, action: BuyMachine, serverMs: number): Affordability {
-  const owned = s.state.installed[action.lane]?.[action.machineClass]?.[action.mark - 1] ?? 0;
-  const costs = machineCostRange(s.content, action.machineClass, action.mark, owned, action.count);
-  let inMs: number | null = 0;
-  let short = false;
-  for (const [itemId, need] of costs) {
-    const bound = own(s.state.bound, itemId) ?? DECIMAL_ZERO;
-    const have = shownStock(s, itemId, serverMs).plus(bound);
-    if (have.gte(need)) continue;
-    short = true;
-    if (inMs === null) continue;
-    const net = s.schedule.items[itemId]?.netPerSecond ?? 0;
-    // The line stops at the cap, and at the plateau: past either the wait never ends.
-    if (net <= 0 || need.minus(bound).gt(liquidCap(s.content, s.state, itemId))) {
-      inMs = null;
-      continue;
-    }
-    inMs = Math.max(inMs, (need.minus(have).toNumber() / net) * 1000);
-  }
-  if (!short) return { affordable: true };
-  if (inMs !== null && serverMs + inMs > plateauAtMs(s)) inMs = null;
-  return { affordable: false, inMs };
 }
 
 /** P-4's notice text, as the store words it; shown whenever the snapshot is plateaued. */

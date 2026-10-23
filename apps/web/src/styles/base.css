@@ -32,8 +32,9 @@ button {
   outline-offset: 2px;
 }
 
+/* Three panes above 1000 px (W-19): room for lanes, detail and priority side by side. */
 .app {
-  max-width: 1200px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 10px 12px 24px;
 }
@@ -51,6 +52,25 @@ button {
   font-size: var(--fs-1);
   font-weight: var(--fw-strong);
   letter-spacing: 0.14em;
+}
+
+/* The tier readout (Q-13): the tier and next milestone, one compact line per requirement. */
+.tier-readout {
+  min-width: 0;
+  color: var(--t2);
+  font-size: var(--fs-3);
+  text-align: right;
+}
+
+.tier-name {
+  color: var(--t1);
+  font-weight: var(--fw-strong);
+}
+
+.tier-reqs {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
 .app-loading {
@@ -105,9 +125,15 @@ button {
   color: var(--t1);
 }
 
-.btn:disabled {
+/* aria-disabled: off but still focusable (the drawer's spends keep focus while busy). */
+.btn:disabled,
+.btn[aria-disabled="true"] {
   opacity: 0.45;
   cursor: default;
+}
+
+.btn[aria-busy="true"] {
+  cursor: progress;
 }
 
 /* W-9: a hidden tab pauses every animation. The property isn't inherited and "*" doesn't

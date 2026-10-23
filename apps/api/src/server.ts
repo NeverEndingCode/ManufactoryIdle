@@ -181,18 +181,27 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   }));
 
   // Public and immutable: a bundle never changes under its checksum (W-5). A malformed
-  // checksum is a 404 like an unknown one, so the route reveals nothing.
+  // checksum is a 404 like an unknown one, so the route reveals nothing. Hits are memoised
+  // as the serialised body (Q-16); misses are not, so the map holds only real bundles.
+  const contentBodies = new Map<string, string>(); // checksum → JSON body (Q-16)
   app.get<{ Params: { checksum: string } }>("/api/content/:checksum", async (request, reply) => {
     const { checksum } = request.params;
-    const rows = /^[0-9a-f]{64}$/.test(checksum)
-      ? await db.query<{ bundle: unknown }>("select bundle from content_versions where version = $1", [
-          checksum,
-        ])
-      : [];
-    if (rows.length === 0) return reply.code(404).send({ error: "unknown content" });
+    let body = contentBodies.get(checksum);
+    if (body === undefined) {
+      const rows = /^[0-9a-f]{64}$/.test(checksum)
+        ? await db.query<{ bundle: unknown }>(
+            "select bundle from content_versions where version = $1",
+            [checksum],
+          )
+        : [];
+      if (rows.length === 0) return reply.code(404).send({ error: "unknown content" });
+      body = JSON.stringify(rows[0]!.bundle);
+      contentBodies.set(checksum, body);
+    }
     return reply
       .header("cache-control", "public, max-age=31536000, immutable")
-      .send(rows[0]!.bundle);
+      .type("application/json")
+      .send(body);
   });
 
   app.post("/api/guests", async (request, reply) => {

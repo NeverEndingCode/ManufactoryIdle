@@ -1,18 +1,20 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { storageTransition } from "../sync/interpolate.js";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
-import type { GameStore, StoreView } from "../sync/store.js";
+import type { GameStore } from "../sync/store.js";
 import { App } from "./App.js";
 import {
   CLIENT_T0,
+  fakeStore,
   fixtureState,
   freshState,
   loadSlice,
   snapshotOf,
+  type FakeStore,
   type Slice,
 } from "./test-fixtures.js";
 
@@ -35,48 +37,7 @@ const P3_BUY = {
   recipeId: "make_iron_plate",
 } as const;
 
-/** What App reads from a GameStore, driven by hand: set() a view, tick() the 4 Hz text. */
-function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}) {
-  let view: StoreView = {
-    status: snapshot ? "ready" : "loading",
-    snapshot,
-    pending: [],
-    notices: [],
-    failures: 0,
-  };
-  let clock = opts.now ?? CLIENT_T0;
-  const listeners = new Set<() => void>();
-  const tickers = new Set<() => void>();
-  const fake = {
-    subscribe: (fn: () => void) => {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
-    getView: () => view,
-    subscribeTick: (fn: () => void) => {
-      tickers.add(fn);
-      return () => tickers.delete(fn);
-    },
-    now: () => clock,
-    send: vi.fn(() => new Promise<never>(() => {})),
-    newFactory: vi.fn(() => Promise.resolve()),
-    dismiss: vi.fn(),
-    set(patch: Partial<StoreView>) {
-      view = { ...view, ...patch };
-      act(() => listeners.forEach((fn) => fn()));
-    },
-    tick(ms: number) {
-      clock += ms;
-      act(() => tickers.forEach((fn) => fn()));
-    },
-    get tickers() {
-      return tickers.size;
-    },
-  };
-  return fake;
-}
-
-function mount(store: ReturnType<typeof fakeStore>) {
+function mount(store: FakeStore) {
   return render(<App store={store as unknown as GameStore} />);
 }
 

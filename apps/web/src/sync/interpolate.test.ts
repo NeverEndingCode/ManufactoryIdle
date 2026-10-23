@@ -135,6 +135,20 @@ describe("storageFraction / storageTransition", () => {
     expect(t.to).toBeLessThan(1);
   });
 
+  // slice-tier-8 (tier8Falling): reinforced-full has no falling item at its schedule's state.
+  it("runs to empty when a draining item empties before the boundary", () => {
+    const { atMs, nextBoundaryAtMs } = tier8Falling.schedule;
+    const id = Object.keys(tier8Falling.schedule.items).find((k) => {
+      const net = netOf(tier8Falling, k);
+      return net < 0 && (stockOf(tier8Falling, k) / -net) * 1000 < (nextBoundaryAtMs ?? Infinity) - atMs;
+    })!;
+    expect(id).toBeDefined();
+    const toEmptyMs = (stockOf(tier8Falling, id) / -netOf(tier8Falling, id)) * 1000;
+    const t = storageTransition(noPlateau(tier8Falling), id, atMs);
+    expect(t.to).toBe(0);
+    expect(Math.abs(t.durationMs - toEmptyMs)).toBeLessThanOrEqual(1);
+  });
+
   it("stops at the plateau", () => {
     const { atMs } = fresh.schedule;
     const s = withBoundary(plateauAt(fresh, atMs + 1_000), null);

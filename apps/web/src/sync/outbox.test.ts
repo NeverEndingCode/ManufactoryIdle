@@ -238,4 +238,17 @@ describe("Outbox (W-10, W-11, P-7)", () => {
     expect((await b).kind).toBe("adopt");
     expect(s.sent).toHaveLength(1);
   });
+
+  it("enqueue takes an optional key (Q-11); without it the key is fresh", async () => {
+    const clock = new FakeClientClock();
+    const s = scripted(clock);
+    const { box } = outbox(clock, s.fetch);
+    await box.enqueue([TAP], "tap", { key: "k-1" });
+    await box.enqueue([TAP], "tap");
+    await box.enqueue([TAP], "tap");
+    const keys = s.sent.map((x) => x.body.idempotencyKey);
+    expect(keys[0]).toBe("k-1");
+    expect(keys[1]).not.toBe("k-1");
+    expect(keys[2]).not.toBe(keys[1]);
+  });
 });

@@ -26,13 +26,23 @@ const store = new GameStore({
   random: crypto,
 });
 
-/** W-9: a hidden tab has no boundary timer, no text tick, and every animation paused. */
+/** W-9: a hidden tab has no boundary timer, no text tick, and every animation paused.
+ * Q-11: hiding ends a hold and sends the pending taps at once, with keepalive. */
 function syncVisibility(): void {
   const hidden = document.visibilityState === "hidden";
   document.documentElement.classList.toggle("hidden-tab", hidden);
+  if (hidden) {
+    store.releaseTap();
+    store.flushTaps({ keepalive: true });
+  }
   store.setVisible(!hidden);
 }
 document.addEventListener("visibilitychange", syncVisibility);
+// bfcache and Safari can hide the page without a visibilitychange: end the hold here too.
+window.addEventListener("pagehide", () => {
+  store.releaseTap();
+  store.flushTaps({ keepalive: true });
+});
 window.addEventListener("focus", () => store.onFocus());
 window.addEventListener("online", () => store.onOnline());
 if (document.visibilityState === "hidden") syncVisibility();

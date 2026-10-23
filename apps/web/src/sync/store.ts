@@ -6,16 +6,28 @@ import {
   MIN_REPOLL_MS,
   OFFLINE_AFTER_FAILURES,
   RETRY_STEPS_MS,
+  TAP_FLUSH_AFTER_RELEASE_MS,
+  TAP_FLUSH_EVERY_MS,
+  TAP_LABEL,
+  TAP_REPEAT_MS,
   TEXT_TICK_MS,
 } from "./constants.js";
 import { ContentCache } from "./content-cache.js";
 import { classify, type Outcome } from "./errors.js";
 import type { TokenStorage } from "./identity.js";
+import { newIdempotencyKey } from "./ids.js";
 import { isPlateaued } from "./interpolate.js";
 import { MIN_WAIT_MS, Outbox, type Batch } from "./outbox.js";
 import { nextFetchAt, nextRepoll, type RepollState } from "./refetch.js";
 import { isAdoptable, makeSnapshot, type ClientClock, type Snapshot } from "./snapshot.js";
-import type { FetchLike, GuestResponse, HealthResponse, WorldResponse } from "./wire.js";
+import { TapAccumulator } from "./taps.js";
+import type {
+  ActionsRequest,
+  FetchLike,
+  GuestResponse,
+  HealthResponse,
+  WorldResponse,
+} from "./wire.js";
 
 export type SyncStatus = "loading" | "ready" | "offline" | "error";
 
@@ -27,7 +39,8 @@ export interface Notice {
     | "guest-rate-limited"
     | "accounts-unavailable"
     | "ephemeral-token"
-    | "plateau";
+    | "plateau"
+    | "tier-up";
   text: string;
   /** guest-rate-limited: the ClientClock time a retry may succeed. */
   retryAt?: number;
@@ -41,6 +54,10 @@ export interface StoreView {
   notices: readonly Notice[];
   /** Consecutive network/5xx failures, GET and POST alike (P-7). */
   failures: number;
+  /** The tap (Q-11): taps not yet flushed, the last tap's ClientClock time, and the hold. */
+  taps: { pending: number; lastTapAt: number | null; holding: boolean };
+  /** The boundary timer is armed (Q-18). Mirrored as data-polling="armed|off". */
+  polling: boolean;
 }
 
 export interface GameStoreDeps {
@@ -73,6 +90,7 @@ export class GameStore {
   readonly #tokens: TokenStorage;
   readonly #content: ContentCache;
   readonly #outbox: Outbox;
+  readonly #random: GameStoreDeps["random"];
 
   #snapshot: Snapshot | null = null;
   #repoll: RepollState = { streak: 0 };
@@ -100,6 +118,17 @@ export class GameStore {
   /** The ephemeral-token banner was raised once; a dismissed one doesn't come back. */
   #ephemeralShown = false;
 
+  // The tap (Q-11). Two timers, both on the ClientClock: the 10 Hz repeat while held, and
+  // the one flush timer, which is never due before #lastFlushAt + TAP_FLUSH_EVERY_MS.
+  readonly #taps: TapAccumulator;
+  #holding = false;
+  #pressAt = 0;
+  #lastTapAt: number | null = null;
+  /** The last flush that sent something; a flush with nothing pending doesn't count. */
+  #lastFlushAt = -Infinity;
+  #repeatTimer: number | null = null;
+  #flushTimer: { timer: number; at: number } | null = null;
+
   /** Everything in flight that idle() waits on, bar the outbox's own request. */
   readonly #work = new Set<Promise<unknown>>();
   readonly #listeners = new Set<() => void>();
@@ -111,6 +140,8 @@ export class GameStore {
     this.#clock = d.clock;
     this.#tokens = d.tokens;
     this.#content = new ContentCache(d.fetch);
+    this.#random = d.random;
+    this.#taps = new TapAccumulator(() => d.clock.now(), d.clock.now());
     this.#outbox = new Outbox({
       fetch: d.fetch,
       clock: d.clock,
@@ -174,7 +205,11 @@ export class GameStore {
     this.#clearTick();
     if (this.#guestTimer !== null) this.#clock.clearTimeout(this.#guestTimer);
     this.#guestTimer = null;
+    this.#holding = false;
+    this.#clearRepeat();
+    this.#clearFlush();
     this.#outbox.stop();
+    this.#emit();
   }
 
   /** Hidden: no boundary timer, no text tick. Visible: GET if the snapshot is stale. */
@@ -210,6 +245,147 @@ export class GameStore {
     // The outbox awaits the adoption before it settles the batch, so this resolves with the
     // response's snapshot already in the view.
     return this.#outbox.enqueue(actions, label);
+  }
+
+  // ---- the tap (W-12, Q-11) ----
+
+  /** Taps once now and repeats every TAP_REPEAT_MS until releaseTap(). While held, the flush
+   * is due at max(lastFlushAt, pressAt) + TAP_FLUSH_EVERY_MS. */
+  pressTap(): void {
+    if (this.#stopped || this.#holding) return;
+    this.#holding = true;
+    this.#pressAt = this.#clock.now();
+    this.#tapOnce();
+    this.#armRepeat();
+    this.#armFlush(Math.max(this.#lastFlushAt, this.#pressAt) + TAP_FLUSH_EVERY_MS);
+    this.#emit();
+  }
+
+  /** Stops the repeat, and pulls the flush to max(now + 300 ms, lastFlushAt + 1 s). */
+  releaseTap(): void {
+    if (!this.#holding) return;
+    this.#holding = false;
+    this.#clearRepeat();
+    if (this.#taps.pending === 0) this.#clearFlush();
+    else
+      this.#armFlush(
+        Math.max(
+          this.#clock.now() + TAP_FLUSH_AFTER_RELEASE_MS,
+          this.#lastFlushAt + TAP_FLUSH_EVERY_MS,
+        ),
+      );
+    this.#emit();
+  }
+
+  /** keepalive (hidden, pagehide): send the pending taps now, bypassing the outbox and the 1 s
+   * floor. Otherwise flush now only if the floor allows it, else leave the timer as it is. */
+  flushTaps(opts: { keepalive?: boolean } = {}): void {
+    if (this.#stopped) return;
+    if (opts.keepalive) {
+      this.#flushKeepalive();
+      return;
+    }
+    if (this.#clock.now() >= this.#lastFlushAt + TAP_FLUSH_EVERY_MS) this.#flushNow();
+  }
+
+  #tapOnce(): void {
+    this.#taps.tap();
+    this.#lastTapAt = this.#clock.now();
+  }
+
+  #armRepeat(): void {
+    this.#repeatTimer = this.#clock.setTimeout(() => {
+      this.#repeatTimer = null;
+      if (!this.#holding || this.#stopped) return;
+      this.#tapOnce();
+      this.#armRepeat();
+      this.#emit();
+    }, TAP_REPEAT_MS);
+  }
+
+  #clearRepeat(): void {
+    if (this.#repeatTimer !== null) this.#clock.clearTimeout(this.#repeatTimer);
+    this.#repeatTimer = null;
+  }
+
+  /** Only ever moves the flush earlier. Each caller's `at` is already at or past
+   * lastFlushAt + TAP_FLUSH_EVERY_MS (Q-11's floor): press, release and the next held flush. */
+  #armFlush(due: number): void {
+    if (this.#flushTimer !== null && this.#flushTimer.at <= due) return;
+    this.#clearFlush();
+    const timer = this.#clock.setTimeout(() => {
+      this.#flushTimer = null;
+      this.#flushNow();
+    }, due - this.#clock.now());
+    this.#flushTimer = { timer, at: due };
+  }
+
+  #clearFlush(): void {
+    if (this.#flushTimer !== null) this.#clock.clearTimeout(this.#flushTimer.timer);
+    this.#flushTimer = null;
+  }
+
+  /** Takes the pending taps, if any (never a count:0 TAP), and marks the flush. While held,
+   * the next flush is armed a second on. */
+  #take(): Action | null {
+    this.#clearFlush();
+    const action = this.#taps.take();
+    if (action !== null) this.#lastFlushAt = this.#clock.now();
+    if (this.#holding) {
+      const next = Math.max(this.#lastFlushAt, this.#pressAt) + TAP_FLUSH_EVERY_MS;
+      this.#armFlush(Math.max(next, this.#clock.now() + TAP_FLUSH_EVERY_MS));
+    }
+    return action;
+  }
+
+  /** A flush through the outbox: its own one-action batch, never merged with a spend. */
+  #flushNow(): void {
+    if (this.#stopped) return;
+    const action = this.#take();
+    if (action === null) return;
+    void this.#outbox.enqueue([action], TAP_LABEL);
+    this.#emit();
+  }
+
+  /** Q-11: a queued request can't outlive the page, so this one goes straight out with
+   * keepalive and a fresh key. If the page survives a retry or a pause, the outbox resends it
+   * with the same key. */
+  #flushKeepalive(): void {
+    const action = this.#take();
+    if (action === null) return;
+    this.#emit();
+    const key = newIdempotencyKey(this.#random);
+    const auth = this.#authHeader();
+    if (auth === null) {
+      void this.#outbox.enqueue([action], TAP_LABEL, { key });
+      return;
+    }
+    const body: ActionsRequest = {
+      idempotencyKey: key,
+      baseVersion: this.#snapshot?.stateVersion ?? 0,
+      actions: [action],
+    };
+    this.#track(
+      (async () => {
+        let outcome: Outcome;
+        try {
+          const res = await this.#fetch("/api/actions", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: auth },
+            body: JSON.stringify(body),
+            keepalive: true,
+          }).catch(() => null);
+          outcome = await classify(res);
+        } catch {
+          outcome = { kind: "retry" };
+        }
+        if (this.#stopped) return;
+        await this.#handle(outcome, "post", this.#clock.now());
+        if (outcome.kind === "retry" || outcome.kind === "paused") {
+          void this.#outbox.enqueue([action], TAP_LABEL, { key });
+        }
+      })(),
+    );
   }
 
   /** After guest-expired (or a refused guest creation): drop the token, POST /api/guests. */
@@ -414,7 +590,10 @@ export class GameStore {
       case "client-bug":
         console.error(`client bug: ${o.status}`, o.body);
         this.#setNotice({ kind: "client-bug", text: TEXT["client-bug"] });
+        // W-11 re-syncs a POST. A GET would only loop on the same 4xx: polling stops until
+        // focus, visible or online (Q-18).
         if (cause === "post") this.#wantGet(true);
+        else this.#clearBoundary();
         return;
       case "no-world":
         if (this.#notFound++ === 0) {
@@ -468,8 +647,13 @@ export class GameStore {
       this.#emit();
       return "stale";
     }
+    const prev = this.#snapshot;
     this.#snapshot = next;
     this.#repoll = nextRepoll(this.#repoll, next, cause);
+    // Q-13: the one celebration W-18 allows.
+    if (prev !== null && next.state.tier > prev.state.tier) {
+      this.#setNotice({ kind: "tier-up", text: `Tier ${next.state.tier} reached.` }, false);
+    }
     if (isPlateaued(next)) {
       this.#setNotice({ kind: "plateau", text: plateauText(next.content.offlineCapMs) }, false);
     } else {
@@ -484,19 +668,27 @@ export class GameStore {
 
   /** The one boundary timer, from nextFetchAt (W-9, P-4, P-6). */
   #arm(): void {
-    this.#clearBoundary();
-    if (this.#stopped || this.#halted || !this.#visible || !this.#snapshot) return;
-    const at = nextFetchAt(this.#snapshot, this.#repoll);
-    if (at === null) return;
-    this.#boundaryTimer = this.#clock.setTimeout(() => {
-      this.#boundaryTimer = null;
-      this.#wantGet(true);
-    }, at - this.#clock.now());
+    const was = this.#boundaryTimer !== null;
+    this.#clearBoundary(false);
+    if (!this.#stopped && !this.#halted && this.#visible && this.#snapshot) {
+      const at = nextFetchAt(this.#snapshot, this.#repoll);
+      if (at !== null) {
+        this.#boundaryTimer = this.#clock.setTimeout(() => {
+          this.#boundaryTimer = null;
+          this.#emit();
+          this.#wantGet(true);
+        }, at - this.#clock.now());
+      }
+    }
+    if (was !== (this.#boundaryTimer !== null)) this.#emit();
   }
 
-  #clearBoundary(): void {
-    if (this.#boundaryTimer !== null) this.#clock.clearTimeout(this.#boundaryTimer);
+  /** Emits when polling changes (StoreView.polling). */
+  #clearBoundary(emit = true): void {
+    if (this.#boundaryTimer === null) return;
+    this.#clock.clearTimeout(this.#boundaryTimer);
     this.#boundaryTimer = null;
+    if (emit) this.#emit();
   }
 
   #clearDeferred(): void {
@@ -551,6 +743,8 @@ export class GameStore {
       pending: head ? [head, ...this.#outbox.queued] : [...this.#outbox.queued],
       notices: this.#notices,
       failures: this.#failures,
+      taps: { pending: this.#taps.pending, lastTapAt: this.#lastTapAt, holding: this.#holding },
+      polling: this.#boundaryTimer !== null,
     };
   }
 

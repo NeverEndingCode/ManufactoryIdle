@@ -154,8 +154,12 @@ jobs:
   # Spec W-23: the one browser job. Chromium only; WebKit is a manual pre-release check.
   # Playwright's webServer starts the API's PGlite dev server (no Docker) and `vite preview`
   # behind the W-2 proxy. Specs wait on store state, never on sleeps (P-9); the 4a spec waits
-  # ~45 s of real time for the first buy to become affordable (P-10). Measured locally
-  # (2026-10-18): the spec 43.2s, the whole `e2e` run 50s including the build.
+  # ~45 s of real time for the first buy to become affordable (P-10). 4b (Q-15) adds
+  # drawer-buy (a Miner's ~18 s affordability wait), priority-drag, tap-hold and
+  # injected-failures (page.route aborts and fulfils, page.clock for the GET 4xx). Measured
+  # locally (2026-10-22, three runs, identical to 0.1 s): guest-buy 43.2s, drawer-buy 17.6s,
+  # injected-failures 4.6s + 0.1s, tap-hold 3.1s, priority-drag 0.4s; the whole `e2e` run
+  # 76s including the build.
   web-e2e:
     runs-on: ubuntu-latest
     # A hang guard, not a budget.
@@ -175,3 +179,21 @@ jobs:
         with:
           name: playwright-report
           path: apps/web/playwright-report
+
+  # Q-14: the builder-only player to tier 10 (~61 s locally, measured 2026-10-22; ~2.5 min on a
+  # runner at the 2.43x factor). pnpm test runs it to tier 6; this is the "playable to tier 10"
+  # pin. A hang guard, not a budget.
+  web-play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @manufactory/web exec vitest run src/ui/play.test.ts
+        env:
+          WEB_PLAY_TIER: "10"

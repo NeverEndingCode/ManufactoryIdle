@@ -200,6 +200,29 @@ describe("GET /api/content/:checksum", () => {
     }
   });
 
+  it("memoises the body per checksum, and does not memoise misses (Q-16)", async () => {
+    const { app, store } = await server();
+    let selects = 0;
+    const query = db.query.bind(db);
+    db.query = ((sql: string, params?: unknown[]) => {
+      if (sql.includes("select bundle from content_versions")) selects += 1;
+      return query(sql, params);
+    }) as Db["query"];
+    const url = `/api/content/${store.current.version}`;
+    const a = await app.inject({ method: "GET", url });
+    const b = await app.inject({ method: "GET", url });
+    expect(selects).toBe(1);
+    expect(a.statusCode).toBe(200);
+    expect(b.body).toBe(a.body);
+    expect(b.headers["cache-control"]).toBe(a.headers["cache-control"]);
+    selects = 0;
+    for (let i = 0; i < 2; i++) {
+      const miss = await app.inject({ method: "GET", url: `/api/content/${"0".repeat(64)}` });
+      expect(miss.statusCode).toBe(404);
+    }
+    expect(selects).toBe(2);
+  });
+
   it("answers 404 for an unknown or malformed checksum", async () => {
     const { app } = await server();
     for (const v of ["0".repeat(64), "not-hex"]) {

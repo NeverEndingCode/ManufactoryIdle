@@ -3,7 +3,6 @@ import { withInstalled, type Solution } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import { fixtureState, freshState, loadSlice, snapshotOf, type Slice } from "./test-fixtures.js";
 import {
-  affordability,
   bottleneckRow,
   laneRows,
   satisfaction,
@@ -126,7 +125,7 @@ describe("bottleneckRow (P-2, P-3)", () => {
     const b = bottleneckRow(fresh)!;
     expect(b.laneId).toBe("iron");
     expect(b.itemId).toBe("iron_plate");
-    expect(b.buy).toEqual(P3_BUY);
+    expect(b.action).toEqual(P3_BUY);
     expect(b.text).toBe("Limiting iron plate. 1 more Constructor clears it.");
   });
 
@@ -140,11 +139,11 @@ describe("bottleneckRow (P-2, P-3)", () => {
     const b = bottleneckRow(tier8)!;
     expect(b.laneId).toBe("power");
     expect(b.itemId).toBe("biomass");
-    expect(b.buy).toMatchObject({ type: "BUY_MACHINE", count: 10, recipeId: "collect_biomass" });
+    expect(b.action).toMatchObject({ type: "BUY_MACHINE", count: 10, recipeId: "collect_biomass" });
     expect(b.text).toMatch(/^Power is limited by biomass\. 10 more \S.* clear it\.$/);
   });
 
-  it("5c. a storage bottleneck frames its item with no button", () => {
+  it("5c. a storage bottleneck frames its item, with storage +1", () => {
     const solution = {
       ...fresh.display.solution,
       bottleneck: {
@@ -158,7 +157,7 @@ describe("bottleneckRow (P-2, P-3)", () => {
     const b = bottleneckRow(stub)!;
     expect(b.laneId).toBe("iron");
     expect(b.itemId).toBe("iron_plate");
-    expect(b.buy).toBeNull();
+    expect(b.action).toEqual({ type: "BUY_STORAGE", itemId: "iron_plate", levels: 1 });
     expect(b.text.length).toBeGreaterThan(0);
   });
 });
@@ -169,7 +168,7 @@ describe("bottleneckRow, the power kind (P-2)", () => {
     display: { ...fresh.display, solution: { ...fresh.display.solution, bottleneck } },
   });
 
-  it("a generator frames its first stock input, never __power__", () => {
+  it("a generator frames its scarcest stock input, never __power__", () => {
     const b = bottleneckRow(
       withBottleneck({
         kind: "power",
@@ -179,7 +178,7 @@ describe("bottleneckRow, the power kind (P-2)", () => {
       }),
     )!;
     expect([b.laneId, b.itemId]).toEqual(["power", "biomass"]);
-    expect(b.buy).toMatchObject({ count: 3, machineClass: "biomass_burner", recipeId: "burn_biomass" });
+    expect(b.action).toMatchObject({ count: 3, machineClass: "biomass_burner", recipeId: "burn_biomass" });
     expect(b.text).toMatch(/^Power is limited by burn biomass\. 3 more \S.* clear it\.$/);
     expect(JSON.stringify(b)).not.toContain("__power__");
   });
@@ -197,7 +196,7 @@ describe("bottleneckRow, the power kind (P-2)", () => {
     const b = bottleneckRow(snap)!;
     expect(b.itemId).toBe("biomass");
     expect(b.laneId).toBe("power");
-    expect(b.buy).toMatchObject({ type: "BUY_MACHINE", recipeId: "burn_biomass" });
+    expect(b.action).toMatchObject({ type: "BUY_MACHINE", recipeId: "burn_biomass" });
     expect(laneRows(snap, "power").some((r) => r.itemId === b.itemId)).toBe(true);
     expect(JSON.stringify(b)).not.toContain("__power__");
   });
@@ -211,7 +210,7 @@ describe("bottleneckRow, the power kind (P-2)", () => {
         machinesToClear: 0,
       }),
     )!;
-    expect([b.laneId, b.itemId, b.buy]).toEqual([null, null, null]);
+    expect([b.laneId, b.itemId, b.action]).toEqual([null, null, null]);
   });
 });
 
@@ -228,7 +227,7 @@ describe("bottleneckRow, rows not shown (P-2)", () => {
       },
     } as Solution;
     const b = bottleneckRow({ ...fresh, display: { ...fresh.display, solution } })!;
-    expect([b.laneId, b.itemId, b.buy]).toEqual([null, null, null]);
+    expect([b.laneId, b.itemId, b.action]).toEqual([null, null, null]);
     expect(b.text).toBe("Limiting iron plate. 2 more Constructors clear it.");
   });
 
@@ -271,20 +270,66 @@ describe("stateClass", () => {
   });
 });
 
-describe("affordability (W-13)", () => {
-  it("6. a fresh world's buy is ~42.6 s away, then affordable", () => {
-    const { atMs } = fresh.schedule;
-    const now = affordability(fresh, P3_BUY, atMs);
-    expect(now.affordable).toBe(false);
-    if (now.affordable) return;
-    expect(now.inMs).not.toBeNull();
-    expect(Math.abs(now.inMs! - 42_600)).toBeLessThanOrEqual(1_000);
-    expect(affordability(fresh, P3_BUY, atMs + 60_000)).toEqual({ affordable: true });
+describe("bottleneckRow, the frame's other actions (Q-5)", () => {
+  const withBottleneck = (s: Snapshot, bottleneck: Solution["bottleneck"]): Snapshot => ({
+    ...s,
+    display: { ...s.display, solution: { ...s.display.solution, bottleneck } },
   });
 
-  it("an unreachable cost has inMs null", () => {
-    const huge = { ...P3_BUY, count: 1000 };
-    const a = affordability(fresh, huge, fresh.schedule.atMs);
-    expect(a).toEqual({ affordable: false, inMs: null });
+  it("9. storage: BUY_STORAGE for upgrade storage, BUY_QS for quantum, none for null", () => {
+    const at = (upgrade: "storage" | "quantum" | null) =>
+      bottleneckRow(
+        withBottleneck(fresh, {
+          kind: "storage",
+          itemId: "iron_rod",
+          limitingTarget: "item:iron_rod",
+          upgrade,
+        }),
+      )!;
+    expect(at("storage").action).toEqual({ type: "BUY_STORAGE", itemId: "iron_rod", levels: 1 });
+    expect(at("quantum").action).toEqual({ type: "BUY_QS", lane: "iron", levels: 1 });
+    expect(at(null).action).toBeNull();
+    expect(at("quantum").itemId).toBe("iron_rod");
+  });
+
+  it("9. reserve: SET_RESERVE until the reserve is already set", () => {
+    const reserve = {
+      kind: "reserve",
+      itemId: "iron_plate",
+      percent: 0.25,
+      limitingTarget: "item:iron_rod",
+    } as const;
+    expect(bottleneckRow(withBottleneck(fresh, reserve))!.action).toEqual({
+      type: "SET_RESERVE",
+      itemId: "iron_plate",
+      percent: 0.25,
+    });
+    const set: Snapshot = { ...fresh, state: { ...fresh.state, reserve: { iron_plate: 0.25 } } };
+    expect(bottleneckRow(withBottleneck(set, reserve))!.action).toBeNull();
+  });
+
+  it("10. a generator frames its scarcest stock input", () => {
+    const tier6 = snapshotOf(slice, { ...freshState(slice), tier: 6 });
+    const short = (scarce: string, fed: string): Snapshot => {
+      const itemRates = new Map(tier6.display.solution.itemRates);
+      itemRates.set(scarce, { production: 0.5, consumption: 1, net: -0.5 });
+      itemRates.set(fed, { production: 0.9, consumption: 1, net: -0.1 });
+      const solution = {
+        ...tier6.display.solution,
+        itemRates,
+        bottleneck: {
+          kind: "power",
+          limitingTarget: "power",
+          generatorRecipeId: "burn_coal",
+          machinesToClear: 2,
+        },
+      } as Solution;
+      return { ...tier6, display: { ...tier6.display, solution } };
+    };
+    const water = bottleneckRow(short("water", "coal"))!;
+    expect([water.laneId, water.itemId]).toEqual(["oil", "water"]);
+    expect(water.action).toMatchObject({ type: "BUY_MACHINE", machineClass: "coal_generator" });
+    const coal = bottleneckRow(short("coal", "water"))!;
+    expect([coal.laneId, coal.itemId]).toEqual(["coal", "coal"]);
   });
 });

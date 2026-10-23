@@ -1,3 +1,4 @@
+import { builtinModules } from "node:module";
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
@@ -142,6 +143,8 @@ export default tseslint.config(
       "@typescript-eslint/no-restricted-imports": [
         "error",
         {
+          // W-4: bare Node builtins (fs, crypto, fs/promises, ...); `node:` is the regex below.
+          paths: builtinModules.map((name) => ({ name, message: "W-4: browser code (a Node builtin)" })),
           patterns: [
             {
               group: ["@manufactory/content", "@manufactory/content/*"],
@@ -152,12 +155,23 @@ export default tseslint.config(
               group: ["@manufactory/api", "@manufactory/api/*"],
               message: "P-13: the API is a test dependency only",
             },
+            {
+              group: ["@manufactory/sim", "@manufactory/sim/*"],
+              message: "the simulator is a Node app",
+            },
             { regex: "^node:", message: "browser code" },
             {
               group: ["**/test-fixtures*", "**/test-rig*"],
               message: "test-only helpers (Node, the API): never imported by app code",
             },
           ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportExpression",
+          message: "Q-17: no dynamic import() in browser code; it bypasses the W-4 import ban",
         },
       ],
     },

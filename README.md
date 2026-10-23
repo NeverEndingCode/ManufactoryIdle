@@ -23,7 +23,8 @@ Docker Compose) are in place, with the test suite, lint, typecheck and
     pnpm --filter @manufactory/web dev    # the client; then open http://localhost:5173
 
 The Vite dev server proxies the API; if the API listens elsewhere (`PORT=9000`), start the
-client with `API_PORT=9000`.
+client with `API_PORT=9000`. Every D.1 action is playable in the browser; `web-play` in CI
+proves tier 10 through the client's own builders.
 
 There is deliberately no test count here. It was wrong three times before it was removed —
 run `pnpm test` for the number, which is the only place it cannot go stale.
@@ -51,7 +52,7 @@ The original spec is decomposed into four, of which the engine core is the first
 | 1 | Engine + simulator | A playable game in the terminal — **done** |
 | 2 | Calibrated content | A game that is *paced* — **done** |
 | 3 | Server + authority | A game with a backend — **done** |
-| 4 | Web client | A game other people can play — **in progress** (4a: web shell and lane view) |
+| 4 | Web client | A game other people can play — **in progress** (4a: shell and lane view; 4b: drawer, priority, dock and tap) |
 
 ## Design pillars
 
