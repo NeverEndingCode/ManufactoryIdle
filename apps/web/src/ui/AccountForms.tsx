@@ -12,7 +12,6 @@ import {
   type Ref,
 } from "react";
 import type { AuthField, AuthResult, ResetResult } from "../auth/accounts.js";
-import { PARKED_GUEST_TOKEN_KEY } from "../sync/constants.js";
 import type { GameStore, StoreView } from "../sync/store.js";
 import { useAnnounce } from "./announce.js";
 import { Guarded } from "./Guarded.js";
@@ -142,16 +141,6 @@ function formErrorOf(r: AuthResult): string | null {
 }
 
 type AccountStore = Pick<GameStore, "signUp" | "signIn" | "signOut" | "sendReset">;
-
-/** The parked guest token (S-6): the store's notice while it shows, else the key itself. */
-function hasParkedGuest(view: StoreView): boolean {
-  if (view.notices.some((n) => n.kind === "account-has-factory")) return true;
-  try {
-    return localStorage.getItem(PARKED_GUEST_TOKEN_KEY) !== null;
-  } catch {
-    return false;
-  }
-}
 
 export function AccountSection({
   store,
@@ -374,7 +363,7 @@ function SignedIn({ store, view }: { store: AccountStore; view: StoreView }) {
   return (
     <div className={styles.form}>
       <p className={styles.signedIn}>{email === null ? "Signed in" : `Signed in as ${email}`}</p>
-      {hasParkedGuest(view) && <p className={styles.note}>{PARKED_LINE}</p>}
+      {view.parked && <p className={styles.note}>{PARKED_LINE}</p>}
       {failed && <FormAlert>{SIGN_OUT_FAILED}</FormAlert>}
       <div className={styles.actions}>
         <Guarded

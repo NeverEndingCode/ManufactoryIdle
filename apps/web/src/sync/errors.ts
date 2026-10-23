@@ -11,8 +11,10 @@ export type Outcome =
   | { kind: "retry" }
   /** 400, or any other unexpected 4xx: drop, log, re-sync, a generic toast. */
   | { kind: "client-bug"; status: number; body: unknown }
-  /** 401: identity is gone (W-14 / W-16). */
-  | { kind: "unauthorized" }
+  /** 401: identity is gone (W-14 / W-16). `apiGuest`: the API's own answer to a guest token
+   * (`WWW-Authenticate: Guest` and `{"error":"unauthorized"}`, server.ts requirePlayer), not
+   * a proxy's or an edge's. */
+  | { kind: "unauthorized"; apiGuest?: true }
   /** 404: no world. */
   | { kind: "no-world" };
 
@@ -60,8 +62,16 @@ export async function classify(res: Response | null): Promise<Outcome> {
         banner: accounts ? "accounts-unavailable" : null,
       };
     }
-    case 401:
-      return { kind: "unauthorized" };
+    case 401: {
+      const scheme = res.headers.get("www-authenticate")?.trim().split(/\s+/)[0]?.toLowerCase();
+      const body = await bodyOf(res);
+      const ours =
+        scheme === "guest" &&
+        typeof body === "object" &&
+        body !== null &&
+        (body as { error?: unknown }).error === "unauthorized";
+      return ours ? { kind: "unauthorized", apiGuest: true } : { kind: "unauthorized" };
+    }
     case 404:
       return { kind: "no-world" };
     // Timeouts and "too early": transient, the same request may succeed.

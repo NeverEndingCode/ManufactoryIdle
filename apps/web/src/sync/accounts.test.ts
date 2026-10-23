@@ -301,6 +301,9 @@ describe("GameStore accounts (W-14 to W-16)", () => {
       text: ACCOUNT_HAS_FACTORY,
     });
     expect(store.getView().identity).toBe("session");
+    // The park is only in memory here (memoryTokenStorage): the view still says so.
+    expect(parked.persistent).toBe(false);
+    expect(store.getView().parked).toBe(true);
   });
 
   it("8. a 404 drops the token and loads the account's world (S-5)", async () => {
@@ -335,6 +338,7 @@ describe("GameStore accounts (W-14 to W-16)", () => {
     expect(view.notices).toContainEqual({ kind: "signed-out", text: SIGNED_OUT });
     expect(view.notices.some((n) => n.kind === "account-has-factory")).toBe(false);
     expect(worldCalls(rig, from).some((c) => c.url === "/api/guests")).toBe(false);
+    expect(view.parked).toBe(false);
   });
 
   it("9b. sign-out with nothing parked makes one new guest (S-7)", async () => {
@@ -743,5 +747,93 @@ describe("GameStore accounts: never lose a guest token (fix round 1)", () => {
     store.onFocus();
     await store.idle();
     expect(getsSince(rig, from)[0]!.headers["x-test-user"]).toBe("u:f@x");
+  });
+});
+
+describe("GameStore accounts: fix round 2", () => {
+  it("1. a foreign 401 on a token from the park keeps it and shows guest-expired", async () => {
+    const dead = "D".repeat(43);
+    let foreign = false;
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      if (foreign && url === "/api/world") {
+        // A proxy's or an edge's 401: no Guest challenge, not the API's body.
+        return new Response("<html>401 Authorization Required</html>", { status: 401 });
+      }
+      return holder.rig!.fetch(url, init);
+    };
+    const rig = await newRig();
+    holder.rig = rig;
+    const tokens = memoryTokenStorage();
+    tokens.set(dead);
+    rig.session.user = "u:e@x";
+    const { store, parked } = storeOn(rig, { tokens, fetch });
+    await store.start();
+    await store.idle();
+    expect(parked.get()).toBe(dead);
+    foreign = true;
+    const from = rig.fetch.calls.length;
+    expect(await store.signOut()).toBe(true);
+    await store.idle();
+    const view = store.getView();
+    expect(tokens.get()).toBe(dead);
+    expect(view.notices.map((n) => n.kind)).toContain("guest-expired");
+    expect(view.status).toBe("error");
+    expect(worldCalls(rig, from).some((c) => c.url === "/api/guests")).toBe(false);
+  });
+
+  it("2. a claim answered after an epoch bump settles and releases the hold", async () => {
+    // The lever: a guest keepalive sent before the sign-in, held, then answered 401 while the
+    // claim is out. Under the new session that reads as a lost session: #leaveSession resets
+    // the world (an epoch bump) mid-claim. The claim's answer then arrives from the old epoch.
+    let openKeepalive!: () => void;
+    const keepaliveGate = new Promise<void>((r) => (openKeepalive = r));
+    let openClaim!: () => void;
+    const claimGate = new Promise<void>((r) => (openClaim = r));
+    let claimSent = false;
+    let keepaliveSent = false;
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      if (url === "/api/actions" && init?.keepalive) {
+        keepaliveSent = true;
+        await keepaliveGate;
+        return new Response('{"error":"unauthorized"}', {
+          status: 401,
+          headers: { "www-authenticate": "Guest" },
+        });
+      }
+      if (url === "/api/auth/claim") {
+        claimSent = true;
+        await claimGate;
+      }
+      return holder.rig!.fetch(url, init);
+    };
+    const rig = await newRig();
+    holder.rig = rig;
+    const { store } = storeOn(rig, { fetch });
+    await store.start();
+    await store.idle();
+    await rig.advance(60_000);
+    store.pressTap();
+    store.releaseTap();
+    store.flushTaps({ keepalive: true });
+    rig.clock.settleWith = null; // idle() would wait on the gated requests
+    await until(() => keepaliveSent);
+
+    expect((await store.signUp("w@x", "hunter2hunter2")).ok).toBe(true);
+    await until(() => claimSent);
+    openKeepalive();
+    await until(() => store.getView().identity === "guest"); // the epoch bump
+    openClaim();
+    await store.idle();
+
+    expect(store.getView().auth).toBe("idle");
+    // The claim settled: a restart doesn't claim again, and the outbox runs.
+    store.stop();
+    await store.start();
+    await store.idle();
+    expect(rig.fetch.calls.filter((c) => c.url === "/api/auth/claim")).toHaveLength(1);
+    expect((await store.send([reorder(store)], "reorder")).kind).toBe("adopt");
+    expect(store.getView().auth).toBe("idle");
   });
 });

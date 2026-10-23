@@ -71,6 +71,8 @@ export interface StoreView {
   account: { email: string | null } | null;
   /** "held": a sign-in is in progress (S-4); "claiming": the claim is retrying (S-5). */
   auth: "idle" | "held" | "claiming";
+  /** A guest token is parked (S-6), in storage or only in memory: signing out returns to it. */
+  parked: boolean;
 }
 
 export interface GameStoreDeps {
@@ -650,16 +652,22 @@ export class GameStore {
       outcome = { kind: "retry" };
     }
     const receivedAt = this.#clock.now();
-    if (epoch !== this.#epoch) {
-      console.error("claim: a response for a world the store has left");
-      return;
-    }
+    // The store moved to another world while the claim was out (a reset mid-claim). The answer
+    // still decides where the guest token goes (W-16: moved, never lost), but its world is not
+    // adopted and nothing is retried: the claim settles and the hold is released, so auth and
+    // the outbox never stay stranded.
+    const stale = epoch !== this.#epoch;
+    if (stale) console.error("claim: answered after the store left its world; releasing");
     // The token moves happen even after stop(): the server has decided, and start() resumes.
     switch (outcome.kind) {
       case "adopt":
         // 200: the same player, now the account's, so the held batches' keys still match.
         this.#tokens.clear();
         this.#settleClaim();
+        if (stale) {
+          this.#release();
+          return;
+        }
         if (this.#stopped) return;
         await this.#adopt(outcome.body, "get", receivedAt, epoch);
         this.#afterClaim();
@@ -675,6 +683,11 @@ export class GameStore {
       case "retry":
       case "paused": {
         // A network error, a 5xx, a 503, a 429: the same claim again, still held.
+        if (stale) {
+          this.#settleClaim();
+          this.#release();
+          return;
+        }
         if (this.#stopped) return;
         this.#auth = "claiming";
         this.#failures += 1;
@@ -694,6 +707,10 @@ export class GameStore {
         if (unknownGuest) this.#tokens.clear();
         else this.#park(guestToken);
         this.#settleClaim();
+        if (stale) {
+          this.#release();
+          return;
+        }
         // Batches made for the guest's world must never reach the account's.
         this.#outbox.clear({ kind: "unauthorized" });
         this.#resetWorld();
@@ -1071,22 +1088,23 @@ export class GameStore {
           this.#wantGet(true);
           return;
         }
-        this.#expire();
+        this.#expire(false);
         return;
       case "unauthorized":
-        this.#expire();
+        this.#expire(o.apiGuest === true);
         return;
     }
   }
 
   /** A 401 on a guest token: the 30-day cleanup deleted it, and polling stops. Under a session
-   * (the SDK's refresh failed): back to a guest, never a wall (S-7). */
-  #expire(): void {
+   * (the SDK's refresh failed): back to a guest, never a wall (S-7). `apiGuest`: the API's own
+   * guest 401 (errors.ts), the only one that may take the quiet path below. */
+  #expire(apiGuest: boolean): void {
     if (this.#identity === "session") {
       this.#leaveSession("session-ended");
       return;
     }
-    if (this.#tokenFromPark) {
+    if (this.#tokenFromPark && apiGuest) {
       // A parked token whose claim committed (its tab closed before the answer): the world is
       // the account's now. Quietly start a new guest instead of the guest-expired wall.
       this.#tokenFromPark = false;
@@ -1255,6 +1273,7 @@ export class GameStore {
       identity: this.#identity,
       account: this.#account,
       auth: this.#auth,
+      parked: this.#parked.get() !== null,
     };
   }
 

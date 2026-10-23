@@ -134,6 +134,7 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     identity: "guest",
     account: null,
     auth: "idle",
+    parked: false,
   };
   let clock = opts.now ?? CLIENT_T0;
   const listeners = new Set<() => void>();

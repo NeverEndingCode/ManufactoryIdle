@@ -218,12 +218,11 @@ describe("Settings (S-11)", () => {
     expect(store.signOut).toHaveBeenCalledTimes(1);
     await settle();
 
-    // A boot that found the session: no email. A parked token adds its line. A failed sign-out
-    // says so.
-    store.set({
-      account: { email: null },
-      notices: [{ kind: "account-has-factory", text: "This account already has a factory." }],
-    });
+    // A boot that found the session: no email. A parked token adds its line, from view.parked
+    // alone: here the park is only in memory (no notice, nothing in localStorage). A failed
+    // sign-out says so.
+    expect(localStorage.getItem("mi.parkedGuestToken")).toBeNull();
+    store.set({ account: { email: null }, notices: [], parked: true });
     cleanup();
     mount(store);
     dialog = openSettings();
