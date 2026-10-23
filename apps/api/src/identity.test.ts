@@ -226,6 +226,27 @@ describe("POST /api/auth/claim", () => {
     expect(await db.query("select 1 from players where supertokens_user_id is not null")).toHaveLength(0);
   });
 
+  it("a repeat of the same claim is idempotent: 200 with the same world (003)", async () => {
+    const token = await newGuest();
+    const first = await claim("u10", { guestToken: token });
+    expect(first.statusCode).toBe(200);
+    const again = await claim("u10", { guestToken: token });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual(first.json());
+    expect(await db.query("select 1 from players")).toHaveLength(1);
+    expect(await db.query("select 1 from player_worlds")).toHaveLength(1);
+  });
+
+  it("a different guest token against an account that claimed one is still 409", async () => {
+    const token = await newGuest();
+    expect((await claim("u11", { guestToken: token })).statusCode).toBe(200);
+    const other = await newGuest();
+    const res = await claim("u11", { guestToken: other });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: "already-has-world" });
+    expect((await getWorld({ authorization: `Guest ${other}` })).statusCode).toBe(200);
+  });
+
   it("answers already-has-world when the account's player appears between check and update", async () => {
     const token = await newGuest();
     // Deterministic race: the account's player is inserted just before the claim's update.

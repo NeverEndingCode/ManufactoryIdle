@@ -25,7 +25,7 @@ const TABLES = [
 
 describe("migrate", () => {
   it("applies the migrations and creates all six tables", async () => {
-    expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql"]);
+    expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql", "003-claim-idempotency.sql"]);
     const rows = await db.query<{ table_name: string }>(
       `select table_name from information_schema.tables
        where table_schema = 'public' and table_name = any($1) order by table_name`,
@@ -38,7 +38,7 @@ describe("migrate", () => {
     await migrate(db);
     expect(await migrate(db)).toEqual([]);
     const rows = await db.query("select * from schema_migrations");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
   });
 
   it("players check requires exactly one identifier", async () => {
@@ -164,6 +164,22 @@ describe("002 backfills action_log.content_version", () => {
   });
 });
 
+describe("003 records the claimed guest token", () => {
+  it("adds a nullable, unique players.claimed_guest_token_hash", async () => {
+    await migrate(db);
+    const [col] = await db.query<{ is_nullable: string; data_type: string }>(
+      `select is_nullable, data_type from information_schema.columns
+        where table_name = 'players' and column_name = 'claimed_guest_token_hash'`,
+    );
+    expect(col).toEqual({ is_nullable: "YES", data_type: "text" });
+    await db.query("insert into players (supertokens_user_id) values ('a'), ('b')");
+    await db.query("update players set claimed_guest_token_hash = 'h' where supertokens_user_id = 'a'");
+    await expect(
+      db.query("update players set claimed_guest_token_hash = 'h' where supertokens_user_id = 'b'"),
+    ).rejects.toThrow(/unique|duplicate/i);
+  });
+});
+
 describe("transaction", () => {
   it("rolls back on throw", async () => {
     await migrate(db);
@@ -209,7 +225,7 @@ describe("the migrate lock", () => {
     const tx = seen.filter((q) => q.inTx);
     const locks = tx.filter((q) => /pg_advisory_xact_lock/.test(q.sql));
     // One for the bookkeeping table, then one per migration file.
-    expect(locks).toHaveLength(3);
+    expect(locks).toHaveLength(4);
   });
 
   it("re-checks under the lock: a migration another instance applied meanwhile is skipped", async () => {
@@ -221,13 +237,13 @@ describe("the migrate lock", () => {
       transaction: async (fn) => {
         if (!raced) {
           raced = true;
-          expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql"]);
+          expect(await migrate(db)).toEqual(["001-initial.sql", "002-anticheat.sql", "003-claim-idempotency.sql"]);
         }
         return db.transaction(fn);
       },
       close: () => db.close(),
     };
     expect(await migrate(racing)).toEqual([]);
-    expect(await db.query("select * from schema_migrations")).toHaveLength(2);
+    expect(await db.query("select * from schema_migrations")).toHaveLength(3);
   });
 });
