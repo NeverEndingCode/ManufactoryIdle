@@ -154,3 +154,8 @@
 .dock:empty {
   display: none;
 }
+
+/* W-25: the GPL footer spans every column, below the panes and above the dock's reservation. */
+.footer {
+  grid-column: 1 / -1;
+}

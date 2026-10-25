@@ -147,6 +147,25 @@ button {
   min-width: 0;
 }
 
+/* W-25: the GPL footer. It wraps at 320 px; its links are 44 px targets (W-20). */
+.app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 4px;
+  margin-top: 16px;
+  color: var(--t3);
+  font-size: var(--fs-3);
+}
+
+.app-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--t2);
+}
+
 .btn {
   min-height: 44px;
   padding: 8px 13px;

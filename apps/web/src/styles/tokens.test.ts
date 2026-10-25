@@ -233,4 +233,16 @@ describe("the CSS source", () => {
       "font-variant-numeric": "tabular-nums",
     });
   });
+
+  it("9a. a segmented button is a 44 px target both ways (W-20)", () => {
+    // The 320 px e2e found the drawer's "×1" at 38.8 px wide: short labels need a min-width.
+    const segs = all.filter((d) => d.stack.at(-1) === ".segBtn");
+    expect(segs.length).toBeGreaterThan(0);
+    const byFile = new Map<string, Record<string, string>>();
+    for (const d of segs) byFile.set(d.file, { ...byFile.get(d.file), [d.property]: d.value });
+    for (const [file, rule] of byFile) {
+      expect(rule["min-height"], file).toBe("44px");
+      expect(rule["min-width"], file).toBe("44px");
+    }
+  });
 });

@@ -20,8 +20,8 @@ client sends actions and gets back the resolved world.
 | `ADMIN_TOKEN` | unset | Enables `POST /api/admin/migrate-world` (see below). Unset or empty: the route does not exist and answers 404. Use a long random value. |
 | `SUPERTOKENS_CONNECTION_URI` | unset | The SuperTokens core, e.g. `http://localhost:3567`. Unset: accounts are disabled (see below). |
 | `SUPERTOKENS_API_KEY` | unset | The core's API key (`API_KEYS` in `infra/.env`). |
-| `API_DOMAIN` | required with accounts | Where browsers reach this API, e.g. `https://api.example.com`; SuperTokens serves `/auth/*` here. Session cookies are `Secure` only when it is `https` (startup warns otherwise; `http://localhost:8080` is fine for local dev). |
-| `WEBSITE_DOMAIN` | required with accounts | The web client's origin, e.g. `http://localhost:5173` locally: the only CORS origin, with credentials. |
+| `API_DOMAIN` | required with accounts | Where browsers reach this API: the site's one origin (W-2), e.g. `https://play.example.com`, since the proxy in front forwards `/api` and `/auth`; SuperTokens serves `/auth/*` there. Session cookies are `Secure` only when it is `https` (startup warns otherwise; `http://localhost:5173` is fine for local dev). |
+| `WEBSITE_DOMAIN` | required with accounts | The web client's origin, the same as `API_DOMAIN` (W-2; `http://localhost:5173` for both locally, behind Vite's proxy): the only CORS origin, with credentials. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Password-reset mail over your SMTP server (port 465 uses TLS). All five or none (R-24). |
 | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | unset | Discord sign-in. Configured only when both are set (R-12). |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | GitHub sign-in. Configured only when both are set (R-12). |

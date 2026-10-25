@@ -9,6 +9,7 @@ import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
 import { bottleneckRow, unlockedLanes, type BottleneckModel } from "./derive.js";
 import { Drawer } from "./Drawer.js";
+import { Footer } from "./Footer.js";
 import { Handbook } from "./Handbook.js";
 import layout from "./Layout.module.css";
 import { LaneView } from "./LaneView.js";
@@ -469,11 +470,16 @@ export function App({ store }: { store: GameStore }) {
                   />
                 </div>
               )}
+              {/* W-25: inside the layout, so the dock's reservation stays below it. */}
+              <div className={layout.footer}>
+                <Footer />
+              </div>
               <div ref={dockRef} className={layout.dock} data-dock-slot>
                 <PowerDock store={store} snapshot={s} taps={view.taps} pending={view.pending} />
               </div>
             </div>
           )}
+          {!hasLayout && <Footer />}
           {sheet !== null && <Settings store={store} view={view} {...sheet} onClose={closeSheet} />}
         </div>
       </TickContext.Provider>
