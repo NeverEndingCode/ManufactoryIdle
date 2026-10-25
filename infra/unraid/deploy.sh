@@ -69,6 +69,7 @@ preflight() {
 
 # ---- 1. source -----------------------------------------------------------------------------
 SHA="" SHORT=""
+NEW_TAG="" # the build that becomes :current, moved only just before the recreate (step 5)
 fetch_source() {
   local ref=$1
   if [[ ! -d $SRC/.git ]]; then
@@ -93,16 +94,14 @@ fetch_source() {
 build_images() {
   log "building $API:$SHORT"
   git -C "$SRC" archive --format=tar "$SHA" |
-    docker build --progress=plain -f infra/docker/Dockerfile --target api \
+    docker build --pull --progress=plain -f infra/docker/Dockerfile --target api \
       -t "$API:$SHORT" -
   log "building $WEB:$SHORT"
   # The full 40-hex sha: the footer's source link accepts nothing shorter (W-25).
   git -C "$SRC" archive --format=tar "$SHA" |
-    docker build --progress=plain -f infra/docker/Dockerfile --target web \
+    docker build --pull --progress=plain -f infra/docker/Dockerfile --target web \
       --build-arg "SOURCE_COMMIT=$SHA" -t "$WEB:$SHORT" -
-  # Only once both built, so a failed build never leaves :current half moved.
-  docker tag "$API:$SHORT" "$API:current"
-  docker tag "$WEB:$SHORT" "$WEB:current"
+  NEW_TAG=$SHORT
 }
 
 # ---- 3. database ---------------------------------------------------------------------------
@@ -219,7 +218,7 @@ pgnet_subnet() {
 
 # render <name> KEY=VALUE...: $SRC/infra/unraid/templates/my-<name>.xml with @@KEY@@ filled in
 # (XML-escaped), written atomically to $TEMPLATES/my-<name>.xml. <Config> lines of the old
-# rendered file whose Target the new one lacks (a variable added in the Docker tab, such as the
+# rendered file whose Target the new one lacks (a variable added to the file by hand, such as the
 # SMTP ones) are carried over. The old file is kept in $WORK for a rollback.
 render() {
   local name=$1 kv key val line target out extras="" tmp
@@ -276,9 +275,12 @@ xml_attr() {
   xml_unescape "${BASH_REMATCH[1]}"
 }
 
-# docker run from a rendered template, as dockerMan's xmlToCommand builds it. Variables go
-# through an --env-file (mode 600, in $WORK), so no value is on a command line.
-run_from_template() {
+# The `docker run` arguments for a rendered template, into RUN_ARGS, as dockerMan's
+# xmlToCommand builds them. Variables go through an --env-file (mode 600, in $WORK, removed at
+# exit), so no value is on a command line. A malformed template dies here, before anything is
+# removed.
+RUN_ARGS=()
+prepare_run() {
   local file=$1 line name="" repo="" net="" webui="" icon="" extra="" type target mode value
   local envfile
   local -a args=() extras=()
@@ -314,30 +316,29 @@ run_from_template() {
   args+=(-l net.unraid.docker.managed=dockerman)
   [[ -z $webui ]] || args+=(-l "net.unraid.docker.webui=$webui")
   [[ -z $icon ]] || args+=(-l "net.unraid.docker.icon=$icon")
-  # Called under `if` (recreate), where set -e is off: every failure returns explicitly.
-  if ! docker run -d --name "$name" --net "$net" --env-file "$envfile" "${args[@]}" \
-    "${extras[@]}" "$repo" >/dev/null; then
-    rm -f -- "$envfile"
-    return 1
-  fi
-  rm -f -- "$envfile"
+  [[ ${file##*/} == "my-$name.xml" ]] || die "$file: its Name is $name"
+  RUN_ARGS=(-d --name "$name" --net "$net" --env-file "$envfile" "${args[@]}" "${extras[@]}" "$repo")
 }
 
+# Called under `if` (recreate), where set -e is off: every failure returns explicitly. The
+# arguments are built first, then the old container goes (-v: with Caddy's anonymous /data and
+# /config volumes, which would otherwise pile up), then the new one runs.
 replace_container() {
   local name=$1
-  docker rm -f "$name" >/dev/null 2>&1 || true
-  run_from_template "$TEMPLATES/my-$name.xml" || return 1
+  prepare_run "$TEMPLATES/my-$name.xml"
+  docker rm -fv "$name" >/dev/null 2>&1 || true
+  docker run "${RUN_ARGS[@]}" >/dev/null || return 1
   log "started $name ($(docker inspect -f '{{.Config.Image}} {{printf "%.19s" .Image}}' "$name"))"
 }
 
-wait_healthy() { # the API's HEALTHCHECK; its first probe is 30s in
+wait_healthy() { # the image's HEALTHCHECK (probing every 2s while starting)
   local name=$1 i status restarts
   for ((i = 0; i < 75; i++)); do
     status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$name" 2>/dev/null) ||
       status=missing
     restarts=$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null) || restarts=0
     case $status in
-    healthy) return 0 ;;
+    healthy | running) return 0 ;; # running: an image with no HEALTHCHECK (smoke decides)
     unhealthy | exited | dead | missing) break ;;
     esac
     [[ $restarts -eq 0 ]] || break
@@ -349,22 +350,50 @@ wait_healthy() { # the API's HEALTHCHECK; its first probe is 30s in
 }
 
 # ---- 6. smoke test -------------------------------------------------------------------------
+# Through the published port, so through Caddy. /api/health's "accounts":true says only that the
+# SuperTokens env is set (the SDK contacts no core until a request needs one), so a second probe
+# asks the core something: EmailPassword's email-exists lookup (supertokens-node 24,
+# /auth/emailpassword/email/exists) answers {"status":"OK",...} only when the core accepted the
+# API key and speaks the SDK's interface.
 smoke() {
-  local body i
+  local base=http://127.0.0.1:$HOST_PORT body="" i
   for ((i = 0; i < 30; i++)); do
-    if body=$(curl -fsS --max-time 5 "http://127.0.0.1:$HOST_PORT/api/health" 2>/dev/null); then
-      log "health: $body"
-      if [[ $body == *'"accounts":true'* ]]; then return 0; fi
-      log "the API answers but accounts are off"
-      return 1
-    fi
+    if body=$(curl -fsS --max-time 5 "$base/api/health" 2>/dev/null); then break; fi
+    body=""
     sleep 2
   done
-  log "no answer from http://127.0.0.1:$HOST_PORT/api/health"
-  return 1
+  if [[ -z $body ]]; then
+    log "no answer from $base/api/health"
+    return 1
+  fi
+  log "health: $body"
+  if [[ $body != *'"accounts":true'* ]]; then
+    log "the API answers but accounts are off"
+    return 1
+  fi
+  if ! body=$(curl -fsS --max-time 15 "$base/auth/emailpassword/email/exists?email=smoke@example.invalid" 2>&1); then
+    log "the SuperTokens probe failed: $body"
+    return 1
+  fi
+  if [[ $body != *'"status":"OK"'* ]]; then
+    log "the SuperTokens probe answered: $body"
+    return 1
+  fi
+  log "SuperTokens core: $body"
 }
 
-start_both() { replace_container "$API" && wait_healthy "$API" && replace_container "$WEB" && smoke; }
+start_both() {
+  replace_container "$API" && wait_healthy "$API" &&
+    replace_container "$WEB" && wait_healthy "$WEB" && smoke
+}
+
+# Point :current at NEW_TAG (a fresh build, or --rollback's tag), if any.
+promote() {
+  [[ -n $NEW_TAG ]] || return 0
+  docker tag "$API:$NEW_TAG" "$API:current"
+  docker tag "$WEB:$NEW_TAG" "$WEB:current"
+  log ":current is now $NEW_TAG"
+}
 
 # Steps 5 and 6. On failure, put back what ran before: its image (by ID, retagged :current) and
 # its template, then fail. Migrations are forward-only, so a rollback across a migration needs
@@ -425,6 +454,7 @@ main() {
   WORK=$(mktemp -d)
   trap cleanup EXIT
   if command -v flock >/dev/null; then
+    mkdir -p /var/lock
     exec 9>/var/lock/manufactory-deploy.lock
     flock -n 9 || die "another deploy is running"
   fi
@@ -438,9 +468,7 @@ main() {
     [[ $# -eq 2 ]] || usage
     docker image inspect "$API:$2" "$WEB:$2" >/dev/null 2>&1 ||
       die "no $API:$2 / $WEB:$2 image (see: docker image ls $API)"
-    docker tag "$API:$2" "$API:current"
-    docker tag "$WEB:$2" "$WEB:current"
-    log ":current is now $2"
+    NEW_TAG=$2
     ;;
   -*) usage ;;
   *)
@@ -452,9 +480,13 @@ main() {
 
   ensure_database
   render_templates
+  # Only now: a failure above leaves :current, and the running game, on the old images.
+  promote
   recreate
   ensure_autostart
-  [[ $1 == -* ]] || prune_images
+  if [[ $1 != -* ]] && ! prune_images; then
+    log "warning: pruning old images failed; the deploy itself succeeded"
+  fi
   log "deployed ${SHORT:-:current} ($1) at $SITE_ORIGIN"
 }
 

@@ -58,14 +58,17 @@ RUN pnpm --filter @manufactory/web build
 
 # ---- api: Fastify through tsx, as `pnpm start` runs it (D-6) -------------------------------
 FROM deps-api AS api
-COPY --chown=node:node . .
+# Owned by root: the `node` process can read its source but not rewrite it (tsx caches in /tmp).
+COPY . .
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8080
 USER node
 WORKDIR /app/apps/api
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+# --start-interval (Docker 25+) probes every 2s during the start period, so a deploy sees
+# "healthy" within seconds of the API listening, not after the first 30s interval.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=2s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 # `pnpm start`'s own command, run without pnpm: pnpm exits 1 on SIGTERM ("Command failed with
 # signal"), while tsx relays the signal to main.ts, whose shutdown closes Fastify and the pool
@@ -80,3 +83,6 @@ ENV SITE_ADDRESS=:80 \
     API_UPSTREAM=manufactory-api:8080 \
     WEB_ROOT=/srv/manufactory/web
 EXPOSE 80
+# Busybox wget (the image is Alpine); SITE_ADDRESS is :80 in this image.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \
+  CMD wget -qO /dev/null http://127.0.0.1/ || exit 1
