@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!-- Rendered by infra/unraid/deploy.sh into /boot/config/plugins/dockerMan/templates-user/ (mode 600).
+     The double-at placeholders are filled there; this copy holds no secrets. One <Config> per line:
+     deploy.sh reads the rendered file back line by line to build the docker run. -->
+<Container version="2">
+  <Name>manufactory-api</Name>
+  <Repository>manufactory-api:current</Repository>
+  <Registry/>
+  <Network>pgnet</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/NeverEndingCode/ManufactoryIdle</Support>
+  <Project>https://github.com/NeverEndingCode/ManufactoryIdle</Project>
+  <Overview>Manufactory Idle game API (Fastify on Node 22). Built locally by infra/unraid/deploy.sh; not on a registry, so recreate it with deploy.sh --recreate, not the Docker tab's update. Reached only by manufactory-web over pgnet.</Overview>
+  <Category>GameServers:</Category>
+  <WebUI/>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>postgresql16 and SuperTokens---PostgreSQL on pgnet</Requires>
+  <Config Name="DATABASE_URL" Target="DATABASE_URL" Default="" Mode="" Description="Postgres URL of the manufactory role and database on postgresql16 (holds the password)" Type="Variable" Display="always" Required="true" Mask="true">@@DATABASE_URL@@</Config>
+  <Config Name="SUPERTOKENS_CONNECTION_URI" Target="SUPERTOKENS_CONNECTION_URI" Default="http://SuperTokens---PostgreSQL:3567" Mode="" Description="SuperTokens core on pgnet" Type="Variable" Display="always" Required="false" Mask="false">@@SUPERTOKENS_CONNECTION_URI@@</Config>
+  <Config Name="SUPERTOKENS_API_KEY" Target="SUPERTOKENS_API_KEY" Default="" Mode="" Description="The core's API key, copied from its container env (API_KEYS)" Type="Variable" Display="always" Required="false" Mask="true">@@SUPERTOKENS_API_KEY@@</Config>
+  <Config Name="API_DOMAIN" Target="API_DOMAIN" Default="https://manufactory.neverendingcode.com" Mode="" Description="The site's one origin (W-2); https so session cookies are Secure (D-3)" Type="Variable" Display="always" Required="false" Mask="false">@@SITE_ORIGIN@@</Config>
+  <Config Name="WEBSITE_DOMAIN" Target="WEBSITE_DOMAIN" Default="https://manufactory.neverendingcode.com" Mode="" Description="Same as API_DOMAIN" Type="Variable" Display="always" Required="false" Mask="false">@@SITE_ORIGIN@@</Config>
+  <Config Name="TRUST_PROXY" Target="TRUST_PROXY" Default="172.19.0.0/16" Mode="" Description="pgnet's subnet: trust X-Forwarded-For from manufactory-web (D-4)" Type="Variable" Display="always" Required="true" Mask="false">@@TRUST_PROXY@@</Config>
+</Container>
