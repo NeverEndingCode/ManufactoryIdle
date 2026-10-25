@@ -28,6 +28,9 @@ export interface OutboxDeps<S = undefined> {
    * returned promise is awaited before the batch settles or the next one sends, so its
    * adoption sets the next baseVersion. */
   onOutcome: (b: Batch, o: Outcome, sentWith: S | undefined) => void | Promise<void>;
+  /** An outcome that would settle the batch but is resent instead, on the usual backoff (a 401
+   * that isn't the API's own on a guest request, final review I-2). Omitted: none. */
+  retryAnyway?: (o: Outcome, sentWith: S | undefined) => boolean;
   /** Read as each attempt is sent. Omitted: undefined. */
   stamp?: () => S;
   /** Local ms until the shared 429/503 pause ends, 0 if not paused. */
@@ -204,7 +207,7 @@ export class Outbox<S = undefined> {
     } catch (err) {
       console.error("outbox onOutcome", err);
     }
-    if (SETTLED.has(outcome.kind)) {
+    if (SETTLED.has(outcome.kind) && !(this.#d.retryAnyway?.(outcome, sentWith) ?? false)) {
       this.#retries = 0;
       this.#settle(batch, outcome);
       this.#d.onChange?.();

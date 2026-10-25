@@ -40,10 +40,12 @@ A request acts as a player in one of two ways:
 If a request carries both, the session wins and the guest token is ignored (R-13).
 
 `POST /api/auth/claim { guestToken }` (session required) attaches a guest's world to the
-signed-in account and retires the guest token. It answers `409 already-has-world` if the
-account already has a world (no merge, R-14), and `404 unknown-guest` for an unknown or
-already-claimed token (R-18). Clients offer the claim on first sign-in, before the
-account's first `GET /api/world`.
+signed-in account and retires the guest token. The same account repeating the same claim
+(its first response lost) gets `200` with the world it claimed (migration 003). Otherwise
+it answers `409 already-has-world` if the account already has a world (no merge, R-14),
+and `404 unknown-guest` for an unknown token or one already claimed by another account
+(R-18). Clients claim on sign-in, and at a boot that finds a session and a guest token
+(a sign-in cut short), before the account's first `GET /api/world`.
 
 SuperTokens' own routes (`/auth/signup`, `/auth/signin`, `/auth/session/refresh`, ...)
 are served by its Fastify plugin. Sign-in is EmailPassword, plus Discord and GitHub when

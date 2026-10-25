@@ -6,23 +6,38 @@
 # API_UPSTREAM   the API's listen address (default 127.0.0.1:8080)
 # WEB_ROOT       a copy of apps/web/dist (default /srv/manufactory/web)
 #
-# Hashed chunks under /assets/ (and their .map source maps, W-25) are immutable; everything
-# else, index.html above all, is revalidated so a deploy is picked up on the next load.
+# Hashed chunks under /assets/ (and their .map source maps, W-25) are immutable and served
+# only by file_server: a missing one is a 404, never the SPA's index.html (which would then be
+# cached as an immutable script). Everything else falls back to index.html, revalidated
+# (no-cache) so a deploy is picked up on the next load.
 
 {$SITE_ADDRESS:localhost:8443} {
 	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Content-Security-Policy "frame-ancestors 'none'"
+		# Behind real TLS (not localhost's local CA), once the site is HTTPS for good:
+		# Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	root * {$WEB_ROOT:/srv/manufactory/web}
 
 	@backend path /api/* /auth/*
 	handle @backend {
 		reverse_proxy {$API_UPSTREAM:127.0.0.1:8080}
 	}
 
+	handle /assets/* {
+		# Only a file that exists is immutable; a missing one is a plain 404.
+		@exists file
+		header @exists Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
 	handle {
-		root * {$WEB_ROOT:/srv/manufactory/web}
-		@hashed path /assets/*
-		header @hashed Cache-Control "public, max-age=31536000, immutable"
-		@pages not path /assets/*
-		header @pages Cache-Control "no-cache"
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}

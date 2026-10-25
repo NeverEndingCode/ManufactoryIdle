@@ -38,14 +38,14 @@ export function Handbook({ snapshot, itemId, onOpen }: HandbookProps) {
   const root = useRef<HTMLElement>(null);
 
   // Focus is never lost (W-20): whatever the player clicked (a list item, a chip, Back) is gone
-  // after the switch, so the new entry's title, or the search, takes focus. Focus anywhere
-  // else (the header button, a tab) is left where it is.
+  // after the switch, so the new entry's title, or the index's, takes focus (never the search:
+  // that would open a phone's keyboard). Focus anywhere else (the header button, a tab) is
+  // left where it is.
   const shownKey = entry === null ? "index" : entry.itemId;
   useEffect(() => {
     const active = document.activeElement;
     if (active !== null && active !== document.body && active.isConnected) return;
-    root.current?.querySelector<HTMLElement>(entry === null ? "input[type=search]" : "h2")?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on a switch of view
+    root.current?.querySelector<HTMLElement>("h2")?.focus();
   }, [shownKey]);
 
   return (
@@ -78,7 +78,9 @@ function Index({ snapshot, onOpen }: Pick<HandbookProps, "snapshot" | "onOpen">)
   const id = useId();
   return (
     <>
-      <h2 className={styles.title}>Handbook</h2>
+      <h2 className={styles.title} tabIndex={-1}>
+        Handbook
+      </h2>
       <input
         type="search"
         className={styles.search}

@@ -117,5 +117,9 @@ has no container image.
    Check the file with `caddy validate --config infra/Caddyfile --adapter caddyfile`
    where Caddy is installed. That is not part of CI.
 
-`/assets/*` (content-hashed) is cached for a year as immutable; everything else, the
-`index.html` fallback above all, is `no-cache`, so a deploy is picked up on the next load.
+`/assets/*` (content-hashed) is served only from the web root and cached for a year as
+immutable; a missing asset is a 404, never the `index.html` fallback. Everything else falls
+back to `index.html` and is `no-cache`, so a deploy is picked up on the next load. Every
+response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin` and `Content-Security-Policy: frame-ancestors 'none'`; the
+HSTS line is commented out, to enable once the site is on real TLS for good.

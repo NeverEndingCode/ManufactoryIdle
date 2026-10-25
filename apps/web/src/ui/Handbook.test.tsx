@@ -101,7 +101,10 @@ describe("Handbook (S-13, W-19)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back to the handbook" }));
     expect(location.pathname).toBe("/handbook");
-    expect(screen.getByRole("searchbox", { name: "Search the handbook" })).toBeTruthy();
+    const search = screen.getByRole("searchbox", { name: "Search the handbook" });
+    // Focus goes to the index's title, never the search: that would open a phone's keyboard.
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Handbook" }));
+    expect(document.activeElement).not.toBe(search);
   });
 
   it("3. three panes: with the iron plate drawer open, Handbook opens its entry in the detail pane", () => {

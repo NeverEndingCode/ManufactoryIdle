@@ -221,6 +221,7 @@ export class GameStore {
       onOutcome: async (b, o, sent) => {
         await this.#handle(o, "post", this.#clock.now(), sent ?? this.#sent(), b.id);
       },
+      retryAnyway: (o, sent) => this.#strayGuest401(o, sent ?? this.#sent()),
       stamp: () => this.#sent(),
       isPaused: () => Math.max(0, this.#pausedUntil - this.#clock.now()),
       onChange: () => {
@@ -900,11 +901,20 @@ export class GameStore {
     if (session) {
       this.#identity = "session";
       this.#account = { email: null };
-      // S-6: a session and a guest token (a claim cut short): park it, never claim.
-      const token = this.#tokens.get();
-      if (token !== null) {
-        this.#park(token);
-        this.#setNotice({ kind: "account-has-factory", text: TEXT["account-has-factory"] }, false);
+      // A session and a guest token: a sign-up or sign-in cut short (the tab closed before its
+      // claim answered). Claim now, under the hold, exactly as a sign-in does (S-4, S-5): a
+      // GET first would make the account an empty world and strand the guest's. The claim is
+      // idempotent (migration 003): a repeat of a committed claim is 200 with the same world;
+      // a 409 parks the token with the notice (S-6), a 404 unknown-guest drops it. Final
+      // review I-1; the spec's W-16 erratum.
+      if (this.#tokens.get() !== null) {
+        // Pending before the hold settles, so a stop() meanwhile resumes with the claim.
+        this.#claimPending = true;
+        this.#claimRetries = 0;
+        await this.#hold();
+        if (this.#stopped) return;
+        this.#claimOnce();
+        return;
       }
     } else {
       this.#identity = "guest";
@@ -1108,14 +1118,39 @@ export class GameStore {
         this.#expire(false);
         return;
       case "unauthorized":
+        if (this.#strayGuest401(o, sent)) {
+          // Not the API's answer to the guest token (SuperTokens' try-refresh 401 when a stale
+          // cookie rides along, a proxy's 401): it says nothing about the token, which is
+          // kept. A bug to report, retried on the usual backoff (the outbox resends a POST).
+          console.error("401 that isn't the API's on a guest request: retrying, token kept");
+          this.#setNotice({ kind: "client-bug", text: TEXT["client-bug"] });
+          if (cause === "get") {
+            const step = RETRY_STEPS_MS[Math.min(this.#getRetries, RETRY_STEPS_MS.length - 1)]!;
+            this.#getRetries += 1;
+            this.#defer(step, true);
+          }
+          return;
+        }
         this.#expire(o.apiGuest === true);
         return;
     }
   }
 
-  /** A 401 on a guest token: the 30-day cleanup deleted it, and polling stops. Under a session
-   * (the SDK's refresh failed): back to a guest, never a wall (S-7). `apiGuest`: the API's own
-   * guest 401 (errors.ts), the only one that may take the quiet path below. */
+  /** Final review I-2: only the API's own guest 401 may lead to the guest-expired wall, and so
+   * to newFactory deleting the token. Any other 401 on a guest request is retried. */
+  #strayGuest401(o: Outcome, sent: Sent): boolean {
+    return (
+      o.kind === "unauthorized" &&
+      o.apiGuest !== true &&
+      sent.as === "guest" &&
+      this.#identity === "guest"
+    );
+  }
+
+  /** A 401 on a guest token: the 30-day cleanup deleted it, and polling stops. Under a guest
+   * this is only reached with the API's own 401 (`apiGuest`, errors.ts; #strayGuest401 retries
+   * any other) or a repeated 404. Under a session (the SDK's refresh failed): back to a guest,
+   * never a wall (S-7). */
   #expire(apiGuest: boolean): void {
     if (this.#identity === "session") {
       this.#leaveSession("session-ended");
