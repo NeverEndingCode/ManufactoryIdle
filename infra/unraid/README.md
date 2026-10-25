@@ -47,8 +47,11 @@ It runs, in order:
 2. Build both targets from `git archive` of that commit (so only committed files go in), web with
    `SOURCE_COMMIT=<full sha>` for the footer's source link; tag `:<12-char sha>`, then `:current`
    once both built.
-3. Create the `manufactory` role and database in `postgresql16` if missing, with a generated
-   password (kept from the existing template on later runs).
+3. Create the `manufactory` role (no superuser) and the `manufactory` database it owns in
+   `postgresql16` if missing, with a generated password (kept from the existing template on later
+   runs). A database owned by someone else is handed to `manufactory`. This runs as the
+   container's own admin role, read at run time from its `POSTGRES_USER` (`docker exec
+postgresql16 printenv POSTGRES_USER`), so no admin name is in the repo.
 4. Render `templates/my-manufactory-{api,web}.xml` into
    `/boot/config/plugins/dockerMan/templates-user/` (mode 600). `<Config>` entries added there
    by hand are carried over.
@@ -102,7 +105,10 @@ across a migration.
 
 Nothing secret is in the repo, an image layer, a build arg or the script's output. The script
 passes the password to `psql` on stdin, and the container env through a temporary `--env-file`
-(mode 600, deleted at exit), never on a command line. `/boot` is FAT, so the templates' mode is
+(mode 600, deleted at exit), never on a command line. The password is put in a statement only
+when it is new (or the role is): once, on the first deploy. `postgresql16` runs with
+`log_statement = none`, so even that is not logged, and its `pg_hba` already takes password logins
+from pgnet (SuperTokens and Linkwarden log in that way). `/boot` is FAT, so the templates' mode is
 whatever its mount gives (root only); anyone with root on the server can read them, as with every
 other Unraid template.
 

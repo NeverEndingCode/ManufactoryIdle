@@ -26,7 +26,6 @@ readonly TEMPLATES=/boot/config/plugins/dockerMan/templates-user
 readonly AUTOSTART=/var/lib/docker/unraid-autostart
 readonly NETWORK=pgnet
 readonly PG_CONTAINER=postgresql16
-readonly PG_SUPERUSER=rackstack_user
 readonly DB_NAME=manufactory # also the role's name
 readonly ST_CONTAINER=SuperTokens---PostgreSQL
 readonly ST_URI=http://SuperTokens---PostgreSQL:3567
@@ -107,8 +106,16 @@ build_images() {
 }
 
 # ---- 3. database ---------------------------------------------------------------------------
+# The admin role is the container's own POSTGRES_USER (it can create roles and databases), read
+# at run time so no name is in the repo. Never logged.
+PG_ADMIN=""
+pg_admin() {
+  PG_ADMIN=$(docker exec "$PG_CONTAINER" printenv POSTGRES_USER) ||
+    die "$PG_CONTAINER has no POSTGRES_USER in its env"
+  [[ -n $PG_ADMIN ]] || die "$PG_CONTAINER has an empty POSTGRES_USER"
+}
 psql_su() {
-  docker exec -i "$PG_CONTAINER" psql -U "$PG_SUPERUSER" -d postgres -X -q -v ON_ERROR_STOP=1 "$@"
+  docker exec -i "$PG_CONTAINER" psql -U "$PG_ADMIN" -d postgres -X -q -v ON_ERROR_STOP=1 "$@"
 }
 
 xml_escape() {
@@ -147,6 +154,7 @@ DB_PASSWORD=""
 ensure_database() {
   # Keep the password the API template already holds; generate one only without it.
   local url new=false role_exists err
+  pg_admin
   url=$(config_value "$TEMPLATES/my-$API.xml" DATABASE_URL)
   if [[ $url =~ ^postgres(ql)?://$DB_NAME:([0-9a-f]+)@ ]]; then
     DB_PASSWORD=${BASH_REMATCH[2]}
@@ -175,10 +183,11 @@ SQL
   if ! err=$(
     psql_su 2>&1 >/dev/null <<SQL
 SELECT 'CREATE DATABASE $DB_NAME OWNER $DB_NAME' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME') \gexec
+SELECT 'ALTER DATABASE $DB_NAME OWNER TO $DB_NAME' FROM pg_database WHERE datname = '$DB_NAME' AND pg_get_userbyid(datdba) <> '$DB_NAME' \gexec
 SQL
   ); then
     printf '%s\n' "$err" >&2
-    die "creating database $DB_NAME failed"
+    die "creating database $DB_NAME, owned by $DB_NAME, failed"
   fi
 }
 
