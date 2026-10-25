@@ -83,6 +83,8 @@ export interface PendingMap<V> {
   shown(key: string, server: V): V;
   /** One intent: every entry shows at once, until `send`'s promise settles. */
   run(entries: readonly (readonly [string, V])[], send: () => Promise<Outcome>): void;
+  /** The key has an unsettled request. */
+  held(key: string): boolean;
 }
 
 /** Many keys at once (a list of rows). Keys are global to the owner: prefix them. */
@@ -96,6 +98,7 @@ export function usePendingMap<V>(owner?: object): PendingMap<V> {
       return h === undefined ? server : (h.value as V);
     },
     run: (entries, send) => reg.run(entries, send),
+    held: (key) => held.has(key),
   };
 }
 

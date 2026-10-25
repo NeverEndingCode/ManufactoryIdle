@@ -6,7 +6,6 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   D,
   DECIMAL_ZERO,
-  format,
   type Action,
   type Dec,
   type ItemId,
@@ -31,7 +30,9 @@ import {
   type MachineSection,
 } from "./machines.js";
 import { Guarded } from "./Guarded.js";
+import { fmt, useNotation } from "./notation.js";
 import { Projection } from "./Projection.js";
+import { navigate, routePath } from "./route.js";
 import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
 import { useTick } from "./use-tick.js";
@@ -101,7 +102,8 @@ export function Drawer({
   claimFocus,
 }: DrawerProps) {
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
-  const model = drawerModel(snapshot, itemId);
+  const [notation] = useNotation();
+  const model = drawerModel(snapshot, itemId, notation);
   const tabs = tabsOf(model);
   const [picked, setPicked] = useState<Tab>(tabs[0]!);
   const tab = tabs.includes(picked) ? picked : tabs[0]!;
@@ -148,7 +150,21 @@ export function Drawer({
             {sec.className}
           </span>
         )}
-        <button type="button" className={`btn secondary ${styles.close}`} onClick={onClose}>
+        {/* §13.4's context-aware entry: this item's handbook page. A link, so it can open in a
+          new tab too; a plain click stays in the app. */}
+        <a
+          className={`btn secondary ${styles.close} ${styles.handbookLink}`}
+          href={routePath({ kind: "handbook", itemId })}
+          data-handbook-link
+          onClick={(e) => {
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            navigate({ kind: "handbook", itemId });
+          }}
+        >
+          Handbook entry
+        </a>
+        <button type="button" className="btn secondary" onClick={onClose}>
           Close
         </button>
       </div>
@@ -220,7 +236,7 @@ function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<I
             className={isShort ? styles["state-bottleneck"] : undefined}
           >
             <span>{itemName(s, itemId)}</span>
-            <span className="num">{format(need, "hybrid")}</span>
+            <span className="num">{fmt(need)}</span>
           </li>
         );
       })}
@@ -336,7 +352,7 @@ function BuySection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
       </div>
       {sec.ladder !== null && (
         <p data-ladder className={styles.ladder}>
-          <span className="num">{`Ladder ×${format(D(sec.ladder.multiplier), "hybrid")}`}</span>
+          <span className="num">{`Ladder ×${fmt(D(sec.ladder.multiplier))}`}</span>
           <span className="num">{sec.ladder.text}</span>
         </p>
       )}
@@ -401,7 +417,7 @@ function UpgradeSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
 
 function refundText(s: Snapshot, q: Quote): string {
   if (q.refund.size === 0) return "no refund";
-  const parts = [...q.refund].map(([id, v]) => `${format(v, "hybrid")} ${itemName(s, id)}`);
+  const parts = [...q.refund].map(([id, v]) => `${fmt(v)} ${itemName(s, id)}`);
   // C.5: a refund lands in Quantum Storage first, then BOUND.
   return `refunds ${parts.join(", ")}; to Quantum Storage first, then BOUND`;
 }
@@ -563,8 +579,8 @@ function Level<A extends Action>({
       </div>
       <div className={`${styles.kv} num`}>
         {sec.nextCap === null
-          ? `Cap ${format(sec.cap, "hybrid")}, the maximum`
-          : `Cap ${format(sec.cap, "hybrid")} → ${format(sec.nextCap, "hybrid")}`}
+          ? `Cap ${fmt(sec.cap)}, the maximum`
+          : `Cap ${fmt(sec.cap)} → ${fmt(sec.nextCap)}`}
       </div>
       <Spend ctx={ctx} action={sec.buy} verb={verb} text="+1" ariaLabel={`${title} +1`} />
     </div>
@@ -632,9 +648,14 @@ function AssignSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
         <span data-unassigned>{`${free} unassigned`}</span>
       </div>
       {move !== null && moveActions !== null && (
-        <button type="button" className="btn" onClick={() => assign(moveActions)}>
+        // Computed from the server's counts: while any stepper's hold is pending it would
+        // undo or double that step, so it waits.
+        <Guarded
+          off={sec.assign.some((r) => pend.held(keyOf(r.recipeId)))}
+          onPress={() => assign(moveActions)}
+        >
           {`Move ${move.n} idle ${classLabel(s, sec.machineClass, move.n)} to ${nameOf(move.to)}`}
-        </button>
+        </Guarded>
       )}
       <ul className={styles.list}>
         {sec.assign.map((r) => {

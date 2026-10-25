@@ -5,7 +5,6 @@ import {
   bestUnlockedMark,
   D,
   DECIMAL_ZERO,
-  format,
   isLiveRecipe,
   itemStateTag,
   liquidCap,
@@ -18,9 +17,11 @@ import {
   type LaneId,
   type RecipeId,
   type Solution,
+  type NotationMode,
 } from "@manufactory/engine";
 import { isPlateaued, storageFraction } from "../sync/interpolate.js";
 import type { Snapshot } from "../sync/snapshot.js";
+import { currentNotation, fmt } from "./notation.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
 
@@ -31,7 +32,7 @@ export type FrameAction =
 
 /** "+0.333/s": a net rate, signed when positive. */
 export function rateText(net: number): string {
-  return `${net > 0 ? "+" : ""}${format(D(net), "hybrid")}/s`;
+  return `${net > 0 ? "+" : ""}${fmt(D(net))}/s`;
 }
 
 /** The label every bottleneck-buy batch carries; the button is busy while one is pending. */
@@ -47,6 +48,8 @@ export interface RowModel {
   netPerSecond: number;
   /** P-1. */
   satisfaction: number;
+  /** The display solve's production, items/s: the sweep's and the conveyor's speed (S-14). */
+  production: number;
   tag: ItemStateTag;
   /** True when the item's priority entry is paused. */
   paused: boolean;
@@ -115,7 +118,11 @@ function splitOf(s: Snapshot, itemId: ItemId): RowModel["split"] {
   return parts.length >= 2 ? parts : null;
 }
 
-export function laneRows(s: Snapshot, laneId: LaneId): RowModel[] {
+export function laneRows(
+  s: Snapshot,
+  laneId: LaneId,
+  notation: NotationMode = currentNotation(),
+): RowModel[] {
   const { content, state } = s;
   const solution = s.display.solution;
   return content.bundle.items
@@ -125,10 +132,11 @@ export function laneRows(s: Snapshot, laneId: LaneId): RowModel[] {
       name: item.name,
       netPerSecond: s.schedule.items[item.id]?.netPerSecond ?? 0,
       satisfaction: satisfaction(solution, item.id),
+      production: solution.itemRates.get(item.id)?.production ?? 0,
       tag: itemStateTag(content, s.display.state, item.id),
       paused: state.priority.some((e) => e.itemId === item.id && e.paused),
       idle: isIdle(solution, item.id),
-      capText: format(liquidCap(content, state, item.id), "hybrid"),
+      capText: fmt(liquidCap(content, state, item.id), notation),
       quantum: nonZero(own(state.quantum, item.id)),
       bound: nonZero(own(state.bound, item.id)),
       split: splitOf(s, item.id),

@@ -21,7 +21,7 @@ const SLICE = fileURLToPath(
 );
 const T0 = 1_760_000_000_000;
 const MINUTE = 60_000;
-const MIGRATIONS = ["001-initial.sql", "002-anticheat.sql"];
+const MIGRATIONS = ["001-initial.sql", "002-anticheat.sql", "003-claim-idempotency.sql"];
 
 // Test-only fake session: whatever the x-test-user header says (as in identity.test.ts).
 const verifySession: SessionVerifier = async (request) => {

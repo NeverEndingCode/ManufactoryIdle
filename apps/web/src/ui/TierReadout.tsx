@@ -1,9 +1,10 @@
 // The header tier readout (W-1, Q-13): the tier, the next milestone, and one progress line per
 // requirement, shownStock / amount (milestones deliver from liquid, R7). Ticking numbers,
 // never a live region; the tier-up toast is the announcement.
-import { format, nextMilestoneCost } from "@manufactory/engine";
+import { nextMilestoneCost } from "@manufactory/engine";
 import { shownStock } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
+import { fmt } from "./notation.js";
 import { useTick } from "./use-tick.js";
 
 export interface TierReadoutProps {
@@ -31,9 +32,7 @@ export function TierReadout({ snapshot: s, now }: TierReadoutProps) {
         {[...costs].map(([itemId, amount]) => (
           <li key={itemId} data-requirement={itemId}>
             <span>{s.content.items.get(itemId)?.name ?? itemId}</span>{" "}
-            <span className="num">
-              {`${format(shownStock(s, itemId, at), "hybrid")} / ${format(amount, "hybrid")}`}
-            </span>
+            <span className="num">{`${fmt(shownStock(s, itemId, at))} / ${fmt(amount)}`}</span>
           </li>
         ))}
       </ul>

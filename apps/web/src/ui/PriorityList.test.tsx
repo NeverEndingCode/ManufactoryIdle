@@ -260,6 +260,62 @@ describe("PriorityList", () => {
     delete (HTMLElement.prototype as { setPointerCapture?: unknown }).setPointerCapture;
   });
 
+  it("6e. midpoints are document coordinates: a drag survives a page scroll (7.1)", () => {
+    // Rows 40 px tall from document y 300; the viewport moves with window.scrollY.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const li = this.closest("li[data-entry]");
+      const i = li === null ? 0 : [...li.parentElement!.children].indexOf(li);
+      const top = 300 + i * 40 - window.scrollY;
+      return {
+        top,
+        height: 40,
+        bottom: top + 40,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: top,
+        toJSON() {},
+      } as DOMRect;
+    });
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const scrollY = (y: number) =>
+      Object.defineProperty(window, "scrollY", { configurable: true, value: y });
+    scrollY(0);
+    try {
+      const { store } = mount(fresh);
+      const handle = screen.getByRole("button", { name: `Drag to reorder ${nameOf("iron_ore")}` });
+      // iron_ore is row 4 (document y 460..500).
+      fireEvent.pointerDown(handle, { pointerId: 5, clientY: 480, button: 0 });
+      scrollY(200);
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+      });
+      // Document y 420: past the midpoints of rows 0-2 (320, 360, 400), before row 3's (440).
+      fireEvent.pointerMove(handle, { pointerId: 5, clientY: 220 });
+      expect(row("item:iron_ore").style.transform).toBe("translateY(-60px)");
+      fireEvent.pointerUp(handle, { pointerId: 5, clientY: 220 });
+      const all = fresh.state.priority.map((e) => e.id);
+      expect(store.send).toHaveBeenCalledWith(
+        [
+          {
+            type: "REORDER_PRIORITY",
+            entries: reorderVisible(all, FRESH_ORDER, "item:iron_ore", 3),
+          },
+        ],
+        PRIORITY_LABEL,
+      );
+    } finally {
+      scrollY(0);
+      delete (HTMLElement.prototype as { setPointerCapture?: unknown }).setPointerCapture;
+    }
+  });
+
   it("6d. moves are announced in the page's one polite live region, and so is their undoing", async () => {
     const store = fakeStore(fresh);
     render(<App store={store as unknown as GameStore} />);

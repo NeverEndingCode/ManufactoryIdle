@@ -468,8 +468,10 @@ API), plus an optional compose profile. Choosing a host, a domain and TLS is out
 | api | `exports` map; `src/dev.ts` + `dev` script | W-22, W-23 |
 | api | world responses gain `persistedAtMs` | Open question 1 |
 | api | `appInfo.websiteBasePath: "/account"` (4c) | W-16 |
+| api | migration 003: `players.claimed_guest_token_hash`, so the same account repeating the same claim gets 200 with the world it claimed (4c) | W-16 |
+| api | dev-only fake SuperTokens behind `DEV_FAKE_SESSIONS=1` (`src/dev-sessions.ts`, from `src/dev.ts` only, never `main.ts`; 4c) | W-23 |
 
-Each has tests in its own package. Nothing changes the action set, the schema or a stored response.
+Each has tests in its own package. Nothing changes the action set or a stored response; the schema changes only by migration 003's one nullable column.
 
 ---
 
@@ -517,3 +519,7 @@ Each corrects a claim above against the code; the 4a plan (`docs/superpowers/pla
 - **W-1 item 1 and W-18, one bottleneck frame per lane.** The engine reports a single, global bottleneck, so the client shows at most one frame in the whole factory (plan P-2). Per-lane frames would need an engine change; deferred.
 - **OQ1 and W-9, the plateau.** Past `persistedAtMs + offlineCapMs`, `GET /api/world` still returns non-zero rates and a fresh boundary, so following the boundary would poll forever. Once past the plateau the client stops boundary polling and shows the notice (plan P-4). `persistedAtMs` is the stored state's `lastResolvedAt`, so no migration (P-5); idempotent replays of responses stored before 4a lack it, and the client tolerates its absence.
 - **W-23, `PGLITE_DIR`.** `pgliteDb` takes no data directory today; 4a gives it one (P-15).
+
+## Errata found in the Phase 4c final review (2026-10-25)
+
+- **W-16, a boot with a session and a guest token.** "A boot that finds an existing session never claims" predates migration 003. A sign-up or sign-in cut short (the tab closed after the session was set, before the claim's answer) leaves both, and parking at boot would show a false "this account already has a factory", then lazily make the account an empty world, so the guest's could never be claimed. A boot with a session and a guest token now claims, under the hold, exactly as a sign-in does: a repeat of a committed claim is idempotent (200, the same world), a fresh one succeeds, a 409 parks the token with the notice, a 404 `unknown-guest` drops it. Nothing reaches `/api/world` before the claim settles. A boot with a session and no guest token still never claims. (Final review I-1.)

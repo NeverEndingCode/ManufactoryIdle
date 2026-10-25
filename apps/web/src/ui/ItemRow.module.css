@@ -105,6 +105,33 @@
   transform-origin: left;
 }
 
+/* S-14 / W-18: the production sweep, a translucent highlight crossing the meter once per
+   --sweep-period. At rest (reduced motion) it waits off the left edge, clipped. */
+.sat[data-sweep]::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--t1) 50%, transparent);
+  content: "";
+  opacity: 0.35;
+  pointer-events: none;
+  transform: translateX(-100%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sat[data-sweep]::after {
+    animation: sweep var(--sweep-period) linear infinite;
+  }
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
 .state-fed {
   background: var(--state-fed);
 }

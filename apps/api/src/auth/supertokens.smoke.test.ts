@@ -97,4 +97,25 @@ describe.skipIf(!process.env.SUPERTOKENS_CONNECTION_URI)("SuperTokens smoke", ()
     });
     expect(unauthenticated.statusCode).toBe(401);
   });
+
+  it("a cookie-mode sign-up sets a SameSite=Lax sAccessToken and no anti-csrf header (W-2)", async () => {
+    const email = `smoke-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/signup",
+      headers: { "st-auth-mode": "cookie" },
+      payload: {
+        formFields: [
+          { id: "email", value: email },
+          { id: "password", value: "smoke-test-password-1" },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const cookies = ([] as string[]).concat(res.headers["set-cookie"] as string | string[]);
+    const access = cookies.find((c) => c.startsWith("sAccessToken="));
+    expect(access).toBeDefined();
+    expect(access).toMatch(/SameSite=Lax/i);
+    expect(res.headers).not.toHaveProperty("anti-csrf");
+  });
 });

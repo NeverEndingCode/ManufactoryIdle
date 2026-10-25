@@ -26,3 +26,5 @@ export const TAP_FLUSH_AFTER_RELEASE_MS = 300;
 export const TAP_LABEL = "tap";
 /** W-16: the guest token's localStorage key. */
 export const GUEST_TOKEN_KEY = "mi.guestToken";
+/** W-16, S-6: a guest token parked while signed in (a 409 claim, at a sign-in or at boot). */
+export const PARKED_GUEST_TOKEN_KEY = "mi.parkedGuestToken";

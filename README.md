@@ -9,13 +9,15 @@ for years.
 
 ## Status
 
-**Phases 0 to 3 complete; Phase 4, the web client, in progress.** Phase 3, the server:
-guest play over HTTP (3a), optional accounts with SuperTokens (3b), and the anti-cheat
-guards, cleanup job and admin content migrate (3c); see
-[`apps/api/README.md`](apps/api/README.md). The monorepo, its packages (`rational`,
-`content`, `engine`, `sim`), the `apps/api` server and the `apps/web` client, CI
-(including a real-Postgres job for the API), and local infra (Postgres + SuperTokens via
-Docker Compose) are in place, with the test suite, lint, typecheck and
+**Phases 0 to 4 complete.** Phase 3, the server: guest play over HTTP (3a), optional
+accounts with SuperTokens (3b), and the anti-cheat guards, cleanup job and admin content
+migrate (3c); see [`apps/api/README.md`](apps/api/README.md). Phase 4, the web client in
+`apps/web`: the lane view and the bottleneck frame (4a); the drawer, the priority list, the
+power dock and the tap (4b); accounts, the handbook, the settings, motion, the 320 px pass
+and the deploy example (4c). The monorepo, its packages (`rational`, `content`, `engine`,
+`sim`), the `apps/api` server and the `apps/web` client, CI (including a real-Postgres job
+for the API and a Playwright job for the client), and local infra (Postgres + SuperTokens
+via Docker Compose) are in place, with the test suite, lint, typecheck and
 `pnpm content:check` all green. `pnpm --filter @manufactory/api dev` and
 `pnpm --filter @manufactory/web dev` run the game locally on PGlite with no Docker. Local play needs two terminals:
 
@@ -25,6 +27,29 @@ Docker Compose) are in place, with the test suite, lint, typecheck and
 The Vite dev server proxies the API; if the API listens elsewhere (`PORT=9000`), start the
 client with `API_PORT=9000`. Every D.1 action is playable in the browser; `web-play` in CI
 proves tier 10 through the client's own builders.
+
+**Accounts in local play.** Start the API with the dev server's fake SuperTokens instead:
+
+    DEV_FAKE_SESSIONS=1 pnpm --filter @manufactory/api dev
+
+Then "Save your factory" (from tier 1) or Settings → Account signs up, signs in and resets
+a password with no SuperTokens core; the reset link is at
+`/auth/dev/reset-link?email=<email>`, since no mail is sent. Accounts are in memory and gone
+when the API stops. **Never in production**: only `src/dev.ts` can turn it on, and it
+refuses under `NODE_ENV=production`. The real SuperTokens path is in
+[`infra/README.md`](infra/README.md).
+
+**In the client.** The header's Handbook opens the handbook: every item's recipe, what it
+traces back to and what it is used in, computed from the live recipes, plus a glossary
+(below 600 px it is the third view). Settings holds the number notation, the theme and the
+account. The footer says the game is free software under the GPL-3.0 and links the source
+at the exact commit the build was made from, and the license; production source maps are
+published.
+
+**Deploying.** [`infra/README.md`](infra/README.md#deploying-example) has the example: a
+Caddyfile serving `apps/web/dist` on one origin with `/api` and `/auth` forwarded to the
+API, the build at a known commit, and the API's settings behind the proxy. It is an
+example, not hosting.
 
 There is deliberately no test count here. It was wrong three times before it was removed —
 run `pnpm test` for the number, which is the only place it cannot go stale.
@@ -52,7 +77,7 @@ The original spec is decomposed into four, of which the engine core is the first
 | 1 | Engine + simulator | A playable game in the terminal — **done** |
 | 2 | Calibrated content | A game that is *paced* — **done** |
 | 3 | Server + authority | A game with a backend — **done** |
-| 4 | Web client | A game other people can play — **in progress** (4a: shell and lane view; 4b: drawer, priority, dock and tap) |
+| 4 | Web client | A game other people can play — **done** (4a: shell and lane view; 4b: drawer, priority, dock and tap; 4c: accounts, handbook, settings, motion, 320 px, deploy example) |
 
 ## Design pillars
 

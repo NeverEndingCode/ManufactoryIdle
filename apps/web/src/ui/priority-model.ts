@@ -105,10 +105,10 @@ export function powerMoveNeedsConfirm(
   return before[0] === POWER_ENTRY_ID && after[0] !== POWER_ENTRY_ID;
 }
 
-/** The drop slot for a pointer at clientY over rows with these vertical midpoints (W-21):
- * the number of midpoints above it. */
-export function dropIndex(midpoints: readonly number[], clientY: number): number {
+/** The drop slot for a pointer at y over rows with these vertical midpoints (W-21): the number
+ * of midpoints above it. Both in one coordinate space (the list uses the document's). */
+export function dropIndex(midpoints: readonly number[], y: number): number {
   let n = 0;
-  for (const m of midpoints) if (m < clientY) n += 1;
+  for (const m of midpoints) if (m < y) n += 1;
   return n;
 }

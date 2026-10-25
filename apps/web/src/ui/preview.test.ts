@@ -111,6 +111,34 @@ describe("preview (W-13, Q-1)", () => {
     expect(p.detailState.lastResolvedAt).toBeGreaterThanOrEqual(p.state.lastResolvedAt);
   });
 
+  it("3c. an upgrade whose cost and refund share an item drains it to exactly EMPTY", () => {
+    // No tier-8 upgrade shares an item between cost and refund (found by scanning every machine
+    // section's upgrades), so the iron Miner Mk3 is priced in iron plates, which the Mk2s
+    // refund. The cost exceeds the refund, and the plates are drained.
+    const miner = slice.content.machineClasses.get("miner")!;
+    const marks = miner.marks.map((m) =>
+      m.mark === 3 ? { ...m, buildCost: [{ item: "iron_plate", amount: 100_000 }] } : m,
+    );
+    const machineClasses = new Map(slice.content.machineClasses);
+    machineClasses.set("miner", { ...miner, marks });
+    const content = { ...slice.content, machineClasses };
+    const base = t8.state;
+    const zero = (r: Readonly<Record<string, Dec>>) => ({ ...r, iron_plate: D(0) });
+    const s = snapshotOf(
+      { content, checksum: slice.checksum },
+      { ...base, stored: zero(base.stored), quantum: zero(base.quantum), bound: zero(base.bound) },
+    );
+    const up = { type: "UPGRADE_MARK", lane: "iron", machineClass: "miner", fromMark: 2 } as const;
+    const q = quote(content, s.display.state, up);
+    expect(q.cost.has("iron_plate") && q.refund.has("iron_plate")).toBe(true);
+    const p = preview(s, [up]);
+    expect(p.ok).toBe(true);
+    if (!p.ok) return;
+    expect(p.credit.has("iron_plate")).toBe(true);
+    expect(itemStateTag(content, p.detailState, "iron_plate")).toBe("EMPTY");
+    expect(liquid(p.detailState, "iron_plate").eq(0)).toBe(true);
+  });
+
   it("deltas are ordered by relative change, largest first", () => {
     const p = preview(fresh, [P3_BUY]);
     if (!p.ok) throw new Error(p.reason);

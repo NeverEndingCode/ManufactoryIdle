@@ -418,7 +418,8 @@ describe("Drawer", () => {
     storage.set({ pending: [batch("bottleneck buy")] });
     const busy = screen.getByRole("button", { name: "Buy storage for Iron Plate" });
     expect(busy.getAttribute("aria-busy")).toBe("true");
-    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    expect((busy as HTMLButtonElement).disabled).toBe(false);
     cleanup();
 
     mount(
@@ -645,6 +646,24 @@ describe("Drawer", () => {
     });
     expect(count("make_concrete")).toBe("6");
     expect(count("make_steel_pipe")).toBe("0");
+  });
+
+  it("16b. while a stepper's hold is pending, Move is off and sends nothing (7.3)", () => {
+    const store = fakeStore(snapshotOf(slice, starvedPipeState(slice)));
+    mount(store);
+    fireEvent.click(screen.getByRole("tab", { name: /Coal/ }));
+    const d = open("steel_pipe");
+    pick(d, "Assign");
+    const moveButton = () =>
+      within(drawer("steel_pipe")!).getByRole("button", {
+        name: "Move 3 idle Constructors to Steel Pipe",
+      });
+    expect(moveButton().getAttribute("aria-disabled")).toBe("false");
+    fireEvent.click(within(d).getByRole("button", { name: "One fewer on Concrete" }));
+    expect(store.send).toHaveBeenCalledTimes(1);
+    expect(moveButton().getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(moveButton());
+    expect(store.send).toHaveBeenCalledTimes(1);
   });
 
   it("17. the frame's reserve ignores a second click while its send is unsettled", async () => {

@@ -69,6 +69,16 @@ describe("classify (W-11)", () => {
 
   it("401: unauthorized; 404: no world", async () => {
     expect(await classify(json(401, { error: "unauthorized" }))).toEqual({ kind: "unauthorized" });
+    const guest401 = (body: string, scheme = "Guest") =>
+      new Response(body, { status: 401, headers: { "www-authenticate": scheme } });
+    expect(await classify(guest401('{"error":"unauthorized"}'))).toEqual({
+      kind: "unauthorized",
+      apiGuest: true,
+    });
+    expect(await classify(guest401("<html>denied</html>"))).toEqual({ kind: "unauthorized" });
+    expect(await classify(guest401('{"error":"unauthorized"}', "Bearer"))).toEqual({
+      kind: "unauthorized",
+    });
     expect(await classify(json(404, { error: "no world" }))).toEqual({ kind: "no-world" });
   });
 

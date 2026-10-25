@@ -2,11 +2,23 @@ import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import * as supertokens from "supertokens-node";
 import { SMTPService } from "supertokens-node/recipe/emailpassword/emaildelivery";
-import { passwordResetDelivery, providersFromEnv, superTokensFromEnv } from "./supertokens.js";
+import { appInfoFor, passwordResetDelivery, providersFromEnv, superTokensFromEnv } from "./supertokens.js";
 
 // No SuperTokens core here. init is process-global (vitest isolates this file); only the
 // last describe initializes it, against a URI nothing listens on, and never reaches it.
 const quiet = { info: () => {}, warn: () => {} };
+
+describe("appInfoFor", () => {
+  it("names the app, the /auth API and the /account website (W-26)", () => {
+    expect(appInfoFor("https://x.example", "https://x.example")).toEqual({
+      appName: "Manufactory Idle",
+      apiDomain: "https://x.example",
+      websiteDomain: "https://x.example",
+      apiBasePath: "/auth",
+      websiteBasePath: "/account",
+    });
+  });
+});
 
 describe("superTokensFromEnv", () => {
   it("is null without SUPERTOKENS_CONNECTION_URI (R-16)", () => {

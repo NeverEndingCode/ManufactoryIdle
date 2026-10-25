@@ -1,6 +1,7 @@
 // The one framed row (P-2): the "bottleneck" label in text, the advice, and its one action:
 // the inline buy (P-3), or storage, Quantum Storage or a reserve (Q-5). Spends are pessimistic
-// (W-13): the button is busy until the batch's response lands. The reserve is a setting.
+// (W-13): the button is busy (aria-disabled, still focusable) until the batch's response
+// lands. The reserve is a setting.
 import { useState, type ReactNode } from "react";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
@@ -11,6 +12,7 @@ import {
   type BottleneckModel,
   type FrameAction,
 } from "./derive.js";
+import { Guarded } from "./Guarded.js";
 import { affordability } from "./quote.js";
 import styles from "./BottleneckFrame.module.css";
 import { useTick } from "./use-tick.js";
@@ -111,17 +113,17 @@ function SpendButton({
       : a.inMs === null
         ? "not affordable yet"
         : `affordable in ${Math.max(1, Math.ceil(a.inMs / 1000))}s`;
+  // Guarded, not the native disabled: a focused button that turns busy keeps its focus.
   return (
-    <button
-      type="button"
+    <Guarded
       className={`btn ${styles.buy}`}
-      disabled={busy || !a.affordable}
+      off={busy || !a.affordable}
       aria-busy={busy}
-      onClick={() => {
+      onPress={() => {
         store.send([spend], BOTTLENECK_BUY_LABEL).catch((err: unknown) => console.error(err));
       }}
     >
       {label}
-    </button>
+    </Guarded>
   );
 }

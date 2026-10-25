@@ -95,8 +95,9 @@ describe("PowerDock (W-12, W-20, Q-12)", () => {
     expect(root.textContent).toContain("Power limits production");
     expect(root.textContent).toContain("needs");
     // Show the framed row's lane, so the frame is on screen.
-    const mark = screen.queryByRole("img", { name: "bottleneck" });
-    if (mark) fireEvent.click(mark.closest("button")!);
+    const mark = screen.getByRole("img", { name: "bottleneck" });
+    fireEvent.click(mark.closest("button")!);
+    expect(document.querySelector("[data-frame]")).not.toBeNull();
     expect(screen.getAllByText(/bottleneck/i)).toHaveLength(1);
     expect(document.querySelector(".app")!.getAttribute("data-polling")).toBe("armed");
   });

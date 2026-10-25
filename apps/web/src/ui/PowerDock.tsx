@@ -1,12 +1,13 @@
 // The power dock (W-1 item 4, §13.2): the grid's demand against supply, and the holdable tap
 // with its stacks, kick and remaining time (W-12, Q-12). The tap holds by pointer and by a
 // held Space or Enter (W-20); the store owns the repeat and the flush (Q-11).
-import { D, format } from "@manufactory/engine";
+import { D } from "@manufactory/engine";
 import { useRef, type KeyboardEvent, type PointerEvent } from "react";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore, StoreView } from "../sync/store.js";
 import { dockModel } from "./dock-model.js";
 import styles from "./PowerDock.module.css";
+import { fmt } from "./notation.js";
 import { useTick } from "./use-tick.js";
 
 export interface PowerDockProps {
@@ -19,7 +20,7 @@ export interface PowerDockProps {
 
 /** MW to one decimal, and the notation past 10,000. */
 function mw(n: number): string {
-  return Math.abs(n) >= 10_000 ? format(D(n), "hybrid") : n.toFixed(1);
+  return Math.abs(n) >= 10_000 ? fmt(D(n)) : n.toFixed(1);
 }
 
 const HOLD_KEYS = new Set([" ", "Enter"]);

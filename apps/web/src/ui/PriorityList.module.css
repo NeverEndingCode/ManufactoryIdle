@@ -26,6 +26,7 @@
 }
 
 .segBtn {
+  min-width: 44px;
   min-height: 44px;
   padding: 6px 11px;
   border: var(--hairline) solid var(--line2);

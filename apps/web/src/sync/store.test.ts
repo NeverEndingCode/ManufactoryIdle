@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { deserializeWorld, serializeWorld, type Action } from "@manufactory/engine";
+import { dockModel } from "../ui/dock-model.js";
 import { MIN_REPOLL_MS, RETRY_STEPS_MS } from "./constants.js";
 import { browserTokenStorage, memoryTokenStorage, type TokenStorage } from "./identity.js";
 import { isPlateaued } from "./interpolate.js";
@@ -57,6 +58,8 @@ let fakeGetStatus: number | null = null;
 /** While set, a POST /api/actions with a non-TAP action reaches the server, then its Response
  * waits for this gate. Unlike rig.fetch.hold it never matches a TAP flush, whichever lands first. */
 let gateSpends: Promise<void> | null = null;
+/** While set, a GET /api/content/* waits for this gate, after calling `contentEntered`. */
+let gateContent: { gate: Promise<void>; entered: () => void } | null = null;
 
 function resetKnobs() {
   log = [];
@@ -67,6 +70,7 @@ function resetKnobs() {
   repin = null;
   fakeGetStatus = null;
   gateSpends = null;
+  gateContent = null;
 }
 
 afterEach(async () => {
@@ -103,10 +107,22 @@ function storeFor(tokens: TokenStorage): GameStore {
       });
     }
     if (url.startsWith("/api/content/")) {
+      if (gateContent !== null) {
+        const { gate, entered } = gateContent;
+        gateContent = null;
+        entered();
+        await gate;
+      }
       if (failContent) return new Response('{"error":"unknown content"}', { status: 404 });
       if (repin !== null && url === `/api/content/${repin.to}`) {
         return live.fetch(`/api/content/${repin.from}`, init);
       }
+    }
+    if (method === "POST" && url === "/api/actions" && repin !== null) {
+      const res = await live.fetch(url, init);
+      const body = (await res.json()) as Record<string, unknown>;
+      body.contentChecksum = repin.to;
+      return new Response(JSON.stringify(body), { status: res.status });
     }
     if (method === "GET" && url === "/api/world") {
       if (dropGets > 0) {
@@ -194,15 +210,13 @@ async function dbRow() {
 }
 
 describe("GameStore (W-6, W-9 to W-11, W-14)", () => {
-  it("1. guest start: health, guests, then content; a second store reuses the token", async () => {
+  it("1. guest start: health first (S-3), then guests and content; a second store reuses the token", async () => {
     const { store, tokens } = await setup();
     const calls = log.map((c) => `${c.method} ${c.url.replace(/[0-9a-f]{64}$/, "<sum>")}`);
     expect([...calls].sort()).toEqual(
       ["GET /api/content/<sum>", "GET /api/health", "POST /api/guests"].sort(),
     );
-    const content = calls.indexOf("GET /api/content/<sum>");
-    expect(calls.indexOf("GET /api/health")).toBeLessThan(content);
-    expect(calls.indexOf("POST /api/guests")).toBeLessThan(content);
+    expect(calls[0]).toBe("GET /api/health");
     expect(tokens.get()).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const view = store.getView();
     expect(view.status).toBe("ready");
@@ -827,5 +841,97 @@ describe("GameStore taps, polling and tiers (Q-11, Q-13, Q-18)", () => {
     store.stop();
     expect(rig.clock.pendingTimers).toBe(0);
     expect(store.getView().taps.holding).toBe(false);
+  });
+
+  it("29. a keepalive flush during a pause waits for it, under the key it made", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(MIN_REPOLL_MS);
+    fakeGet429 = "3";
+    store.onFocus();
+    await store.idle();
+    const before = posts().length;
+    store.pressTap();
+    await rig.advance(300);
+    store.releaseTap();
+    store.flushTaps({ keepalive: true });
+    expect(posts()).toHaveLength(before); // no keepalive POST goes out into the pause
+    const key = store.getView().pending[0]!.key;
+    await rig.advance(1_000);
+    expect(posts()).toHaveLength(before);
+    await rig.advance(2_000);
+    await store.idle();
+    expect(tapPosts()).toHaveLength(1);
+    expect(tapPosts()[0]!.body!.idempotencyKey).toBe(key);
+    expect(tapPosts()[0]!.keepalive).not.toBe(true);
+  });
+
+  it("30. start() re-arms the flush of taps that were pending across stop()", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    store.pressTap();
+    store.releaseTap();
+    const pending = store.getView().taps.pending;
+    expect(pending).toBeGreaterThan(0);
+    store.stop();
+    await store.start();
+    await rig.advance(1_000);
+    await store.idle();
+    expect(tapPosts()).toHaveLength(1);
+    expect(tapOf(tapPosts()[0]!).count).toBe(pending);
+  });
+
+  it("31. adopting a tap flush never shows more stacks than were tapped", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    let max = 0;
+    store.subscribe(() => {
+      const v = store.getView();
+      if (v.snapshot === null) return;
+      max = Math.max(max, dockModel(v.snapshot, v.taps, store.now(), v.pending).stacks);
+    });
+    for (let i = 0; i < 3; i++) {
+      store.pressTap();
+      store.releaseTap();
+    }
+    await rig.advance(1_000);
+    await store.idle();
+    expect(tapPosts()).toHaveLength(1);
+    expect(store.getView().snapshot!.state.tapStacks).toBe(3);
+    expect(max).toBe(3);
+  });
+
+  it("32. taps in flight stay counted while the response's new bundle loads", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    const before = store.getView().snapshot!;
+    repin = {
+      from: before.contentChecksum,
+      to: before.contentChecksum.replace(/^./, (c) => (c === "f" ? "e" : "f")),
+    };
+    let open!: () => void;
+    let entered!: () => void;
+    const reached = new Promise<void>((r) => (entered = r));
+    gateContent = { gate: new Promise<void>((r) => (open = r)), entered };
+    const stacks = () => {
+      const v = store.getView();
+      return dockModel(v.snapshot!, v.taps, store.now(), v.pending).stacks;
+    };
+    for (let i = 0; i < 3; i++) {
+      store.pressTap();
+      store.releaseTap();
+    }
+    const advancing = rig.advance(1_000); // the flush fires; its response waits on the bundle
+    await reached;
+    expect(store.getView().snapshot).toBe(before); // not adopted yet
+    expect(stacks()).toBe(3);
+    store.pressTap(); // any emit: the old snapshot doesn't have the 3 yet
+    expect(stacks()).toBe(4);
+    store.releaseTap();
+    open();
+    await advancing;
+    await store.idle();
+    expect(store.getView().snapshot!.contentChecksum).toBe(repin.to);
+    // The 3 are in the snapshot now and no longer pending: never counted twice.
+    expect(stacks()).toBe(4);
   });
 });

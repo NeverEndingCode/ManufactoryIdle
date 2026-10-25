@@ -447,20 +447,27 @@ export async function claimGuest(
   superTokensUserId: string,
 ): Promise<{ claimed: true; playerId: string } | { claimed: false; reason: "already-has-world" | "unknown-guest" }> {
   try {
+    const hash = hashGuestToken(guestToken);
     return await db.transaction(async (tx) => {
-      const own = await tx.query("select 1 from players where supertokens_user_id = $1", [
-        superTokensUserId,
-      ]);
-      if (own.length > 0) return { claimed: false, reason: "already-has-world" } as const;
+      const own = await tx.query<{ id: string; claimed: string | null }>(
+        "select id, claimed_guest_token_hash as claimed from players where supertokens_user_id = $1",
+        [superTokensUserId],
+      );
+      if (own.length > 0) {
+        // The same claim again (its first response was lost): the world it claimed (003).
+        if (own[0]!.claimed === hash) return { claimed: true, playerId: own[0]!.id } as const;
+        return { claimed: false, reason: "already-has-world" } as const;
+      }
       const guest = await tx.query<{ id: string }>(
         `select id from players where guest_token = $1 and supertokens_user_id is null for update`,
-        [hashGuestToken(guestToken)],
+        [hash],
       );
       if (guest.length === 0) return { claimed: false, reason: "unknown-guest" } as const;
-      await tx.query("update players set supertokens_user_id = $2, guest_token = null where id = $1", [
-        guest[0]!.id,
-        superTokensUserId,
-      ]);
+      await tx.query(
+        `update players set supertokens_user_id = $2, guest_token = null, claimed_guest_token_hash = $3
+          where id = $1`,
+        [guest[0]!.id, superTokensUserId, hash],
+      );
       return { claimed: true, playerId: guest[0]!.id } as const;
     });
   } catch (err) {

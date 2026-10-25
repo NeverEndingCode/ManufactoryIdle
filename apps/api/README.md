@@ -20,8 +20,8 @@ client sends actions and gets back the resolved world.
 | `ADMIN_TOKEN` | unset | Enables `POST /api/admin/migrate-world` (see below). Unset or empty: the route does not exist and answers 404. Use a long random value. |
 | `SUPERTOKENS_CONNECTION_URI` | unset | The SuperTokens core, e.g. `http://localhost:3567`. Unset: accounts are disabled (see below). |
 | `SUPERTOKENS_API_KEY` | unset | The core's API key (`API_KEYS` in `infra/.env`). |
-| `API_DOMAIN` | required with accounts | Where browsers reach this API, e.g. `https://api.example.com`; SuperTokens serves `/auth/*` here. Session cookies are `Secure` only when it is `https` (startup warns otherwise; `http://localhost:8080` is fine for local dev). |
-| `WEBSITE_DOMAIN` | required with accounts | The web client's origin, e.g. `http://localhost:5173` locally: the only CORS origin, with credentials. |
+| `API_DOMAIN` | required with accounts | Where browsers reach this API: the site's one origin (W-2), e.g. `https://play.example.com`, since the proxy in front forwards `/api` and `/auth`; SuperTokens serves `/auth/*` there. Session cookies are `Secure` only when it is `https` (startup warns otherwise; `http://localhost:5173` is fine for local dev). |
+| `WEBSITE_DOMAIN` | required with accounts | The web client's origin, the same as `API_DOMAIN` (W-2; `http://localhost:5173` for both locally, behind Vite's proxy): the only CORS origin, with credentials. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Password-reset mail over your SMTP server (port 465 uses TLS). All five or none (R-24). |
 | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | unset | Discord sign-in. Configured only when both are set (R-12). |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | GitHub sign-in. Configured only when both are set (R-12). |
@@ -40,10 +40,12 @@ A request acts as a player in one of two ways:
 If a request carries both, the session wins and the guest token is ignored (R-13).
 
 `POST /api/auth/claim { guestToken }` (session required) attaches a guest's world to the
-signed-in account and retires the guest token. It answers `409 already-has-world` if the
-account already has a world (no merge, R-14), and `404 unknown-guest` for an unknown or
-already-claimed token (R-18). Clients offer the claim on first sign-in, before the
-account's first `GET /api/world`.
+signed-in account and retires the guest token. The same account repeating the same claim
+(its first response lost) gets `200` with the world it claimed (migration 003). Otherwise
+it answers `409 already-has-world` if the account already has a world (no merge, R-14),
+and `404 unknown-guest` for an unknown token or one already claimed by another account
+(R-18). Clients claim on sign-in, and at a boot that finds a session and a guest token
+(a sign-in cut short), before the account's first `GET /api/world`.
 
 SuperTokens' own routes (`/auth/signup`, `/auth/signin`, `/auth/session/refresh`, ...)
 are served by its Fastify plugin. Sign-in is EmailPassword, plus Discord and GitHub when
@@ -217,3 +219,13 @@ runs a PGlite-backed, guest-only server (`src/dev.ts`): no accounts, no admin ro
 | `PGLITE_DIR` | unset (in memory) | Directory to persist the database across restarts. |
 | `CONTENT_DIR` | the vertical slice bundle | Content bundle to serve. |
 | `LOG_LEVEL` | `warn` | pino log level. |
+
+### Fake sessions (`DEV_FAKE_SESSIONS=1`)
+
+`DEV_FAKE_SESSIONS=1 pnpm --filter @manufactory/api dev` also mounts an in-memory fake of the
+SuperTokens front-end interface (`src/dev-sessions.ts`: sign-up, sign-in, sign-out, refresh,
+password reset, plus `GET /auth/dev/reset-link?email=`), so the web client's account e2e runs
+without a SuperTokens core. It rejects an `fdi-version` the node SDK does not speak. Any value
+other than unset, empty or `1` stops `dev.ts`. **Never in production**: `main.ts` cannot reach
+it and `devServer` throws under `NODE_ENV=production`. The real path is covered only by the
+SuperTokens smoke test (`src/auth/supertokens.smoke.test.ts`, needs a core).

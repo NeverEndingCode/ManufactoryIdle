@@ -5,7 +5,6 @@ import {
   assignedTotal,
   bestUnlockedMark,
   D,
-  format,
   getMark,
   installedAt,
   installedMachines,
@@ -25,8 +24,10 @@ import {
   type MachineClassId,
   type RecipeId,
   type WorldState,
+  type NotationMode,
 } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
+import { currentNotation, fmt } from "./notation.js";
 import { className as classLabel } from "./derive.js";
 
 type UpgradeMark = Extract<Action, { type: "UPGRADE_MARK" }>;
@@ -138,6 +139,7 @@ export function ladderProgress(
   s: Snapshot,
   lane: LaneId,
   machineClass: MachineClassId,
+  notation: NotationMode = currentNotation(),
 ): LadderProgress | null {
   const cls = s.content.machineClasses.get(machineClass);
   const best = bestUnlockedMark(s.content, machineClass, s.display.state.tier);
@@ -150,7 +152,7 @@ export function ladderProgress(
   const more = Math.ceil((nextAt - input) / bestDef.rateMultiplier);
   const multiplier = ladderMultiplier(s.content, s.display.state, lane, machineClass);
   const nextMultiplier = softcap(powIntNumber(step, steps + 1), s.content.bundle.softcaps.ladder);
-  const text = `${more} more ${classLabel(s, machineClass, more)} → ×${format(D(nextMultiplier / multiplier), "hybrid")}`;
+  const text = `${more} more ${classLabel(s, machineClass, more)} → ×${fmt(D(nextMultiplier / multiplier), notation)}`;
   return { input, nextAt, more, multiplier, nextMultiplier, text };
 }
 
@@ -204,7 +206,11 @@ function assignRows(s: Snapshot, lane: LaneId, machineClass: MachineClassId): As
   return rows;
 }
 
-function machineSection(s: Snapshot, itemId: ItemId): MachineSection | null {
+function machineSection(
+  s: Snapshot,
+  itemId: ItemId,
+  notation: NotationMode,
+): MachineSection | null {
   const recipeId = activeRecipeOf(s, itemId);
   const recipe = recipeId === undefined ? undefined : s.content.recipes.get(recipeId);
   if (recipeId === undefined || !recipe) return null;
@@ -221,7 +227,7 @@ function machineSection(s: Snapshot, itemId: ItemId): MachineSection | null {
     unassigned: pool - assignedTotal(s.content, s.display.state, lane, machineClass),
     bestMark: bestUnlockedMark(s.content, machineClass, s.display.state.tier),
     marks: markRows(s, lane, machineClass),
-    ladder: ladderProgress(s, lane, machineClass),
+    ladder: ladderProgress(s, lane, machineClass, notation),
     assign: assignRows(s, lane, machineClass),
   };
 }
@@ -291,15 +297,21 @@ function qsSection(s: Snapshot, itemId: ItemId, lane: LaneId): LevelSection<BuyQ
   );
 }
 
-const memo = new WeakMap<Snapshot, Map<ItemId, DrawerModel>>();
+/** Per snapshot, then per (notation, item): the sections carry formatted text (S-11). */
+const memo = new WeakMap<Snapshot, Map<string, DrawerModel>>();
 
-export function drawerModel(s: Snapshot, itemId: ItemId): DrawerModel {
+export function drawerModel(
+  s: Snapshot,
+  itemId: ItemId,
+  notation: NotationMode = currentNotation(),
+): DrawerModel {
   let bySnapshot = memo.get(s);
   if (bySnapshot === undefined) {
     bySnapshot = new Map();
     memo.set(s, bySnapshot);
   }
-  const hit = bySnapshot.get(itemId);
+  const key = `${notation}:${itemId}`;
+  const hit = bySnapshot.get(key);
   if (hit !== undefined) return hit;
   const item = s.content.items.get(itemId);
   if (!item) throw new Error(`drawerModel: unknown item "${itemId}"`);
@@ -307,12 +319,12 @@ export function drawerModel(s: Snapshot, itemId: ItemId): DrawerModel {
     itemId,
     name: item.name,
     laneId: item.lane,
-    machines: machineSection(s, itemId),
+    machines: machineSection(s, itemId, notation),
     recipes: recipeChoices(s, itemId),
     storage: storageSection(s, itemId),
     qs: qsSection(s, itemId, item.lane),
   };
-  bySnapshot.set(itemId, m);
+  bySnapshot.set(key, m);
   return m;
 }
 

@@ -90,6 +90,18 @@ export function passwordResetDelivery(
   };
 }
 
+/** The SuperTokens appInfo for one deployment (S-9, W-26). */
+export function appInfoFor(apiDomain: string, websiteDomain: string) {
+  return {
+    appName: "Manufactory Idle" as const,
+    apiDomain,
+    websiteDomain,
+    apiBasePath: "/auth" as const,
+    // Where the web client mounts its account routes; reset-password mail links use it.
+    websiteBasePath: "/account" as const,
+  };
+}
+
 /** Null when SUPERTOKENS_CONNECTION_URI is unset (R-16). Otherwise API_DOMAIN and
  * WEBSITE_DOMAIN are required (cookieSecure follows apiDomain's scheme, so a missing
  * https API_DOMAIN would drop the cookies' Secure flag), and the SDK is initialized.
@@ -122,12 +134,7 @@ export function superTokensFromEnv(
       connectionURI,
       ...(set(env.SUPERTOKENS_API_KEY) ? { apiKey: env.SUPERTOKENS_API_KEY } : {}),
     },
-    appInfo: {
-      appName: "Manufactory Idle",
-      apiDomain,
-      websiteDomain,
-      apiBasePath: "/auth",
-    },
+    appInfo: appInfoFor(apiDomain, websiteDomain),
     recipeList: [
       EmailPassword.init({
         emailDelivery: { service: passwordResetDelivery(env, log.info).service },

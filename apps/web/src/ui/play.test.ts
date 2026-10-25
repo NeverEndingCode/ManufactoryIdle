@@ -8,6 +8,7 @@ import {
   applyBatch,
   initialWorld,
   installedMachines,
+  laneClassKey,
   resolve,
   type Action,
   type ItemId,
@@ -67,22 +68,33 @@ function reorders(s: Snapshot): Action[] {
   return out;
 }
 
-/** Each installed lane-class's drawer section, from an item one of its recipes makes. */
+/** One lane-class's drawer section, from an item one of its recipes makes; null when no
+ * machine is installed there. Builds one drawerModel, not one per lane-class. */
+function sectionOf(s: Snapshot, ids: readonly string[]): MachineSection | null {
+  const first = s.content.recipes.get(ids[0]!);
+  if (!first || installedMachines(s.display.state, first.lane, first.machineClass) === 0) {
+    return null;
+  }
+  for (const id of ids) {
+    const item: ItemId = s.content.recipes.get(id)!.primaryOutput;
+    if (!s.content.items.has(item)) continue;
+    const sec = drawerModel(s, item).machines;
+    if (sec && sec.lane === first.lane && sec.machineClass === first.machineClass) return sec;
+  }
+  return null;
+}
+
+/** The lane-class's section, fresh from the snapshot: only its own drawerModel is built. */
+function sectionFor(s: Snapshot, lane: string, machineClass: string): MachineSection {
+  return sectionOf(s, s.content.recipesByLaneClass.get(laneClassKey(lane, machineClass)) ?? [])!;
+}
+
+/** Each installed lane-class's drawer section. */
 function sections(s: Snapshot): MachineSection[] {
   const out: MachineSection[] = [];
   for (const ids of s.content.recipesByLaneClass.values()) {
-    const first = s.content.recipes.get(ids[0]!);
-    if (!first || installedMachines(s.display.state, first.lane, first.machineClass) === 0)
-      continue;
-    for (const id of ids) {
-      const item: ItemId = s.content.recipes.get(id)!.primaryOutput;
-      if (!s.content.items.has(item)) continue;
-      const sec = drawerModel(s, item).machines;
-      if (sec && sec.lane === first.lane && sec.machineClass === first.machineClass) {
-        out.push(sec);
-        break;
-      }
-    }
+    const sec = sectionOf(s, ids);
+    if (sec) out.push(sec);
   }
   return out;
 }
@@ -116,9 +128,7 @@ function play(target: number): Run {
     for (const a of reorders(s)) if (act(s, [a])) s = snap();
     // 3. Idle machines to a starved recipe, per lane-class.
     for (const sec of sections(s)) {
-      const fresh = sections(s).find(
-        (x) => x.lane === sec.lane && x.machineClass === sec.machineClass,
-      )!;
+      const fresh = sectionFor(s, sec.lane, sec.machineClass);
       const mv = idleMove(s, fresh);
       if (mv && act(s, moveMachines(fresh, mv.from, mv.to, mv.n))) s = snap();
     }
@@ -157,6 +167,11 @@ describe("the builder-only player (Q-14)", () => {
           ),
       );
       expect(run.rejected).toEqual([]);
+      if (TARGET === 6) {
+        // Pinned before the S-18 changes (Phase 4c): the player's run must not move.
+        expect(run.actions).toBe(275);
+        expect(run.tierAtH[6]).toBe(10.845218848871589);
+      }
       expect(run.state.tier).toBeGreaterThanOrEqual(TARGET);
       expect(hours).toBeLessThanOrEqual(BOUND_H);
     },

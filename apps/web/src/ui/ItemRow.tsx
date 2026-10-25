@@ -1,12 +1,15 @@
 // F.1's three-line row: name and net rate; the storage bar with shown / cap; the QS and BOUND
 // chips. Then the satisfaction meter, or the split bar on a contested item.
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { format, type ItemId } from "@manufactory/engine";
+import { useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
+import type { ItemId } from "@manufactory/engine";
 import { shownStock, storageFraction, storageTransition } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import { rateText, stateClass, type RowModel } from "./derive.js";
 import styles from "./ItemRow.module.css";
+import { sweepPeriodS } from "./motion.js";
+import { fmt } from "./notation.js";
 import { useTick, useTickSource } from "./use-tick.js";
+import { prefersReducedMotion, useTween } from "./use-tween.js";
 
 export interface ItemRowProps {
   row: RowModel;
@@ -55,10 +58,10 @@ export function ItemRow({ row, snapshot, now, onOpen, expanded = false, onSplit 
       {(row.quantum !== null || row.bound !== null) && (
         <div className={styles.chips}>
           {row.quantum !== null && (
-            <span className={`${styles.chip} num`}>{`QS ${format(row.quantum, "hybrid")}`}</span>
+            <span className={`${styles.chip} num`}>{`QS ${fmt(row.quantum)}`}</span>
           )}
           {row.bound !== null && (
-            <span className={`${styles.chip} num`}>{`BOUND ${format(row.bound, "hybrid")}`}</span>
+            <span className={`${styles.chip} num`}>{`BOUND ${fmt(row.bound)}`}</span>
           )}
         </div>
       )}
@@ -81,7 +84,8 @@ export function ItemRow({ row, snapshot, now, onOpen, expanded = false, onSplit 
   );
 }
 
-/** Interpolated stock at the 4 Hz tick (W-7). Not a live region. */
+/** Interpolated stock at the 4 Hz tick (W-7), tweened over a snapshot correction (S-14). Not
+ * a live region. */
 function LiveStock({
   snapshot,
   itemId,
@@ -92,17 +96,13 @@ function LiveStock({
   now: () => number;
 }) {
   useTick();
+  const span = useRef<HTMLSpanElement>(null);
+  useTween(span, snapshot, itemId, now);
   return (
-    <span data-stock>
-      {format(shownStock(snapshot, itemId, serverNow(snapshot, now())), "hybrid")}
+    <span ref={span} data-stock>
+      {fmt(shownStock(snapshot, itemId, serverNow(snapshot, now())))}
     </span>
   );
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === "function"
-    ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    : false;
 }
 
 /**
@@ -170,8 +170,13 @@ function round3(x: number): number {
   return Math.round(x * 1000) / 1000;
 }
 
+/** S-14: a producing, unpaused row sweeps, faster as it makes more (W-18). */
 function SatisfactionMeter({ row }: { row: RowModel }) {
   const cls = stateClass(row);
+  const sweeps = row.production > 0 && !row.paused;
+  const sweep = sweeps
+    ? ({ "--sweep-period": `${sweepPeriodS(row.production)}s` } as CSSProperties)
+    : undefined;
   return (
     <div
       role="meter"
@@ -186,6 +191,8 @@ function SatisfactionMeter({ row }: { row: RowModel }) {
       }
       className={styles.sat}
       data-state={cls}
+      data-sweep={sweeps ? "" : undefined}
+      style={sweep}
     >
       <div
         className={`${styles.satFill} ${styles[`state-${cls}`] ?? ""}`}
