@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!-- Rendered by infra/unraid/deploy.sh into /boot/config/plugins/dockerMan/templates-user/ (mode 600).
+     The double-at placeholders are filled there. One <Config> per line: deploy.sh reads the rendered
+     file back line by line to build the docker run. -->
+<Container version="2">
+  <Name>manufactory-web</Name>
+  <Repository>manufactory-web:current</Repository>
+  <Registry/>
+  <Network>pgnet</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/NeverEndingCode/ManufactoryIdle</Support>
+  <Project>https://github.com/NeverEndingCode/ManufactoryIdle</Project>
+  <Overview>Manufactory Idle web client (Caddy): serves the built client and proxies /api and /auth to manufactory-api. Plain HTTP; TLS ends at Cloudflare, whose tunnel reaches http://192.168.68.50:8087. Built locally by infra/unraid/deploy.sh; recreate it with deploy.sh --recreate.</Overview>
+  <Category>GameServers:</Category>
+  <WebUI>http://[IP]:[PORT:80]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>manufactory-api on pgnet</Requires>
+  <Config Name="Web port" Target="80" Default="8087" Mode="tcp" Description="Host port for the cloudflared tunnel" Type="Port" Display="always" Required="true" Mask="false">@@HOST_PORT@@</Config>
+  <Config Name="API_UPSTREAM" Target="API_UPSTREAM" Default="manufactory-api:8080" Mode="" Description="The API container on pgnet" Type="Variable" Display="advanced" Required="true" Mask="false">manufactory-api:8080</Config>
+  <Config Name="CLIENT_IP_HEADER" Target="CLIENT_IP_HEADER" Default="Cf-Connecting-Ip" Mode="" Description="Header carrying the player's IP (D-4); needs CLIENT_IP_TRUSTED_PROXIES too" Type="Variable" Display="advanced" Required="false" Mask="false">@@CLIENT_IP_HEADER@@</Config>
+  <Config Name="CLIENT_IP_TRUSTED_PROXIES" Target="CLIENT_IP_TRUSTED_PROXIES" Default="private_ranges" Mode="" Description="Peers allowed to set CLIENT_IP_HEADER (cloudflared reaches us from a private address)" Type="Variable" Display="advanced" Required="false" Mask="false">@@CLIENT_IP_TRUSTED_PROXIES@@</Config>
+</Container>

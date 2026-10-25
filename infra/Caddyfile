@@ -6,10 +6,26 @@
 # API_UPSTREAM   the API's listen address (default 127.0.0.1:8080)
 # WEB_ROOT       a copy of apps/web/dist (default /srv/manufactory/web)
 #
+# Real client IPs behind another proxy (D-4, R-23's per-IP guest limit), opt-in; both unset
+# by default, which leaves this example as it was:
+# CLIENT_IP_HEADER            the header that carries the client's IP, e.g. Cf-Connecting-Ip
+# CLIENT_IP_TRUSTED_PROXIES   the peers allowed to set it, e.g. private_ranges
+# Caddy reads the header only from a trusted peer, so set both. The client IP ({client_ip})
+# then goes upstream as X-Forwarded-For; the API trusts Caddy through TRUST_PROXY. Unset, an
+# empty option is dropped, nothing is trusted and {client_ip} is the peer, which is what
+# Caddy sends as X-Forwarded-For anyway.
+#
 # Hashed chunks under /assets/ (and their .map source maps, W-25) are immutable and served
 # only by file_server: a missing one is a 404, never the SPA's index.html (which would then be
 # cached as an immutable script). Everything else falls back to index.html, revalidated
 # (no-cache) so a deploy is picked up on the next load.
+
+{
+	servers {
+		trusted_proxies static {$CLIENT_IP_TRUSTED_PROXIES}
+		client_ip_headers {$CLIENT_IP_HEADER}
+	}
+}
 
 {$SITE_ADDRESS:localhost:8443} {
 	encode zstd gzip
@@ -26,7 +42,9 @@
 
 	@backend path /api/* /auth/*
 	handle @backend {
-		reverse_proxy {$API_UPSTREAM:127.0.0.1:8080}
+		reverse_proxy {$API_UPSTREAM:127.0.0.1:8080} {
+			header_up X-Forwarded-For {client_ip}
+		}
 	}
 
 	handle /assets/* {

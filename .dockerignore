@@ -1,0 +1,15 @@
+# Build context for infra/docker/Dockerfile: sources and manifests only.
+**/node_modules
+.git
+.claude
+.superpowers
+**/dist
+**/.turbo
+**/coverage
+apps/web/playwright-report
+apps/web/test-results
+**/*.env
+**/.env
+**/.env.*
+*.log
+.DS_Store

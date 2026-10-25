@@ -82,8 +82,10 @@ database each run; `docker compose down -v` clears them.
 
 `infra/Caddyfile` is an example of the production shape, not hosting (W-25): one origin
 that serves the built client and forwards `/api/*` and `/auth/*` to the API. Choosing a
-host, a domain and TLS is outside the repo. There is no compose profile for it: the API
-has no container image.
+host, a domain and TLS is outside the repo. There is no compose profile for it.
+`infra/docker/Dockerfile` builds both halves as images (targets `api` and `web`), and
+[`infra/unraid/README.md`](unraid/README.md) is the runbook for this project's own deploy to
+Unraid with them.
 
 1. Build the client at a known commit, so its footer links the source it was built from
    (GPL-3.0: shipping JS is distribution), and copy it to the web root:
