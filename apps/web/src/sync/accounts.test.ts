@@ -923,6 +923,90 @@ describe("GameStore accounts: fix rounds 2 and 3", () => {
     expect(view.snapshot!.stateVersion).toBe(1);
   });
 
+  it("N-1. a stray 401 on a POST from a world left behind is never resent to the new one", async () => {
+    // W-14: the POST is in flight when newFactory() resets to a new guest; its answer is a
+    // 401 that isn't the API's. Resending it would carry the old world's batch to the new one.
+    let openPost!: () => void;
+    const postGate = new Promise<void>((r) => (openPost = r));
+    let posts = 0;
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      if (url === "/api/actions") {
+        posts += 1;
+        if (posts === 1) {
+          await postGate;
+          return new Response('{"message":"try refresh token"}', {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          });
+        }
+      }
+      return holder.rig!.fetch(url, init);
+    };
+    const rig = await newRig();
+    holder.rig = rig;
+    const { store, tokens } = storeOn(rig, { fetch });
+    await store.start();
+    await store.idle();
+    const oldToken = tokens.get()!;
+    const sent = store.send([reorder(store)], "reorder");
+    await until(() => posts === 1);
+    const from = rig.fetch.calls.length;
+    const fresh = store.newFactory();
+    await until(() => tokens.get() !== null && tokens.get() !== oldToken);
+    openPost();
+    await fresh;
+    await store.idle();
+    await rig.advance(30_000);
+    await store.idle();
+    expect(posts).toBe(1);
+    expect((await sent).kind).toBe("unauthorized");
+    expect(rig.fetch.calls.slice(from).some((c) => c.url === "/api/actions")).toBe(false);
+    expect(store.getView().pending).toEqual([]);
+    expect(tokens.get()).not.toBe(oldToken);
+    expect(store.getView().snapshot!.stateVersion).toBe(0);
+  });
+
+  it("N-1. a 5xx on a POST from a world left behind is never resent to the new one", async () => {
+    // As above, answered with a 500 (the outbox's own retry): settled, never resent.
+    let openPost!: () => void;
+    const postGate = new Promise<void>((r) => (openPost = r));
+    let posts = 0;
+    const holder: { rig?: TestRig } = {};
+    const fetch: FetchLike = async (url, init) => {
+      if (url === "/api/actions") {
+        posts += 1;
+        if (posts === 1) {
+          await postGate;
+          return new Response('{"error":"x"}', { status: 500 });
+        }
+      }
+      return holder.rig!.fetch(url, init);
+    };
+    const rig = await newRig();
+    holder.rig = rig;
+    const { store, tokens } = storeOn(rig, { fetch });
+    await store.start();
+    await store.idle();
+    const oldToken = tokens.get()!;
+    const sent = store.send([reorder(store)], "reorder");
+    await until(() => posts === 1);
+    const from = rig.fetch.calls.length;
+    const fresh = store.newFactory();
+    await until(() => tokens.get() !== null && tokens.get() !== oldToken);
+    openPost();
+    await fresh;
+    await store.idle();
+    await rig.advance(30_000);
+    await store.idle();
+    expect(posts).toBe(1);
+    expect((await sent).kind).toBe("unauthorized");
+    expect(rig.fetch.calls.slice(from).some((c) => c.url === "/api/actions")).toBe(false);
+    expect(store.getView().pending).toEqual([]);
+    expect(tokens.get()).not.toBe(oldToken);
+    expect(store.getView().snapshot!.stateVersion).toBe(0);
+  });
+
   it("3. a guest 401 that lands after the sign-in never ends the session", async () => {
     // A guest keepalive sent before the sign-in, held, then answered with the API's 401 while
     // the claim is out (the hold doesn't wait on keepalives). It is about the guest token.

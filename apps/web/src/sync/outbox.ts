@@ -31,6 +31,10 @@ export interface OutboxDeps<S = undefined> {
   /** An outcome that would settle the batch but is resent instead, on the usual backoff (a 401
    * that isn't the API's own on a guest request, final review I-2). Omitted: none. */
   retryAnyway?: (o: Outcome, sentWith: S | undefined) => boolean;
+  /** True when an attempt's stamp is about a world the owner has left (W-14): a batch that
+   * would be resent (a retry, a pause, retryAnyway) settles as "unauthorized" instead, as
+   * clear() settles the queued ones. Omitted: never stale. */
+  isStale?: (sentWith: S | undefined) => boolean;
   /** Read as each attempt is sent. Omitted: undefined. */
   stamp?: () => S;
   /** Local ms until the shared 429/503 pause ends, 0 if not paused. */
@@ -117,7 +121,8 @@ export class Outbox<S = undefined> {
   }
 
   /** Drops every batch not in flight (W-14: the identity is gone, so they must never reach a new
-   * world), settling each with `outcome`. A batch in flight settles when its response lands. */
+   * world), settling each with `outcome`. A batch in flight settles when its response lands,
+   * and with `isStale` is never resent. */
   clear(outcome: Outcome): void {
     this.#clearTimer();
     const dropped = [...(this.#head && !this.#attempt ? [this.#head] : []), ...this.#queue];
@@ -207,9 +212,11 @@ export class Outbox<S = undefined> {
     } catch (err) {
       console.error("outbox onOutcome", err);
     }
-    if (SETTLED.has(outcome.kind) && !(this.#d.retryAnyway?.(outcome, sentWith) ?? false)) {
+    const settles =
+      SETTLED.has(outcome.kind) && !(this.#d.retryAnyway?.(outcome, sentWith) ?? false);
+    if (settles || (this.#d.isStale?.(sentWith) ?? false)) {
       this.#retries = 0;
-      this.#settle(batch, outcome);
+      this.#settle(batch, settles ? outcome : { kind: "unauthorized" });
       this.#d.onChange?.();
     } else if (outcome.kind === "paused") {
       this.#wait(Math.max(MIN_WAIT_MS, outcome.retryAfterMs, this.#d.isPaused()));

@@ -222,6 +222,7 @@ export class GameStore {
         await this.#handle(o, "post", this.#clock.now(), sent ?? this.#sent(), b.id);
       },
       retryAnyway: (o, sent) => this.#strayGuest401(o, sent ?? this.#sent()),
+      isStale: (sent) => sent !== undefined && sent.epoch !== this.#epoch,
       stamp: () => this.#sent(),
       isPaused: () => Math.max(0, this.#pausedUntil - this.#clock.now()),
       onChange: () => {
@@ -1142,6 +1143,8 @@ export class GameStore {
     return (
       o.kind === "unauthorized" &&
       o.apiGuest !== true &&
+      // N-1: never for a world left behind; its batch must not reach the new one (W-14).
+      sent.epoch === this.#epoch &&
       sent.as === "guest" &&
       this.#identity === "guest"
     );
