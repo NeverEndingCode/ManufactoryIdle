@@ -18,7 +18,7 @@
 import { POWER_ITEM, type ItemId, type RecipeId } from "../content/types.js";
 import { isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
 import { bestUnlockedMark, type CapacityTable } from "../economy/capacity.js";
-import { adviceMark } from "../economy/advice-mark.js";
+import { adviceMark, isDeadPayer } from "../economy/advice-mark.js";
 import { liquid, liquidCap, type ItemStateTag } from "../economy/storage.js";
 import { levelCostRange, machineCostRange } from "../economy/curves.js";
 import { D, type Dec } from "../numbers/decimal.js";
@@ -508,9 +508,7 @@ function unmadePayerAdvice(
   const { content, state, itemRates, itemStates } = walk;
   for (const [itemId, amount] of costs) {
     if (visited.has(itemId)) continue;
-    const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
-    if (liquid(state, itemId).plus(bound).gte(amount)) continue;
-    if ((itemRates.get(itemId)?.production ?? 0) > FLOW_TOLERANCE) continue;
+    if (!isDeadPayer(state, itemRates, itemId, amount)) continue;
     const recipeId = activeRecipeOf(state.activeRecipe, itemId);
     if (recipeId === undefined || !isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) continue;
     visited.add(itemId);

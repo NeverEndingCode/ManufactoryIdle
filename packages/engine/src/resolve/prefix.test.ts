@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
+import { applyBatch } from "../actions/index.js";
+import type { Action } from "../actions/types.js";
 import { indexContent } from "../graph/index-content.js";
 import { deserializeWorld, serializeWorld } from "../state/serialize.js";
 import type { WorldState } from "../state/world.js";
@@ -138,5 +140,53 @@ describe("resolve — the resumable prefix (PL-2)", () => {
     for (const f of out.summary.filled) f.atMs = -1;
     out.events.length = 0;
     expect(bytes(resolve(load("slice-tier-8-reinforced-full"), slice, 60_000, opts))).toBe(cold);
+  });
+  /** Freezes everything reachable, Decimals included; a Map's own entries are frozen too. */
+  function deepFreeze(value: unknown, seen = new Set<unknown>()): void {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (value instanceof Map) {
+      for (const [k, v] of value) {
+        deepFreeze(k, seen);
+        deepFreeze(v, seen);
+      }
+      const refuse = () => {
+        throw new TypeError("a kept prefix's Map was written");
+      };
+      Object.assign(value, { set: refuse, delete: refuse, clear: refuse });
+    }
+    for (const key of Reflect.ownKeys(value)) deepFreeze((value as Record<PropertyKey, unknown>)[key], seen);
+    Object.freeze(value);
+  }
+
+  // The kept prefix's state and solve answers are shared by reference with what resolve hands
+  // back. That is only safe while nothing writes a WorldState (or a Decimal, or a solve
+  // answer) in place. Strict-mode modules throw on a write to a frozen object, so this fails
+  // the day something starts doing that.
+  it("survives a frozen prefix: nothing downstream writes the shared state in place", { timeout: 60_000 }, () => {
+    const cache = testCache();
+    const opts = { prefixCache: cache, cacheKey: "f" };
+    resolve(load("slice-tier-8-reinforced-full"), slice, 60_000, opts);
+    const entry = cache.map.get("f")!;
+    expect(entry).toBeDefined();
+    deepFreeze(entry.current);
+    deepFreeze(entry.answers);
+
+    const cold = bytes(resolve(load("slice-tier-8-reinforced-full"), slice, HOUR));
+    const out = resolve(load("slice-tier-8-reinforced-full"), slice, HOUR, opts);
+    expect(bytes(out)).toBe(cold);
+
+    const actions: Action[] = [
+      { type: "TAP", count: 1, clientElapsedMs: 1_000 },
+      { type: "SET_RESERVE", itemId: "screw", percent: 0.05 },
+      { type: "DISMANTLE", lane: "iron", machineClass: "smelter", mark: 1, count: 1 },
+    ];
+    const batch = applyBatch(out.state, slice, actions, out.state.seed);
+    if (batch.rejected) throw new Error(batch.reason);
+    resolve(batch.state, slice, HOUR);
+    // And the frozen entry still resumes to the cold answer.
+    expect(bytes(resolve(load("slice-tier-8-reinforced-full"), slice, 60_000, opts))).toBe(
+      bytes(resolve(load("slice-tier-8-reinforced-full"), slice, 60_000)),
+    );
   });
 });

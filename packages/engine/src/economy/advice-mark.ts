@@ -10,7 +10,7 @@
 // solve/ already imports capacity.ts.
 import type { ItemId, LaneId, MachineClassId } from "../content/types.js";
 import type { IndexedContent } from "../graph/index-content.js";
-import { D } from "../numbers/decimal.js";
+import { D, type Dec } from "../numbers/decimal.js";
 import { installedAt, type WorldState } from "../state/world.js";
 import { FLOW_TOLERANCE, type ItemFlow } from "../solve/fixpoint.js";
 import { bestUnlockedMark } from "./capacity.js";
@@ -18,11 +18,23 @@ import { machineCostRange } from "./curves.js";
 import { liquid } from "./storage.js";
 
 /**
- * True when one more machine of `mark` is priced in a dead payer: an item that is short
- * (liquid plus bound below the price; a build spends bound first) and not made at all
- * (production at or under FLOW_TOLERANCE). Waiting pays a short item that is being made;
- * nothing pays a dead one. An item missing from `itemRates` reads as unmade.
+ * True when `itemId` is a dead payer of `amount`: short of it (liquid plus bound below it; a
+ * build spends bound first) and not made at all (production at or under FLOW_TOLERANCE).
+ * Waiting pays a short item that is being made; nothing pays a dead one. An item missing
+ * from `itemRates` reads as unmade. The bottleneck's unmade-payer walk asks the same question.
  */
+export function isDeadPayer(
+  state: WorldState,
+  itemRates: ReadonlyMap<ItemId, ItemFlow>,
+  itemId: ItemId,
+  amount: Dec,
+): boolean {
+  const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
+  if (liquid(state, itemId).plus(bound).gte(amount)) return false;
+  return (itemRates.get(itemId)?.production ?? 0) <= FLOW_TOLERANCE;
+}
+
+/** True when one more machine of `mark` is priced in a dead payer (`isDeadPayer`). */
 function hasDeadPayer(
   content: IndexedContent,
   state: WorldState,
@@ -33,9 +45,7 @@ function hasDeadPayer(
 ): boolean {
   const owned = installedAt(state, lane, machineClass, mark);
   for (const [itemId, amount] of machineCostRange(content, machineClass, mark, owned, 1)) {
-    const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
-    if (liquid(state, itemId).plus(bound).gte(amount)) continue;
-    if ((itemRates.get(itemId)?.production ?? 0) <= FLOW_TOLERANCE) return true;
+    if (isDeadPayer(state, itemRates, itemId, amount)) return true;
   }
   return false;
 }

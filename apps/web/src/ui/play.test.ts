@@ -34,6 +34,8 @@ const LIMIT_MS = 400 * H;
 /** Game-time bounds. The plan's probe measured 9.2 h to tier 6 and 132 h to tier 10; this
  * player measured 10.85 h and 180.8 h (2026-10-22). */
 const BOUND_H = TARGET >= 10 ? 300 : 24;
+/** The frame-only player's: it measured 223.98 h to tier 10 (2026-10-25), so ~240 h there. */
+const FRAME_ONLY_BOUND_H = TARGET >= 10 ? 240 : BOUND_H;
 
 let slice: Slice;
 beforeAll(() => {
@@ -207,7 +209,7 @@ describe("the frame-only player (PL-1)", () => {
         expect(run.tierAtH[6]).toBe(11.320802845148547);
       }
       expect(run.state.tier).toBeGreaterThanOrEqual(TARGET);
-      expect(hours).toBeLessThanOrEqual(BOUND_H);
+      expect(hours).toBeLessThanOrEqual(FRAME_ONLY_BOUND_H);
     },
   );
 });

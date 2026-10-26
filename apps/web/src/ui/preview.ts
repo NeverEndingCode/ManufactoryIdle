@@ -153,6 +153,19 @@ function powerChanged(p: { before: PowerReport; after: PowerReport }): boolean {
   return moved(b.demandMw, a.demandMw) || moved(b.supplyMw, a.supplyMw);
 }
 
+/** The advice with its mark dropped: buying a machine can change only which mark is advised
+ * (PL-1 steps down past an unpayable one), and that does not clear anything. */
+function adviceOf(b: Bottleneck): unknown {
+  if (b === null || !("mark" in b)) return b;
+  const { mark: _mark, ...rest } = b;
+  return rest;
+}
+
+/** Whether the bottleneck itself moved, ignoring a change of advised mark alone. */
+export function bottleneckMoved(p: { before: Bottleneck; after: Bottleneck }): boolean {
+  return JSON.stringify(adviceOf(p.after)) !== JSON.stringify(adviceOf(p.before));
+}
+
 /** Plain lines for the drawer: "Iron Plate +0.333/s → +0.667/s", "Power 22.0 / 200 MW →
  * 26.0 / 200 MW", "Clears the bottleneck" when the bottleneck moves, or "No change to rates
  * now" (pillar 4). The lane's items first, at most four rate lines. A rejection is its reason. */
@@ -173,9 +186,7 @@ export function previewLines(s: Snapshot, p: Preview, laneId: LaneId): string[] 
       `Power ${mw(b.demandMw)} / ${mw(b.supplyMw)} MW → ${mw(a.demandMw)} / ${mw(a.supplyMw)} MW`,
     );
   }
-  if (JSON.stringify(p.bottleneck.after) !== JSON.stringify(p.bottleneck.before)) {
-    lines.push("Clears the bottleneck");
-  }
+  if (bottleneckMoved(p.bottleneck)) lines.push("Clears the bottleneck");
   if (p.deltas.length === 0 && !power) lines.push("No change to rates now");
   return lines;
 }

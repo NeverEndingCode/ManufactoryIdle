@@ -146,6 +146,9 @@ function rateOf(session: Session, itemId: ItemId): number {
   return session.solution.itemRates.get(itemId)?.net ?? 0;
 }
 
+/** PL-1: the mark the advice names (" Mk2"), or nothing when it names none. */
+const markText = (mark: number | null): string => (mark === null ? "" : ` Mk${mark}`);
+
 export function renderStatus(session: Session): string[] {
   const { solution, state, content } = session;
   const lines: string[] = [];
@@ -164,13 +167,13 @@ export function renderStatus(session: Session): string[] {
   } else if (bottleneck.kind === "recipe") {
     // Spec 4.5: state the consequence in plain language and the fix as a number.
     lines.push(
-      `BOTTLENECK  ${bottleneck.recipeId} limiting ${bottleneck.limitingTarget} — ` +
+      `BOTTLENECK  ${bottleneck.recipeId}${markText(bottleneck.mark)} limiting ${bottleneck.limitingTarget} — ` +
         `${bottleneck.machinesToClear} more clears it`,
     );
   } else if (bottleneck.kind === "power") {
     lines.push(
       `BOTTLENECK  power limiting ${bottleneck.limitingTarget} — ` +
-        `${bottleneck.machinesToClear} more ${bottleneck.generatorRecipeId ?? "generator"} clears it`,
+        `${bottleneck.machinesToClear} more ${bottleneck.generatorRecipeId ?? "generator"}${markText(bottleneck.mark)} clears it`,
     );
   } else if (bottleneck.kind === "reserve") {
     lines.push(

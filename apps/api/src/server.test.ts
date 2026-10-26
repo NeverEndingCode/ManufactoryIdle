@@ -413,10 +413,9 @@ describe("GET /api/world on a tier-8 world (PL-2)", () => {
       fixture,
       t,
     ]);
-    const [row] = await db.query<{ id: string; content_version: string }>(
-      "select id, content_version from player_worlds",
-    );
-    const key = `${row!.id}:0:${row!.content_version}`;
+    const [row] = await db.query<{ id: string }>("select id from player_worlds");
+    // Keyed by world alone: the engine checks the entry's start state before resuming.
+    const key = row!.id;
     const content = store.current.content;
     expect(resolvePrefixes.get(key)).toBeUndefined();
 
@@ -433,7 +432,7 @@ describe("GET /api/world on a tier-8 world (PL-2)", () => {
     }
 
     // A batch resolves from the same stored state, so it resumes too, and stores what a cold
-    // resolve would have; the next GET is keyed on the new state version.
+    // resolve would have; the next GET starts from the new state, so cannot resume the old prefix.
     now = t + 120_000;
     const tap: Action = { type: "TAP", count: 1, clientElapsedMs: 1_000 };
     const res = await postActions(app, token, { idempotencyKey: "k", baseVersion: 0, actions: [tap] });
@@ -448,6 +447,40 @@ describe("GET /api/world on a tier-8 world (PL-2)", () => {
     const after = await app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
     const cold = resolve(batch.state, content, 60_000);
     expect(JSON.stringify((after.json() as { state: unknown }).state)).toBe(JSON.stringify(wire(cold.state)));
+  });
+  it("keeps one prefix per world: a new stored state's prefix replaces the old one", { timeout: 60_000 }, async () => {
+    const t = start().lastResolvedAt;
+    now = t;
+    const { app } = await server();
+    const token = await createGuest(app);
+    const store = async (state: WorldState, version: number) =>
+      db.query(
+        `update player_worlds set state = $1::jsonb, state_version = $2,
+                last_resolved_at = to_timestamp($3 / 1000.0)`,
+        [serializeWorld(state), version, state.lastResolvedAt],
+      );
+    const [row] = await db.query<{ id: string }>("select id from player_worlds");
+    const get = async (at: number) => {
+      now = at;
+      const res = await app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+      expect(res.statusCode).toBe(200);
+    };
+
+    await store(start(), 0);
+    await get(t + 60_000);
+    const first = resolvePrefixes.get(row!.id);
+    expect(first?.start).toBe(serializeWorld(start()));
+    const size = resolvePrefixes.size;
+
+    // The same world, a later stored state (as a batch would leave it): one entry, replaced.
+    const later = { ...start(), lastResolvedAt: t + 1_000 };
+    await store(later, 1);
+    await get(t + 61_000);
+    const second = resolvePrefixes.get(row!.id);
+    expect(second).toBeDefined();
+    expect(second).not.toBe(first);
+    expect(second!.start).toBe(serializeWorld(later));
+    expect(resolvePrefixes.size).toBe(size);
   });
 });
 

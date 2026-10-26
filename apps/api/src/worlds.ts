@@ -140,18 +140,19 @@ const SELECT_MAIN = `select id, player_id, content_version, state_version::text 
  * PL-2: resolve's kept fine-step prefixes, per process. A world whose resolve trips the
  * MAX_EVENTS guard (a tier-8 screw cycle burns all 10,000 fine steps on ~27 µs) used to pay
  * ~0.3 s on every GET until its next batch, because each GET resolves from the stored state.
- * Keyed on what names that state: a batch or a re-pin bumps state_version, and the content is
- * the pinned checksum. Exact, so replay and every result are unchanged; the engine also checks
- * the entry's start state itself, so a wrong key could only miss. 256 entries of ~0.5 MB each
- * at most (only guard-tripping worlds store one) bounds it near 128 MB.
+ * Keyed by world id alone, so a world's new prefix (after a batch or a re-pin) replaces its
+ * old one instead of leaving a dead entry behind. The engine checks an entry's start state,
+ * start cursor and content itself before resuming, so a stale or wrong entry can only miss.
+ * Exact, so replay and every result are unchanged. ~0.47 MB per entry (mostly its ~5,000
+ * events; only guard-tripping worlds store one), so 64 entries hold at most ~30 MiB.
  */
-export const resolvePrefixes = new Lru<ResolvePrefix>(256);
+export const resolvePrefixes = new Lru<ResolvePrefix>(64);
 
 /** resolve(), resuming from and keeping a prefix for this world's stored state. */
 function resolveStored(world: World, content: IndexedContent, nowMs: number) {
   return resolve(world.state, content, nowMs - world.state.lastResolvedAt, {
     prefixCache: resolvePrefixes,
-    cacheKey: `${world.id}:${world.stateVersion}:${world.contentVersion}`,
+    cacheKey: world.id,
   });
 }
 

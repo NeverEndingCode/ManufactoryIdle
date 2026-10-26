@@ -14,7 +14,7 @@ import {
 import type { Snapshot } from "../sync/snapshot.js";
 import { fixtureState, freshState, loadSlice, snapshotOf, type Slice } from "./test-fixtures.js";
 import { creditFor, quote } from "./quote.js";
-import { preview, previewLines } from "./preview.js";
+import { bottleneckMoved, preview, previewLines } from "./preview.js";
 
 let slice: Slice;
 let fresh: Snapshot;
@@ -201,9 +201,7 @@ describe("previewLines", () => {
     const rates = lines.filter((l) => l.endsWith("/s"));
     expect(rates.length).toBeGreaterThan(0);
     expect(rates.length).toBeLessThanOrEqual(4);
-    if (JSON.stringify(p.bottleneck.after) !== JSON.stringify(p.bottleneck.before)) {
-      expect(lines).toContain("Clears the bottleneck");
-    }
+    if (bottleneckMoved(p.bottleneck)) expect(lines).toContain("Clears the bottleneck");
     expect(lines).not.toContain("No change to rates now");
   });
 
@@ -212,5 +210,25 @@ describe("previewLines", () => {
     if (!p.ok) throw new Error(p.reason);
     expect(p.deltas).toEqual([]);
     expect(previewLines(fresh, p, "iron")).toEqual(["No change to rates now"]);
+  });
+  it("a change of advised mark alone does not clear the bottleneck", () => {
+    const p = preview(fresh, [{ type: "SET_RESERVE", itemId: "iron_rod", percent: 0 }]);
+    if (!p.ok) throw new Error(p.reason);
+    const before = {
+      kind: "recipe",
+      recipeId: "make_steel_pipe",
+      limitingTarget: "tier 6",
+      machinesToClear: 1,
+      mark: 3,
+    } as const;
+    const markOnly = { before, after: { ...before, mark: 2 } };
+    expect(bottleneckMoved(markOnly)).toBe(false);
+    expect(previewLines(fresh, { ...p, bottleneck: markOnly }, "iron")).not.toContain("Clears the bottleneck");
+    // A different recipe still clears it.
+    const moved = { before, after: { ...before, recipeId: "make_iron_plate", mark: 2 } };
+    expect(bottleneckMoved(moved)).toBe(true);
+    expect(previewLines(fresh, { ...p, bottleneck: moved }, "iron")).toContain("Clears the bottleneck");
+    expect(bottleneckMoved({ before: null, after: null })).toBe(false);
+    expect(bottleneckMoved({ before, after: null })).toBe(true);
   });
 });

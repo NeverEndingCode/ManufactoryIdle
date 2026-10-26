@@ -226,14 +226,15 @@ export function capAtLevel(
   level: number,
   playerTier = 0,
 ): Dec {
-  // Only small non-negative integer levels and tiers, the only ones content produces, are
-  // memoised; a zero base is not, since a Map conflates -0 with 0.
+  // Only levels a player can reach (0 to maxLevel, plus one for a next-level preview) and
+  // small non-negative integer tiers are memoised, so the memo's size is bounded by the
+  // content; a zero base is not, since a Map conflates -0 with 0.
   if (
     base === 0 ||
     !Number.isInteger(level) ||
     !Number.isInteger(playerTier) ||
     level < 0 ||
-    level >= MEMO_LEVELS ||
+    level > curve.maxLevel + 1 ||
     playerTier < 0 ||
     playerTier >= MEMO_TIERS
   ) {
@@ -266,7 +267,8 @@ export function capAtLevel(
  * numbers, not strings: formatting a float key cost as much as the powers it saved. The
  * Decimal returned is shared, which is safe because break_infinity's arithmetic returns new
  * values and the engine never mutates one in place. The memo is per curve object (a WeakMap,
- * so it goes when the content does) and holds a few hundred caps for a real bundle.
+ * so it goes when the content does). It holds at most items x (maxLevel + 2) x tiers caps
+ * per curve, a few hundred in practice.
  */
 interface CurveMemo {
   capGrowth: number;
@@ -275,7 +277,6 @@ interface CurveMemo {
 }
 const CAP_MEMO = new WeakMap<StorageCurveDef, CurveMemo>();
 const MEMO_TIERS = 1_024;
-const MEMO_LEVELS = 1_000_000;
 
 /**
  * `capAtLevel` without the memo.
