@@ -50,7 +50,10 @@ function bytes(out: ResolveResult): string {
   });
 }
 
-describe("resolve — the resumable prefix (PL-2)", () => {
+// Every case runs at least one cold tier-8 resolve, which burns the 10,000-step budget (~0.3 s
+// here, several seconds on a shared CI runner alongside the other packages' suites): past
+// vitest's 5 s default (PR #27's first check run), so the whole suite gets a hang guard.
+describe("resolve — the resumable prefix (PL-2)", { timeout: 60_000 }, () => {
   // Precondition for the whole file: the reinforced-full world trips the guard after an
   // unclipped prefix, so a prefix is kept; without that every test below is vacuous.
   it("keeps a prefix when the guard trips, and none when it does not", () => {
