@@ -49,6 +49,7 @@ describe("solve — the healthy case", () => {
       // Runner-up is smelt_iron at 2/3 plate/s against 1/3 achieved. Closing that
       // needs (2/3 - 1/3) x 3 = 1 more constructor unit, and one machine is one unit.
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -75,6 +76,7 @@ describe("solve — the healthy case", () => {
       recipeId: "make_plate",
       limitingTarget: "item:iron_plate",
       machinesToClear: 3,
+      mark: 1,
     });
   });
 });
@@ -136,6 +138,7 @@ describe("solve — power equilibrium (spec C.4)", () => {
       // The fuel chain has no machines at all, so one is the honest minimum -- the
       // same argument resolveBlocker makes for a zero-capacity milestone recipe.
       machinesToClear: 1,
+      mark: 1,
     });
   });
 

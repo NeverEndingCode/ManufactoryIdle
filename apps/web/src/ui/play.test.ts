@@ -99,7 +99,8 @@ function sections(s: Snapshot): MachineSection[] {
   return out;
 }
 
-function play(target: number): Run {
+/** `frameOnly`: the player who only ever presses the frame's button and waits (PL-1). */
+function play(target: number, { frameOnly = false } = {}): Run {
   const { content } = slice;
   let state = initialWorld(content, 1, 0);
   const run: Run = { state, tierAtH: {}, rejected: [], actions: 0, decisions: 0 };
@@ -124,13 +125,15 @@ function play(target: number): Run {
   while (state.tier < target && state.lastResolvedAt < LIMIT_MS) {
     run.decisions += 1;
     let s = snap();
-    // 2. The next milestone's items just below power.
-    for (const a of reorders(s)) if (act(s, [a])) s = snap();
-    // 3. Idle machines to a starved recipe, per lane-class.
-    for (const sec of sections(s)) {
-      const fresh = sectionFor(s, sec.lane, sec.machineClass);
-      const mv = idleMove(s, fresh);
-      if (mv && act(s, moveMachines(fresh, mv.from, mv.to, mv.n))) s = snap();
+    if (!frameOnly) {
+      // 2. The next milestone's items just below power.
+      for (const a of reorders(s)) if (act(s, [a])) s = snap();
+      // 3. Idle machines to a starved recipe, per lane-class.
+      for (const sec of sections(s)) {
+        const fresh = sectionFor(s, sec.lane, sec.machineClass);
+        const mv = idleMove(s, fresh);
+        if (mv && act(s, moveMachines(fresh, mv.from, mv.to, mv.n))) s = snap();
+      }
     }
     // 4. The frame.
     const m = bottleneckRow(s);
@@ -171,6 +174,37 @@ describe("the builder-only player (Q-14)", () => {
         // Pinned before the S-18 changes (Phase 4c): the player's run must not move.
         expect(run.actions).toBe(275);
         expect(run.tierAtH[6]).toBe(10.845218848871589);
+      }
+      expect(run.state.tier).toBeGreaterThanOrEqual(TARGET);
+      expect(hours).toBeLessThanOrEqual(BOUND_H);
+    },
+  );
+});
+
+describe("the frame-only player (PL-1)", () => {
+  // Spec 2026-10-25, Problem 1: a player who only presses the frame's buy button and waits
+  // reached tier 5 at 7.59 h and never left it. The frame named a Constructor Mk3 for steel
+  // pipe, and Mk3 is priced only in steel pipe. Following the advice must never deadlock.
+  it(
+    `reaches tier ${TARGET} from the frame's button alone`,
+    { timeout: TARGET >= 10 ? 480_000 : 180_000 },
+    () => {
+      const t0 = performance.now();
+      const run = play(TARGET, { frameOnly: true });
+      const hours = run.state.lastResolvedAt / H;
+      console.info(
+        `web-play frame-only: tier ${run.state.tier} at ${hours.toFixed(2)} h game time, ` +
+          `${run.actions} actions, ${run.decisions} decisions, ` +
+          `${((performance.now() - t0) / 1000).toFixed(1)} s wall; tier hours ` +
+          JSON.stringify(
+            Object.fromEntries(Object.entries(run.tierAtH).map(([k, v]) => [k, +v.toFixed(2)])),
+          ),
+      );
+      expect(run.rejected).toEqual([]);
+      if (TARGET === 6) {
+        // Measured 2026-10-25 with PL-1: tier 6 at 11.32 h (tier 10 at 223.98 h).
+        expect(run.actions).toBe(349);
+        expect(run.tierAtH[6]).toBe(11.320802845148547);
       }
       expect(run.state.tier).toBeGreaterThanOrEqual(TARGET);
       expect(hours).toBeLessThanOrEqual(BOUND_H);

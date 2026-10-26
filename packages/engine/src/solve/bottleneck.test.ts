@@ -4,12 +4,15 @@
 // while the report said "buy 1 more constructor". A storage cap was the binding
 // constraint and `Bottleneck` had no kind that could name it, so the reporter fell
 // through to the recipe it could name.
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
 import { indexContent, isLiveRecipe } from "../graph/index-content.js";
-import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
-import { liquidCap, quantumCap, storageCap } from "../economy/storage.js";
+import { initialWorld, installedAt, withInstalled, type WorldState } from "../state/world.js";
+import { deserializeWorld } from "../state/serialize.js";
+import { bestUnlockedMark } from "../economy/capacity.js";
+import { liquid, liquidCap, quantumCap, storageCap } from "../economy/storage.js";
 import { levelCostRange, machineCostRange } from "../economy/curves.js";
 import { POWER_ITEM } from "../content/types.js";
 import { D } from "../numbers/decimal.js";
@@ -108,6 +111,7 @@ describe("the milestone branch", () => {
       recipeId: "refine_plastic",
       limitingTarget: "item:plastic",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -336,6 +340,7 @@ describe("the gridlock walk", () => {
       recipeId: "burn_fuel",
       limitingTarget: "item:plastic",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -356,6 +361,7 @@ describe("the gridlock walk", () => {
       recipeId: "residual_fuel",
       limitingTarget: "item:plastic",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -375,6 +381,7 @@ describe("the gridlock walk", () => {
       recipeId: "refine_plastic",
       limitingTarget: "item:plastic",
       machinesToClear: 3,
+      mark: 1,
     });
   });
 
@@ -476,6 +483,7 @@ describe("the gridlock walk", () => {
       recipeId: "refine_plastic",
       limitingTarget: "item:plastic",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -533,6 +541,7 @@ describe("the gridlock walk", () => {
       recipeId: "refine_plastic",
       limitingTarget: "item:plastic",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -575,6 +584,7 @@ describe("the gridlock walk", () => {
       recipeId: "residual_fuel",
       limitingTarget: "power",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 });
@@ -908,6 +918,7 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
       recipeId: start.activeRecipe[payer!],
       limitingTarget: firstAdvice!.limitingTarget,
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -919,6 +930,7 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
       recipeId: start.activeRecipe.iron_ore,
       limitingTarget: firstAdvice!.limitingTarget,
       machinesToClear: 1,
+      mark: 1,
     });
     expect(start.activeRecipe.iron_ore).toBe("mine_iron");
   });
@@ -978,6 +990,7 @@ describe("computeBottleneck — a slow payer gets production advice", () => {
       recipeId: "smelt_iron",
       limitingTarget: "item:iron_plate",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 });
@@ -1101,6 +1114,7 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
       recipeId: start.activeRecipe.iron_ore,
       limitingTarget: "item:iron_plate",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -1113,6 +1127,7 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
       recipeId: "smelt_iron",
       limitingTarget: "item:iron_plate",
       machinesToClear: 1,
+      mark: 1,
     });
   });
 
@@ -1153,6 +1168,36 @@ describe("computeBottleneck — a payer blocked by its own output gets storage",
       recipeId: "smelt_iron",
       limitingTarget: "item:iron_plate",
       machinesToClear: 1,
+      mark: 1,
     });
+  });
+});
+
+describe("computeBottleneck — the advised mark can be paid (PL-1)", () => {
+  // Measured on the vertical slice, 2026-10-25: a player who only ever presses the frame's
+  // buy button reached tier 5 at 7.59 h and was still there at 400 h. This is its state at
+  // 9.61 h. The answer was a Constructor for make_steel_pipe at the best mark, Mk3, which is
+  // priced only in steel pipe: a steel-pipe machine priced in steel pipe, never affordable.
+  const sliceDir = fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url));
+  const slice = indexContent(loadBundleDir(sliceDir));
+  const stuck = deserializeWorld(
+    readFileSync(fileURLToPath(new URL("./fixtures/slice-tier-5-steel-pipe.world.json", import.meta.url)), "utf8"),
+  );
+
+  it("advises Constructor Mk2 for steel pipe or beam, not the steel-pipe-priced Mk3", () => {
+    const sol = solve(stuck, slice);
+    // Preconditions: Mk3 is the best unlocked mark, and it is priced in steel pipe nobody makes.
+    expect(stuck.tier).toBe(5);
+    expect(bestUnlockedMark(slice, "constructor", stuck.tier)).toBe(3);
+    const mk3 = machineCostRange(slice, "constructor", 3, installedAt(stuck, "coal", "constructor", 3), 1);
+    expect([...mk3.keys()]).toEqual(["steel_pipe"]);
+    expect(liquid(stuck, "steel_pipe").lt(mk3.get("steel_pipe")!)).toBe(true);
+    expect(sol.itemRates.get("steel_pipe")?.production ?? 0).toBe(0);
+
+    const b = sol.bottleneck;
+    expect(b?.kind).toBe("recipe");
+    if (b?.kind !== "recipe") return;
+    expect(["make_steel_pipe", "make_steel_beam"]).toContain(b.recipeId);
+    expect(b.mark).toBe(2);
   });
 });
