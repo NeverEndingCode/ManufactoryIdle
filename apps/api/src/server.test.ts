@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -20,7 +21,7 @@ import { migrate } from "./db/migrate.js";
 import type { Db } from "./db/db.js";
 import { openContentStore, type ContentStore } from "./content.js";
 import { buildServer, guestAuth, type ServerDeps } from "./server.js";
-import { replayWorld } from "./worlds.js";
+import { replayWorld, resolvePrefixes } from "./worlds.js";
 
 const SLICE = fileURLToPath(
   new URL("../../../packages/content/bundles/vertical-slice", import.meta.url),
@@ -388,6 +389,65 @@ describe("GET /api/world", () => {
     await get();
     const open = await db.query("select 1 from sessions where closed_at is null");
     expect(open).toHaveLength(1);
+  });
+});
+
+describe("GET /api/world on a tier-8 world (PL-2)", () => {
+  // The reinforced-full world trips the MAX_EVENTS guard on any window past ~27 µs, so every
+  // GET from its stored state used to pay ~0.3 s. The first GET keeps its fine-step prefix;
+  // the rest resume from it. Every answer must still be a cold resolve's, byte for byte.
+  const fixture = readFileSync(
+    fileURLToPath(
+      new URL("../../../packages/engine/src/resolve/fixtures/slice-tier-8-reinforced-full.world.json", import.meta.url),
+    ),
+    "utf8",
+  );
+  const start = () => deserializeWorld(fixture);
+
+  it("resumes a kept prefix, and every GET and POST still matches a cold resolve", { timeout: 60_000 }, async () => {
+    const t = start().lastResolvedAt;
+    now = t;
+    const { app, store } = await server();
+    const token = await createGuest(app);
+    await db.query("update player_worlds set state = $1::jsonb, last_resolved_at = to_timestamp($2 / 1000.0)", [
+      fixture,
+      t,
+    ]);
+    const [row] = await db.query<{ id: string; content_version: string }>(
+      "select id, content_version from player_worlds",
+    );
+    const key = `${row!.id}:0:${row!.content_version}`;
+    const content = store.current.content;
+    expect(resolvePrefixes.get(key)).toBeUndefined();
+
+    for (const gap of [60_000, 61_000, 3_600_000]) {
+      now = t + gap;
+      const res = await app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+      expect(res.statusCode).toBe(200);
+      const cold = resolve(start(), content, gap);
+      expect(cold.summary.guardTripped).toBe(true);
+      const body = res.json() as { state: unknown; schedule: unknown };
+      expect(JSON.stringify(body.state)).toBe(JSON.stringify(wire(cold.state)));
+      expect(body.schedule).toEqual(schedule(cold.state, content));
+      expect(resolvePrefixes.get(key)).toBeDefined();
+    }
+
+    // A batch resolves from the same stored state, so it resumes too, and stores what a cold
+    // resolve would have; the next GET is keyed on the new state version.
+    now = t + 120_000;
+    const tap: Action = { type: "TAP", count: 1, clientElapsedMs: 1_000 };
+    const res = await postActions(app, token, { idempotencyKey: "k", baseVersion: 0, actions: [tap] });
+    expect(res.statusCode, res.body).toBe(200);
+    const resolved = resolve(start(), content, 120_000);
+    const batch = applyBatch(resolved.state, content, [tap], resolved.state.seed);
+    if (batch.rejected) throw new Error(batch.reason);
+    expect(serializeWorld(await storedState())).toBe(serializeWorld(batch.state));
+    expect((res.json() as { summary: unknown }).summary).toEqual(resolved.summary);
+
+    now = t + 180_000;
+    const after = await app.inject({ method: "GET", url: "/api/world", headers: guest(token) });
+    const cold = resolve(batch.state, content, 60_000);
+    expect(JSON.stringify((after.json() as { state: unknown }).state)).toBe(JSON.stringify(wire(cold.state)));
   });
 });
 

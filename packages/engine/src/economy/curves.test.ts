@@ -1,11 +1,14 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadBundleDir } from "@manufactory/content";
 import { describe, expect, it } from "vitest";
-import { D } from "../numbers/decimal.js";
+import { D, toCanonical } from "../numbers/decimal.js";
+import { deserializeWorld } from "../state/serialize.js";
 import { indexContent } from "../graph/index-content.js";
 import { initialWorld, withInstalled, type WorldState } from "../state/world.js";
 import {
   capAtLevel,
+  capAtLevelUncached,
   combinedMultiplier,
   ladderInput,
   ladderMultiplier,
@@ -359,5 +362,55 @@ describe("capAtLevel and capPerTier", () => {
     expect(capAtLevel(500, { ...curve, capPerTier: 1.25 }, 2, 6).toNumber()).toBe(
       byHand.toNumber(),
     );
+  });
+});
+
+// PL-2: capAtLevel is memoised (it ran a Decimal power on every fine step of a resolve).
+// The memo must be exact: every cap the tier-8 fixtures can read, at their own levels and
+// tier and well past them, is the formula's own Decimal, mantissa and exponent.
+describe("capAtLevel's memo", () => {
+  const slice = indexContent(
+    loadBundleDir(fileURLToPath(new URL("../../../content/bundles/vertical-slice", import.meta.url))),
+  );
+  for (const name of ["slice-tier-8-reinforced-full", "slice-tier-8"]) {
+    it(`is byte-identical to the formula on ${name}`, () => {
+      const world = deserializeWorld(
+        readFileSync(fileURLToPath(new URL(`../resolve/fixtures/${name}.world.json`, import.meta.url)), "utf8"),
+      );
+      const levels = new Set<number>([...Object.values(world.storageLevel), ...Object.values(world.qsLevel)]);
+      for (let level = 0; level <= 40; level += 1) levels.add(level);
+      let checked = 0;
+      for (const itemId of slice.stockItemIds) {
+        const item = slice.items.get(itemId)!;
+        for (const [base, curve] of [
+          [item.baseStorageCap, slice.bundle.storage],
+          [item.baseQuantumCap, slice.bundle.quantumStorage],
+        ] as const) {
+          for (const level of levels) {
+            for (const tier of [0, world.tier, slice.maxTier]) {
+              const want = capAtLevelUncached(base, curve, level, tier);
+              // Twice: the first call fills the memo, the second reads it.
+              for (const got of [capAtLevel(base, curve, level, tier), capAtLevel(base, curve, level, tier)]) {
+                expect([got.mantissa, got.exponent, toCanonical(got)]).toEqual([
+                  want.mantissa,
+                  want.exponent,
+                  toCanonical(want),
+                ]);
+              }
+              checked += 1;
+            }
+          }
+        }
+      }
+      expect(checked).toBeGreaterThan(1_000);
+    });
+  }
+
+  it("does not serve a stale cap for a curve edited in place", () => {
+    const curve = { ...content.bundle.storage };
+    const before = capAtLevel(600, curve, 3, 2).toNumber();
+    curve.capGrowth = curve.capGrowth * 2;
+    expect(capAtLevel(600, curve, 3, 2).toNumber()).toBe(capAtLevelUncached(600, curve, 3, 2).toNumber());
+    expect(capAtLevel(600, curve, 3, 2).toNumber()).not.toBe(before);
   });
 });

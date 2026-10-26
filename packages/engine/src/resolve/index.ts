@@ -32,6 +32,7 @@ import {
   spendFromLiquid,
 } from "../economy/storage.js";
 import type { WorldState } from "../state/world.js";
+import { serializeWorld } from "../state/serialize.js";
 import { solve, type Solution } from "../solve/solve.js";
 
 /** Spec C.7 and D.5: bounds the cost of one resolve, so it cannot be a DoS vector. */
@@ -358,6 +359,60 @@ export type StepAnswer = Pick<Solution, "itemRates">;
 export type StepSolve = (world: WorldState) => StepAnswer;
 
 /**
+ * PL-2. A resolve's first MAX_EVENTS fine steps, kept so a later resolve from the same start
+ * can resume after them. Treat it as opaque: only `resolve` reads one.
+ *
+ * Why resuming is exact: up to the guard, the loop reads the window only through
+ * `min(remaining, dt)`. A prefix is kept only if none of its steps was clipped by `remaining`
+ * (a clipped step leaves `remaining` at exactly 0, ending the loop before the guard). A later
+ * window resumes only after `stepSizes` is replayed against it and every step still fits,
+ * which is exactly the condition for each `min` to pick the same `dt`, so the loop would have
+ * taken the same steps to the same state. `remaining` is re-derived by that same sequence of
+ * subtractions, so the coarse phase that follows starts from the bits a cold resolve has.
+ */
+export interface ResolvePrefix {
+  /** `serializeWorld` of the start state: the caller's key only finds an entry; this proves it. */
+  readonly start: string;
+  /** The cursor the fine steps started from: lastResolvedAt plus the time skipped past the cap. */
+  readonly startCursor: number;
+  readonly content: IndexedContent;
+  /** The state, cursor and output after step MAX_EVENTS, before the next iteration's settle. */
+  readonly current: WorldState;
+  readonly cursor: number;
+  readonly stepSizes: Float64Array;
+  readonly events: readonly Readonly<ResolveEvent>[];
+  readonly filled: readonly Readonly<{ itemId: ItemId; atMs: number }>[];
+  /** `resolve`'s per-call solve cache and miss count at that point, so `summary.solves` matches. */
+  readonly answers: ReadonlyMap<string, StepAnswer>;
+  readonly solves: number;
+}
+
+/** Where `resolve` keeps prefixes. The caller owns it, its keys and its bound (e.g. an LRU). */
+export interface PrefixCache {
+  get(key: string): ResolvePrefix | undefined;
+  set(key: string, prefix: ResolvePrefix): void;
+}
+
+export interface ResolveOptions {
+  prefixCache?: PrefixCache;
+  /**
+   * Names the start state, e.g. world id, state version and content checksum. Both this and
+   * `prefixCache` are needed for the cache to be used. A wrong key costs only a miss: an entry
+   * is resumed only if its start state, start cursor and content are this call's.
+   */
+  cacheKey?: string;
+}
+
+/** What `resolveWith` needs to resume from or keep a prefix; `resolve` supplies it. */
+interface PrefixHooks {
+  candidate: ResolvePrefix | undefined;
+  /** Restores the step solver's own state from the prefix being resumed. */
+  resumed(prefix: ResolvePrefix): void;
+  /** Hands over a prefix the loop has just completed; the hook adds the solver's state. */
+  reached(prefix: Omit<ResolvePrefix, "answers" | "solves">): void;
+}
+
+/**
  * Spec C.7. Within one call nothing can be bought, so machines, assignments, priorities,
  * storage levels and active recipes are fixed; what changes is stock, tier (a milestone)
  * and tap stacks (a timer). `solve` reads stock only as `liquid <= 0` and the FULL test,
@@ -372,22 +427,57 @@ export function resolve(
   state: WorldState,
   content: IndexedContent,
   elapsedMs: number,
+  opts: ResolveOptions = {},
 ): ResolveResult {
-  const cache = new Map<string, StepAnswer>();
+  let cache = new Map<string, StepAnswer>();
   let solves = 0;
-  const out = resolveWith(state, content, elapsedMs, (world) => {
-    let key = `${world.tier}|${world.tapStacks}|`;
-    for (const itemId of content.stockItemIds) key += `${itemStateTag(content, world, itemId)},`;
-    let answer = cache.get(key);
-    if (answer === undefined) {
-      answer = solve(world, content);
-      cache.set(key, answer);
-      solves += 1;
-    }
-    return answer;
-  });
+  const { prefixCache, cacheKey } = opts;
+  const prefix: PrefixHooks | undefined =
+    prefixCache === undefined || cacheKey === undefined
+      ? undefined
+      : {
+          candidate: prefixCache.get(cacheKey),
+          resumed(p) {
+            cache = new Map(p.answers);
+            solves = p.solves;
+          },
+          reached(p) {
+            prefixCache.set(cacheKey, { ...p, answers: new Map(cache), solves });
+          },
+        };
+  const out = resolveWith(
+    state,
+    content,
+    elapsedMs,
+    (world) => {
+      let key = `${world.tier}|${world.tapStacks}|`;
+      for (const itemId of content.stockItemIds) key += `${itemStateTag(content, world, itemId)},`;
+      let answer = cache.get(key);
+      if (answer === undefined) {
+        answer = solve(world, content);
+        cache.set(key, answer);
+        solves += 1;
+      }
+      return answer;
+    },
+    prefix,
+  );
   // resolveWith counts every step as a solve; here most of them were cache hits.
   return { ...out, summary: { ...out.summary, solves: solves + 1 } };
+}
+
+/**
+ * Replays a kept prefix's step sizes against a window of `simulatedMs`: the `remaining` a
+ * cold resolve would hold after them, or null if any step would not have been taken whole
+ * (the loop would have stopped, or `min(remaining, dt)` would have picked `remaining`).
+ */
+function replayStepSizes(stepSizes: Float64Array, simulatedMs: number): number | null {
+  let remaining = simulatedMs;
+  for (const dtMs of stepSizes) {
+    if (!(remaining > 0) || remaining < dtMs) return null;
+    remaining -= dtMs;
+  }
+  return remaining;
 }
 
 /**
@@ -399,6 +489,7 @@ export function resolveWith(
   content: IndexedContent,
   elapsedMs: number,
   solveStep: StepSolve,
+  prefix?: PrefixHooks,
 ): ResolveResult {
   const events: ResolveEvent[] = [];
   const elapsed = Math.max(0, elapsedMs);
@@ -418,6 +509,32 @@ export function resolveWith(
   let steps = 0;
   let guardTripped = false;
   const hardStop = MAX_EVENTS + Math.ceil(content.offlineCapMs / COARSE_STEP_MS) + 2;
+
+  // PL-2: resume after a kept prefix when it provably is this call's own, or record one.
+  const startCursor = cursor;
+  let start: string | null = null;
+  let stepSizes: Float64Array | null = null;
+  if (prefix !== undefined) {
+    start = serializeWorld(state);
+    const p = prefix.candidate;
+    const resumed =
+      p !== undefined && p.content === content && p.startCursor === startCursor && p.start === start
+        ? replayStepSizes(p.stepSizes, remaining)
+        : null;
+    if (p !== undefined && resumed !== null) {
+      prefix.resumed(p);
+      current = p.current;
+      cursor = p.cursor;
+      remaining = resumed;
+      steps = MAX_EVENTS;
+      // Copies, so no caller can reach the kept prefix through what it is handed back.
+      events.length = 0;
+      for (const event of p.events) events.push({ ...event });
+      for (const fill of p.filled) filled.push({ ...fill });
+    } else {
+      stepSizes = new Float64Array(MAX_EVENTS);
+    }
+  }
 
   for (;;) {
     current = settle(content, current, cursor, events);
@@ -456,6 +573,24 @@ export function resolveWith(
     }
 
     current = fireDueTimers(current, cursor, events);
+
+    if (stepSizes !== null) {
+      stepSizes[steps - 1] = dtMs;
+      // Every step so far was unclipped: a clipped one leaves remaining at exactly 0.
+      if (steps === MAX_EVENTS && remaining > 0) {
+        prefix!.reached({
+          start: start!,
+          startCursor,
+          content,
+          current,
+          cursor,
+          stepSizes,
+          events: events.map((event) => ({ ...event })),
+          filled: filled.map((fill) => ({ ...fill })),
+        });
+        stepSizes = null;
+      }
+    }
   }
 
   // What was produced during THIS window, which is what the "while you were away"

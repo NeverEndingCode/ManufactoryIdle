@@ -226,6 +226,67 @@ export function capAtLevel(
   level: number,
   playerTier = 0,
 ): Dec {
+  // Only small non-negative integer levels and tiers, the only ones content produces, are
+  // memoised; a zero base is not, since a Map conflates -0 with 0.
+  if (
+    base === 0 ||
+    !Number.isInteger(level) ||
+    !Number.isInteger(playerTier) ||
+    level < 0 ||
+    level >= MEMO_LEVELS ||
+    playerTier < 0 ||
+    playerTier >= MEMO_TIERS
+  ) {
+    return capAtLevelUncached(base, curve, level, playerTier);
+  }
+  let memo = CAP_MEMO.get(curve);
+  // Checked on every call, so a curve edited in place cannot read a stale cap.
+  if (memo === undefined || memo.capGrowth !== curve.capGrowth || memo.capPerTier !== curve.capPerTier) {
+    memo = { capGrowth: curve.capGrowth, capPerTier: curve.capPerTier, caps: new Map() };
+    CAP_MEMO.set(curve, memo);
+  }
+  let byBase = memo.caps.get(base);
+  if (byBase === undefined) {
+    byBase = new Map();
+    memo.caps.set(base, byBase);
+  }
+  const key = level * MEMO_TIERS + playerTier;
+  let cap = byBase.get(key);
+  if (cap === undefined) {
+    cap = capAtLevelUncached(base, curve, level, playerTier);
+    byBase.set(key, cap);
+  }
+  return cap;
+}
+
+/**
+ * PL-2: `capAtLevel` runs on every fine step of a resolve (every state tag reads two caps),
+ * and its Decimal powers were about a fifth of a tier-8 GET. It is a pure function of the
+ * base, the curve's two growth numbers, the level and the tier, so a memo is exact. Keys are
+ * numbers, not strings: formatting a float key cost as much as the powers it saved. The
+ * Decimal returned is shared, which is safe because break_infinity's arithmetic returns new
+ * values and the engine never mutates one in place. The memo is per curve object (a WeakMap,
+ * so it goes when the content does) and holds a few hundred caps for a real bundle.
+ */
+interface CurveMemo {
+  capGrowth: number;
+  capPerTier: number | undefined;
+  caps: Map<number, Map<number, Dec>>;
+}
+const CAP_MEMO = new WeakMap<StorageCurveDef, CurveMemo>();
+const MEMO_TIERS = 1_024;
+const MEMO_LEVELS = 1_000_000;
+
+/**
+ * `capAtLevel` without the memo.
+ * @internal Exported for the memo's own test. Game code calls `capAtLevel`.
+ */
+export function capAtLevelUncached(
+  base: number,
+  curve: StorageCurveDef,
+  level: number,
+  playerTier = 0,
+): Dec {
   const byLevel = D(base).times(powIntDecimal(curve.capGrowth, level));
   const perTier = curve.capPerTier;
   if (perTier === undefined || perTier === 1 || playerTier <= 0) return byLevel;

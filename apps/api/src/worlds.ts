@@ -10,11 +10,13 @@ import {
   serializeWorld,
   type Action,
   type IndexedContent,
+  type ResolvePrefix,
   type ResolveSummary,
   type WorldState,
 } from "@manufactory/engine";
 import type { Db } from "./db/db.js";
 import type { ContentStore } from "./content.js";
+import { Lru } from "./lru.js";
 
 export interface World {
   id: string;
@@ -134,6 +136,25 @@ export async function createGuest(
 const SELECT_MAIN = `select id, player_id, content_version, state_version::text as state_version, state
                        from player_worlds where player_id = $1 and world_type = 'main'`;
 
+/**
+ * PL-2: resolve's kept fine-step prefixes, per process. A world whose resolve trips the
+ * MAX_EVENTS guard (a tier-8 screw cycle burns all 10,000 fine steps on ~27 µs) used to pay
+ * ~0.3 s on every GET until its next batch, because each GET resolves from the stored state.
+ * Keyed on what names that state: a batch or a re-pin bumps state_version, and the content is
+ * the pinned checksum. Exact, so replay and every result are unchanged; the engine also checks
+ * the entry's start state itself, so a wrong key could only miss. 256 entries of ~0.5 MB each
+ * at most (only guard-tripping worlds store one) bounds it near 128 MB.
+ */
+export const resolvePrefixes = new Lru<ResolvePrefix>(256);
+
+/** resolve(), resuming from and keeping a prefix for this world's stored state. */
+function resolveStored(world: World, content: IndexedContent, nowMs: number) {
+  return resolve(world.state, content, nowMs - world.state.lastResolvedAt, {
+    prefixCache: resolvePrefixes,
+    cacheKey: `${world.id}:${world.stateVersion}:${world.contentVersion}`,
+  });
+}
+
 /** Loads the player's main world; throws WorldNotFoundError if there is none. */
 export async function loadMainWorld(db: Db, playerId: string, forUpdate = false): Promise<World> {
   const rows = await db.query<WorldRow>(SELECT_MAIN + (forUpdate ? " for update" : ""), [playerId]);
@@ -150,7 +171,7 @@ export async function viewWorld(
 ): Promise<{ world: World; content: IndexedContent }> {
   const world = await loadMainWorld(db, playerId);
   const pinned = await content.get(world.contentVersion);
-  const resolved = resolve(world.state, pinned, nowMs - world.state.lastResolvedAt);
+  const resolved = resolveStored(world, pinned, nowMs);
   return { world: { ...world, state: resolved.state }, content: pinned };
 }
 
@@ -222,7 +243,7 @@ export async function applyActions(
     const { actions, hasTap } = capTaps(requested, nowMs - clock!.since_ms);
     // Under the lock, through tx: the locked row's version is the one that counts.
     const pinned = await content.get(world.contentVersion, tx);
-    const resolved = resolve(world.state, pinned, nowMs - world.state.lastResolvedAt);
+    const resolved = resolveStored(world, pinned, nowMs);
     const batch = applyBatch(resolved.state, pinned, actions, resolved.state.seed);
     if (batch.rejected) {
       // A rejection wrote nothing to the world, so commit just the stored 409, still under the
