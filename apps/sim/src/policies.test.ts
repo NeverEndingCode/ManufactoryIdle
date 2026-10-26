@@ -292,10 +292,26 @@ describe("getPolicy", () => {
       recipeId: "make_plate",
       limitingTarget: "item:iron_plate",
       machinesToClear: 1,
+      mark: 1,
     });
     expect(getPolicy("bottleneck").decide(ctx)).toEqual([
       { type: "BUY_MACHINE", lane: "iron", machineClass: "constructor", mark: 1, count: 1, recipeId: "make_plate" },
     ]);
+  });
+
+  it("bottleneck buys the reporter's advised mark, not the best unlocked one (PL-1)", () => {
+    // Tier 1 unlocks miner Mk2. When the reporter steps down to Mk1, the policy buys Mk1.
+    const ctx = rich();
+    const advised: PolicyContext = {
+      ...ctx,
+      state: { ...ctx.state, tier: 1 },
+      solution: {
+        ...ctx.solution,
+        bottleneck: { kind: "recipe", recipeId: "mine_iron", limitingTarget: "item:iron_ore", machinesToClear: 1, mark: 1 },
+      },
+    };
+    const buys = getPolicy("bottleneck").decide(advised).filter((a) => a.type === "BUY_MACHINE");
+    expect(buys).toEqual([{ type: "BUY_MACHINE", lane: "iron", machineClass: "miner", mark: 1, count: 1, recipeId: "mine_iron" }]);
   });
 
   it("bottleneck buys for the advised recipe only while that recipe is live (spec 2026-10-14)", () => {

@@ -468,6 +468,7 @@ describe("announcements (S-15, W-20)", () => {
         limitingTarget: "power",
         generatorRecipeId: null,
         machinesToClear: 0,
+        mark: null,
       }),
     });
     expect(theOneRegion().querySelector('[data-notice="bottleneck"]')).not.toBeNull();

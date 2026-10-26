@@ -2,7 +2,6 @@
 // affordability lives in quote.ts (W-13). Rates and the boundary
 // always come from the server's schedule; only the solution comes from the display solve.
 import {
-  bestUnlockedMark,
   D,
   DECIMAL_ZERO,
   isLiveRecipe,
@@ -181,11 +180,16 @@ export function className(s: Snapshot, machineClass: string, count: number): str
   return plural(count, s.content.machineClasses.get(machineClass)?.name ?? machineClass);
 }
 
-/** P-3: the sim's bottleneck purchase, without its fallback to smaller counts. */
-function machineBuy(s: Snapshot, recipeId: RecipeId, machinesToClear: number): BuyMachine | null {
+/** P-3: the sim's bottleneck purchase, without its fallback to smaller counts. `mark` is the
+ * engine's advised mark (PL-1), not the best unlocked one. */
+function machineBuy(
+  s: Snapshot,
+  recipeId: RecipeId,
+  machinesToClear: number,
+  mark: number | null,
+): BuyMachine | null {
   const recipe = s.content.recipes.get(recipeId);
   if (!recipe) return null;
-  const mark = bestUnlockedMark(s.content, recipe.machineClass, s.state.tier);
   if (mark === null) return null;
   return {
     type: "BUY_MACHINE",
@@ -202,6 +206,7 @@ function recipeRow(
   recipeId: RecipeId,
   limitingTarget: string,
   machinesToClear: number,
+  mark: number | null,
 ): BottleneckModel | null {
   const recipe = s.content.recipes.get(recipeId);
   if (!recipe) return null;
@@ -219,7 +224,7 @@ function recipeRow(
     laneId: itemId === null ? null : (s.content.items.get(itemId)?.lane ?? null),
     itemId,
     text,
-    action: machineBuy(s, recipeId, machinesToClear),
+    action: machineBuy(s, recipeId, machinesToClear, mark),
   };
 }
 
@@ -269,7 +274,7 @@ function bottleneckModel(s: Snapshot): BottleneckModel | null {
   if (b === null) return null;
   switch (b.kind) {
     case "recipe":
-      return recipeRow(s, b.recipeId, b.limitingTarget, b.machinesToClear);
+      return recipeRow(s, b.recipeId, b.limitingTarget, b.machinesToClear, b.mark);
     case "power":
       if (b.generatorRecipeId === null)
         return {
@@ -278,7 +283,7 @@ function bottleneckModel(s: Snapshot): BottleneckModel | null {
           text: `Power is short, limiting ${targetName(s, b.limitingTarget)}. Build a generator.`,
           action: null,
         };
-      return recipeRow(s, b.generatorRecipeId, b.limitingTarget, b.machinesToClear);
+      return recipeRow(s, b.generatorRecipeId, b.limitingTarget, b.machinesToClear, b.mark);
     case "storage": {
       const what = b.upgrade === "quantum" ? "Quantum Storage" : "storage";
       const text =

@@ -120,6 +120,18 @@ describe("status and lane views", () => {
     );
   });
 
+  it("names the advised mark on recipe and power advice, when there is one", () => {
+    const base = session();
+    const withAdvice = (bottleneck: Session["solution"]["bottleneck"]): string =>
+      renderStatus({ ...base, solution: { ...base.solution, bottleneck } }).join("\n");
+    const recipe = { kind: "recipe", recipeId: "make_steel_pipe", limitingTarget: "tier 6", machinesToClear: 1 } as const;
+    expect(withAdvice({ ...recipe, mark: 2 })).toContain("BOTTLENECK  make_steel_pipe Mk2 limiting tier 6 — 1 more clears it");
+    expect(withAdvice({ ...recipe, mark: null })).toContain("BOTTLENECK  make_steel_pipe limiting tier 6 — 1 more clears it");
+    const power = { kind: "power", limitingTarget: "tier 6", generatorRecipeId: "burn_biomass", machinesToClear: 3 } as const;
+    expect(withAdvice({ ...power, mark: 1 })).toContain("— 3 more burn_biomass Mk1 clears it");
+    expect(withAdvice({ ...power, generatorRecipeId: null, mark: null })).toContain("— 3 more generator clears it");
+  });
+
   it("renders a lane with a rate and a storage readout per item", () => {
     const lines = renderLane(session(), "iron");
     expect(lines.join("\n")).toContain("Iron Plate");

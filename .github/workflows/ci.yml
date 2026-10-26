@@ -185,7 +185,8 @@ jobs:
   # pin. A hang guard, not a budget.
   web-play:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Two tier-10 players: ~138 s locally, perhaps 5-6 min on a shared runner.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

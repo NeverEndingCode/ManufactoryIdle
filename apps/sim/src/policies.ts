@@ -431,7 +431,9 @@ const bottleneck: Policy = {
     const recipe = ctx.content.recipes.get(recipeId);
     if (!recipe) return moves;
 
-    const mark = bestUnlockedMark(ctx.content, recipe.machineClass, ctx.state.tier);
+    // Ruling PL-1: the reporter's advised mark, which steps down from the best unlocked one
+    // when that one is priced in an item nothing makes.
+    const mark = report.mark;
     if (mark === null) return moves;
 
     const owned =

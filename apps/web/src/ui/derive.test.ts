@@ -143,6 +143,22 @@ describe("bottleneckRow (P-2, P-3)", () => {
     expect(b.text).toMatch(/^Power is limited by biomass\. 10 more \S.* clear it\.$/);
   });
 
+  it("5d. the frame buys the engine's advised mark, not the best unlocked one (PL-1)", () => {
+    // Tier 8 unlocks Constructor Mk3; the engine can step the advice down to Mk2.
+    const solution = {
+      ...tier8.display.solution,
+      bottleneck: {
+        kind: "recipe",
+        recipeId: "make_iron_plate",
+        limitingTarget: "item:iron_plate",
+        machinesToClear: 1,
+        mark: 2,
+      },
+    } as Solution;
+    const b = bottleneckRow({ ...tier8, display: { ...tier8.display, solution } })!;
+    expect(b.action).toMatchObject({ type: "BUY_MACHINE", machineClass: "constructor", mark: 2, recipeId: "make_iron_plate" });
+  });
+
   it("5c. a storage bottleneck frames its item, with storage +1", () => {
     const solution = {
       ...fresh.display.solution,
@@ -175,6 +191,7 @@ describe("bottleneckRow, the power kind (P-2)", () => {
         limitingTarget: "power",
         generatorRecipeId: "burn_biomass",
         machinesToClear: 3,
+        mark: 1,
       }),
     )!;
     expect([b.laneId, b.itemId]).toEqual(["power", "biomass"]);
@@ -208,6 +225,7 @@ describe("bottleneckRow, the power kind (P-2)", () => {
         limitingTarget: "power",
         generatorRecipeId: null,
         machinesToClear: 0,
+        mark: null,
       }),
     )!;
     expect([b.laneId, b.itemId, b.action]).toEqual([null, null, null]);
@@ -224,6 +242,7 @@ describe("bottleneckRow, rows not shown (P-2)", () => {
         recipeId: "make_wire",
         limitingTarget: "item:iron_plate",
         machinesToClear: 2,
+        mark: 1,
       },
     } as Solution;
     const b = bottleneckRow({ ...fresh, display: { ...fresh.display, solution } })!;
@@ -240,6 +259,7 @@ describe("bottleneckRow, rows not shown (P-2)", () => {
         recipeId: "make_screw",
         limitingTarget: "item:iron_plate",
         machinesToClear: 1,
+        mark: 1,
       },
     } as Solution;
     const b = bottleneckRow({ ...fresh, display: { ...fresh.display, solution } })!;

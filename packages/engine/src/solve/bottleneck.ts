@@ -12,9 +12,13 @@
 // Every answer is then priced, and one that can never be paid for -- a cost above its
 // item's liquid cap plus the bound stock already held -- becomes storage advice for
 // that payer.
+//
+// Last, the final answer gets the machine mark to buy (ruling PL-1, `adviceMark`): the best
+// unlocked mark, stepped down when that mark is priced in an item nothing makes.
 import { POWER_ITEM, type ItemId, type RecipeId } from "../content/types.js";
 import { isLiveRecipe, type IndexedContent } from "../graph/index-content.js";
 import { bestUnlockedMark, type CapacityTable } from "../economy/capacity.js";
+import { adviceMark, isDeadPayer } from "../economy/advice-mark.js";
 import { liquid, liquidCap, type ItemStateTag } from "../economy/storage.js";
 import { levelCostRange, machineCostRange } from "../economy/curves.js";
 import { D, type Dec } from "../numbers/decimal.js";
@@ -23,28 +27,62 @@ import type { EntryAllocation } from "./waterfall.js";
 import type { PowerReport } from "./power.js";
 import { FLOW_TOLERANCE, type ItemFlow } from "./fixpoint.js";
 
+// Ruling PL-1: the recipe and power kinds carry `mark`, the machine mark to buy, from
+// `adviceMark`: the best unlocked mark unless its price has a dead payer. Consumers read it
+// rather than calling `bestUnlockedMark`. Null only when no mark of the class is unlocked, or
+// (power) when no generator recipe is live. `machinesToClear` is still counted in best-mark
+// units, so a stepped-down buy can under-clear; the next solve corrects it and re-advises.
 export type Bottleneck =
-  | { kind: "recipe"; recipeId: RecipeId; limitingTarget: string; machinesToClear: number }
-  | {
-      kind: "power";
-      limitingTarget: string;
-      generatorRecipeId: RecipeId | null;
-      machinesToClear: number;
-    }
-  // A cap is a constraint no machine can clear, and before this kind existed the
-  // reporter fell through to the recipe it could name -- telling a player at cap,
-  // with production at zero, to buy another machine. `upgrade` is null only when
-  // both curves are maxed, which is the permanent wall validator check 9 exists to
-  // make unreachable, or when no storage purchase for `itemId` can ever be paid for
-  // (the payer chain dead-ends); saying so beats inventing a purchase that cannot be
-  // made. `itemId` may be a payer rather than the limiting item: compare it with
-  // `limitingTarget`.
-  | { kind: "storage"; itemId: ItemId; limitingTarget: string; upgrade: StorageUpgrade | null }
-  // Spec 2026-10-13 (reserves protect stock): a purchase priced in `itemId` fits its cap
-  // but can never be paid while consumers take every unit made. Set aside `percent` of
-  // its production so it can bank. Setting a reserve costs nothing.
-  | { kind: "reserve"; itemId: ItemId; percent: number; limitingTarget: string }
+  | (RecipeAdvice & { mark: number | null })
+  | (PowerAdvice & { mark: number | null })
+  | StorageAdvice
+  | ReserveAdvice
   | null;
+
+/**
+ * What the reporter decides before the mark is chosen. Every walk below works in this
+ * shape; `computeBottleneck` attaches the mark to the final answer only.
+ */
+type Advice = RecipeAdvice | PowerAdvice | StorageAdvice | ReserveAdvice | null;
+
+interface RecipeAdvice {
+  kind: "recipe";
+  recipeId: RecipeId;
+  limitingTarget: string;
+  machinesToClear: number;
+}
+
+interface PowerAdvice {
+  kind: "power";
+  limitingTarget: string;
+  generatorRecipeId: RecipeId | null;
+  machinesToClear: number;
+}
+
+// A cap is a constraint no machine can clear, and before this kind existed the
+// reporter fell through to the recipe it could name -- telling a player at cap,
+// with production at zero, to buy another machine. `upgrade` is null only when
+// both curves are maxed, which is the permanent wall validator check 9 exists to
+// make unreachable, or when no storage purchase for `itemId` can ever be paid for
+// (the payer chain dead-ends); saying so beats inventing a purchase that cannot be
+// made. `itemId` may be a payer rather than the limiting item: compare it with
+// `limitingTarget`.
+interface StorageAdvice {
+  kind: "storage";
+  itemId: ItemId;
+  limitingTarget: string;
+  upgrade: StorageUpgrade | null;
+}
+
+// Spec 2026-10-13 (reserves protect stock): a purchase priced in `itemId` fits its cap
+// but can never be paid while consumers take every unit made. Set aside `percent` of
+// its production so it can bank. Setting a reserve costs nothing.
+interface ReserveAdvice {
+  kind: "reserve";
+  itemId: ItemId;
+  percent: number;
+  limitingTarget: string;
+}
 
 /** The share of production a reserve advice sets aside: measured on the slice, under the 50% maximum. */
 export const RESERVE_ADVICE_PERCENT = 0.25;
@@ -240,7 +278,7 @@ function drainBlocker(
   limitingTarget: string,
   visited: Set<ItemId>,
   preferred: RecipeId | null,
-): NonNullable<Bottleneck> {
+): NonNullable<Advice> {
   visited.add(itemId);
   const { content, state } = walk;
   const consumers = content.consumersOf.get(itemId) ?? [];
@@ -288,7 +326,7 @@ function jamBlocker(
   visited: Set<ItemId>,
   /** The target's own active recipe, or null when there is none; see drainBlocker. */
   preferred: RecipeId | null,
-): Bottleneck {
+): Advice {
   for (const recipeId of recipeIds) {
     if (recipeId === null || recipeId === undefined) continue;
     const held = heldOutputOf(walk, recipeId, visited);
@@ -321,7 +359,7 @@ function resolveBlocker(
    */
   targetId: ItemId,
   visited: Set<ItemId>,
-): Bottleneck {
+): Advice {
   if (visited.has(itemId)) return null;
   visited.add(itemId);
   const { content, capacity, state, itemStates } = walk;
@@ -415,7 +453,7 @@ function machinePrice(
  * policy falls back to one when it cannot afford more, so one is what must be
  * possible). Null when the answer implies no purchase.
  */
-function priceOf(walk: WalkContext, answer: NonNullable<Bottleneck>): Map<ItemId, Dec> | null {
+function priceOf(walk: WalkContext, answer: NonNullable<Advice>): Map<ItemId, Dec> | null {
   const { content, state } = walk;
   switch (answer.kind) {
     case "storage":
@@ -466,13 +504,11 @@ function unmadePayerAdvice(
   costs: ReadonlyMap<ItemId, Dec>,
   visited: Set<ItemId>,
   limitingTarget: string,
-): NonNullable<Bottleneck> | null {
+): NonNullable<Advice> | null {
   const { content, state, itemRates, itemStates } = walk;
   for (const [itemId, amount] of costs) {
     if (visited.has(itemId)) continue;
-    const bound = Object.hasOwn(state.bound, itemId) ? state.bound[itemId]! : D(0);
-    if (liquid(state, itemId).plus(bound).gte(amount)) continue;
-    if ((itemRates.get(itemId)?.production ?? 0) > FLOW_TOLERANCE) continue;
+    if (!isDeadPayer(state, itemRates, itemId, amount)) continue;
     const recipeId = activeRecipeOf(state.activeRecipe, itemId);
     if (recipeId === undefined || !isLiveRecipe(content, recipeId, state.tier, state.activeRecipe)) continue;
     visited.add(itemId);
@@ -563,11 +599,11 @@ function starvedStep(walk: WalkContext, recipeId: RecipeId, visited: Set<ItemId>
  * unreachable at the deepest tier but not before it. The loop is also hard-capped: more
  * passes than items allow can only mean a lost `visited` guard, and it throws rather than hang.
  */
-function payable(walk: WalkContext, answer: Bottleneck): Bottleneck {
+function payable(walk: WalkContext, answer: Advice): Advice {
   if (answer === null) return null;
   const { content, state } = walk;
   const visited = new Set<ItemId>();
-  let current: NonNullable<Bottleneck> = answer;
+  let current: NonNullable<Advice> = answer;
   // Every redirect adds one new item to `visited`, so a correct loop makes at most one pass
   // per item plus a final one. Allow one more as a spare: past that a guard has been lost.
   const maxPasses = content.items.size + 2;
@@ -632,7 +668,7 @@ function adviseBottleneck(
   state: WorldState,
   itemStates: ReadonlyMap<ItemId, ItemStateTag>,
   itemRates: ReadonlyMap<ItemId, ItemFlow>,
-): Bottleneck {
+): Advice {
   const tier = state.tier;
   const activeRecipe = state.activeRecipe;
   const firstLimited = entries.find((entry) => entry.limitedBy !== null) ?? null;
@@ -760,5 +796,33 @@ export function computeBottleneck(
   itemRates: ReadonlyMap<ItemId, ItemFlow>,
 ): Bottleneck {
   const answer = adviseBottleneck(content, capacity, entries, power, state, itemStates, itemRates);
-  return payable({ content, capacity, state, itemStates, itemRates }, answer);
+  return withMark(content, state, itemRates, payable({ content, capacity, state, itemStates, itemRates }, answer));
+}
+
+/**
+ * Ruling PL-1: the mark for the final answer, and only the final answer. `payable`'s
+ * redirect chain still prices every step at the best mark: falling back inside
+ * `machinePrice` instead was measured to stall at tier 9, because steel pipe is then
+ * never named, so never made.
+ */
+function withMark(
+  content: IndexedContent,
+  state: WorldState,
+  itemRates: ReadonlyMap<ItemId, ItemFlow>,
+  answer: Advice,
+): Bottleneck {
+  if (answer === null) return null;
+  const markFor = (recipeId: RecipeId | null): number | null => {
+    const recipe = recipeId === null ? undefined : content.recipes.get(recipeId);
+    return recipe === undefined ? null : adviceMark(content, state, itemRates, recipe.machineClass, recipe.lane);
+  };
+  switch (answer.kind) {
+    case "recipe":
+      return { ...answer, mark: markFor(answer.recipeId) };
+    case "power":
+      return { ...answer, mark: markFor(answer.generatorRecipeId) };
+    case "storage":
+    case "reserve":
+      return answer;
+  }
 }
