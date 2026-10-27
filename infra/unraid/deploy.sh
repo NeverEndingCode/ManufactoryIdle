@@ -7,9 +7,14 @@
 #   deploy.sh --rollback <tag> point :current at an older build (a short sha from
 #                              `docker image ls manufactory-api`), then --recreate
 #
-# Runs as root on the server. Idempotent. Secrets (the database password, the SuperTokens API
-# key) are never printed, never passed on a command line and never written outside the two
+# Runs as root on the server. Idempotent. Secrets (the two database passwords, the SuperTokens
+# API key) are never printed, never passed on a command line and never written outside the
 # mode-600 templates on the flash drive (D-8).
+#
+# The game has its own SuperTokens core, manufactory-supertokens (DC-1 to DC-4 of
+# docs/superpowers/plans/2026-10-27-deploy-own-core.md): its own role and database on
+# postgresql16, a key generated here, and no published port. The other app's core,
+# SuperTokens---PostgreSQL, is never read or touched.
 #
 # Containers are created here with `docker run`, not with Unraid's update_container: that script
 # first `docker pull`s the template's Repository, which fails for these local-only images, and it
@@ -27,8 +32,10 @@ readonly AUTOSTART=/var/lib/docker/unraid-autostart
 readonly NETWORK=pgnet
 readonly PG_CONTAINER=postgresql16
 readonly DB_NAME=manufactory # also the role's name
-readonly ST_CONTAINER=SuperTokens---PostgreSQL
-readonly ST_URI=http://SuperTokens---PostgreSQL:3567
+readonly CORE=manufactory-supertokens
+readonly CORE_DB=manufactory_supertokens # also the role's name
+readonly CORE_URI=http://manufactory-supertokens:3567
+readonly PROBE_IMAGE=curlimages/curl:8.11.1 # asks the core for /hello from inside pgnet
 readonly SITE_ORIGIN=https://manufactory.neverendingcode.com
 readonly HOST_PORT=8087
 readonly CLIENT_IP_HEADER=Cf-Connecting-Ip
@@ -62,8 +69,6 @@ preflight() {
   docker network inspect "$NETWORK" >/dev/null 2>&1 || die "docker network $NETWORK not found"
   [[ $(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER" 2>/dev/null) == true ]] ||
     die "$PG_CONTAINER is not running"
-  [[ $(docker inspect -f '{{.State.Running}}' "$ST_CONTAINER" 2>/dev/null) == true ]] ||
-    die "$ST_CONTAINER is not running"
   [[ -d $TEMPLATES ]] || die "$TEMPLATES not found (is this Unraid?)"
 }
 
@@ -149,59 +154,89 @@ config_value() {
   done <"$1"
 }
 
-DB_PASSWORD=""
-ensure_database() {
-  # Keep the password the API template already holds; generate one only without it.
-  local url new=false role_exists err
-  pg_admin
-  url=$(config_value "$TEMPLATES/my-$API.xml" DATABASE_URL)
-  if [[ $url =~ ^postgres(ql)?://$DB_NAME:([0-9a-f]+)@ ]]; then
-    DB_PASSWORD=${BASH_REMATCH[2]}
-  else
-    DB_PASSWORD=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n') # 48 hex: URL-safe
-    [[ ${#DB_PASSWORD} -eq 48 ]] || die "could not generate a password"
-    new=true
-  fi
+new_secret() { # 48 hex: URL-safe, and a valid SuperTokens API key
+  local s
+  s=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+  [[ ${#s} -eq 48 ]] || return 1
+  printf '%s' "$s"
+}
 
-  role_exists=$(psql_su -tA -c "SELECT 1 FROM pg_roles WHERE rolname = '$DB_NAME'" </dev/null)
-  # The password goes over psql's stdin, never argv. It is sent only when it is new or the role
-  # is, so a redeploy never puts it in a statement (and so in a log_statement=ddl server log).
+# The password of role $3 in the postgres URL held by template $1's <Config Target="$2">, or
+# nothing when that is absent or not such a URL.
+url_password() {
+  local url
+  url=$(config_value "$1" "$2")
+  if [[ $url =~ ^postgres(ql)?://$3:([0-9a-f]+)@ ]]; then
+    printf '%s' "${BASH_REMATCH[2]}"
+  fi
+}
+
+# ensure_role_db <name> <password> <new>: a LOGIN role <name> (no superuser) and a database
+# <name> that it owns. The password goes over psql's stdin, never argv. It is sent only when it
+# is new (<new> is true) or the role is, so a redeploy never puts it in a statement (and so in a
+# log_statement=ddl server log). <name> is one of this script's constants, never input.
+ensure_role_db() {
+  local name=$1 pw=$2 new=$3 role_exists err
+  role_exists=$(psql_su -tA -c "SELECT 1 FROM pg_roles WHERE rolname = '$name'" </dev/null)
   if [[ $new == true || $role_exists != 1 ]]; then
-    log "setting up role $DB_NAME on $PG_CONTAINER"
+    log "setting up role $name on $PG_CONTAINER"
     if ! err=$(
       psql_su 2>&1 >/dev/null <<SQL
-\set pw '$DB_PASSWORD'
-SELECT 'CREATE ROLE $DB_NAME LOGIN' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$DB_NAME') \gexec
-ALTER ROLE $DB_NAME WITH LOGIN PASSWORD :'pw';
+\set pw '$pw'
+SELECT 'CREATE ROLE $name LOGIN' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$name') \gexec
+ALTER ROLE $name WITH LOGIN PASSWORD :'pw';
 SQL
     ); then
-      printf '%s\n' "${err//"$DB_PASSWORD"/<redacted>}" >&2
-      die "creating role $DB_NAME failed"
+      printf '%s\n' "${err//"$pw"/<redacted>}" >&2
+      die "creating role $name failed"
     fi
   fi
   if ! err=$(
     psql_su 2>&1 >/dev/null <<SQL
-SELECT 'CREATE DATABASE $DB_NAME OWNER $DB_NAME' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME') \gexec
-SELECT 'ALTER DATABASE $DB_NAME OWNER TO $DB_NAME' FROM pg_database WHERE datname = '$DB_NAME' AND pg_get_userbyid(datdba) <> '$DB_NAME' \gexec
+SELECT 'CREATE DATABASE $name OWNER $name' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$name') \gexec
+SELECT 'ALTER DATABASE $name OWNER TO $name' FROM pg_database WHERE datname = '$name' AND pg_get_userbyid(datdba) <> '$name' \gexec
 SQL
   ); then
     printf '%s\n' "$err" >&2
-    die "creating database $DB_NAME, owned by $DB_NAME, failed"
+    die "creating database $name, owned by $name, failed"
   fi
 }
 
+# Two roles and databases: the API's (D-5) and its core's (DC-1). Each keeps the password its
+# template already holds; one is generated only without it.
+DB_PASSWORD="" CORE_DB_PASSWORD=""
+ensure_database() {
+  local new
+  pg_admin
+
+  new=false
+  DB_PASSWORD=$(url_password "$TEMPLATES/my-$API.xml" DATABASE_URL "$DB_NAME")
+  if [[ -z $DB_PASSWORD ]]; then
+    DB_PASSWORD=$(new_secret) || die "could not generate a password"
+    new=true
+  fi
+  ensure_role_db "$DB_NAME" "$DB_PASSWORD" "$new"
+
+  new=false
+  CORE_DB_PASSWORD=$(url_password "$TEMPLATES/my-$CORE.xml" POSTGRESQL_CONNECTION_URI "$CORE_DB")
+  if [[ -z $CORE_DB_PASSWORD ]]; then
+    CORE_DB_PASSWORD=$(new_secret) || die "could not generate a password"
+    new=true
+  fi
+  ensure_role_db "$CORE_DB" "$CORE_DB_PASSWORD" "$new"
+}
+
 # ---- 4. templates --------------------------------------------------------------------------
-supertokens_key() {
-  local line key=""
-  local -a env
-  mapfile -t env < <(docker inspect "$ST_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}')
-  for line in "${env[@]}"; do
-    if [[ $line == API_KEYS=* ]]; then
-      key=${line#API_KEYS=}
-      key=${key%%,*}
-    fi
-  done
-  [[ -n $key ]] || die "$ST_CONTAINER has no API_KEYS in its env"
+# The core's API key: the first of API_KEYS in its rendered template, kept across deploys;
+# generated when there is none. Never the shared core's key (DC-3).
+core_key() {
+  local key
+  key=$(config_value "$TEMPLATES/my-$CORE.xml" API_KEYS)
+  key=${key%%,*}
+  # SuperTokens takes keys of 20 or more of [A-Za-z0-9=-]; anything else is replaced.
+  if [[ ! $key =~ ^[A-Za-z0-9=-]{20,}$ ]]; then
+    key=$(new_secret) || die "could not generate an API key"
+  fi
   printf '%s' "$key"
 }
 
@@ -250,11 +285,16 @@ render() {
 
 render_templates() {
   local key subnet
-  key=$(supertokens_key)
+  key=$(core_key)
   subnet=$(pgnet_subnet)
+  render "$CORE" \
+    "POSTGRESQL_CONNECTION_URI=postgresql://$CORE_DB:$CORE_DB_PASSWORD@$PG_CONTAINER:5432/$CORE_DB" \
+    "API_KEYS=$key"
+  # The API's core and key come from the core's template, so the first run with it repoints
+  # the API off the shared core (DC-3).
   render "$API" \
     "DATABASE_URL=postgres://$DB_NAME:$DB_PASSWORD@$PG_CONTAINER:5432/$DB_NAME" \
-    "SUPERTOKENS_CONNECTION_URI=$ST_URI" \
+    "SUPERTOKENS_CONNECTION_URI=$CORE_URI" \
     "SUPERTOKENS_API_KEY=$key" \
     "SITE_ORIGIN=$SITE_ORIGIN" \
     "TRUST_PROXY=$subnet"
@@ -349,6 +389,35 @@ wait_healthy() { # the image's HEALTHCHECK (probing every 2s while starting)
   return 1
 }
 
+# The core has no HEALTHCHECK and no published port (DC-2): ready is GET /hello answering
+# "Hello" from inside pgnet, asked by a throwaway curl container. The request carries no key.
+wait_core() {
+  local i body status restarts
+  local -r probe=$CORE-probe
+  if ! docker image inspect "$PROBE_IMAGE" >/dev/null 2>&1; then
+    docker pull -q "$PROBE_IMAGE" >/dev/null || {
+      log "could not pull $PROBE_IMAGE"
+      return 1
+    }
+  fi
+  for ((i = 0; i < 60; i++)); do
+    status=$(docker inspect -f '{{.State.Status}}' "$CORE" 2>/dev/null) || status=missing
+    restarts=$(docker inspect -f '{{.RestartCount}}' "$CORE" 2>/dev/null) || restarts=0
+    [[ $status == running && $restarts -eq 0 ]] || break
+    docker rm -f "$probe" >/dev/null 2>&1 || true
+    body=$(docker run --rm --name "$probe" --network "$NETWORK" "$PROBE_IMAGE" \
+      -fsS --max-time 3 "$CORE_URI/hello" 2>/dev/null) || body=""
+    if [[ $body == Hello* ]]; then
+      log "$CORE answers /hello"
+      return 0
+    fi
+    sleep 2
+  done
+  log "$CORE did not answer /hello ($status, restarts: $restarts); its last log lines:"
+  docker logs --tail 30 "$CORE" 2>&1 || true
+  return 1
+}
+
 # ---- 6. smoke test -------------------------------------------------------------------------
 # Through the published port, so through Caddy. /api/health's "accounts":true says only that the
 # SuperTokens env is set (the SDK contacts no core until a request needs one), so a second probe
@@ -382,9 +451,12 @@ smoke() {
   log "SuperTokens core: $body"
 }
 
-start_both() {
+start_app() {
   replace_container "$API" && wait_healthy "$API" &&
     replace_container "$WEB" && wait_healthy "$WEB" && smoke
+}
+start_all() { # the core first: the API is pointed at it
+  replace_container "$CORE" && wait_core && start_app
 }
 
 # Point :current at NEW_TAG (a fresh build, or --rollback's tag), if any.
@@ -395,14 +467,17 @@ promote() {
   log ":current is now $NEW_TAG"
 }
 
-# Steps 5 and 6. On failure, put back what ran before: its image (by ID, retagged :current) and
-# its template, then fail. Migrations are forward-only, so a rollback across a migration needs
-# care (README, "Rollback").
+# Steps 5 and 6. On failure, put back what ran before: its images (by ID, retagged :current) and
+# its templates, then fail. When no core of ours ran before (the first run with it, when the API
+# was still on the shared core), the new core is removed and the API's old template, which points
+# at the shared core, is put back as it was. Migrations are forward-only, so a rollback across a
+# migration needs care (README, "Rollback").
 recreate() {
-  local old_api old_web
+  local old_api old_web had_core=false
   old_api=$(docker inspect -f '{{.Image}}' "$API" 2>/dev/null) || old_api=""
   old_web=$(docker inspect -f '{{.Image}}' "$WEB" 2>/dev/null) || old_web=""
-  if start_both; then
+  if docker inspect "$CORE" >/dev/null 2>&1; then had_core=true; fi
+  if start_all; then
     return 0
   fi
   if [[ -z $old_api || -z $old_web ]]; then
@@ -410,23 +485,43 @@ recreate() {
   fi
   log "the new containers failed; rolling back"
   local f
-  for f in "$API" "$WEB"; do
+  for f in "$CORE" "$API" "$WEB"; do
     [[ ! -f $WORK/my-$f.xml.prev ]] || cp -p -- "$WORK/my-$f.xml.prev" "$TEMPLATES/my-$f.xml"
   done
   docker tag "$old_api" "$API:current"
   docker tag "$old_web" "$WEB:current"
-  if start_both; then
-    die "deploy failed; rolled back to the previous images, which are healthy"
+  if [[ $had_core == true ]]; then
+    if start_all; then
+      die "deploy failed; rolled back to the previous images, which are healthy"
+    fi
+  else
+    # Its template stays: its key and password match the role, for the next deploy to reuse.
+    docker rm -fv "$CORE" >/dev/null 2>&1 || true
+    log "removed $CORE; the API is back on its previous core"
+    if start_app; then
+      die "deploy failed; rolled back to the previous images, which are healthy"
+    fi
   fi
-  die "deploy failed, and so did the rollback; see docker logs $API / $WEB"
+  die "deploy failed, and so did the rollback; see docker logs $CORE / $API / $WEB"
 }
 
+autostart_has() { awk '{print $1}' "$AUTOSTART" | grep -qxF "$1"; }
+
+# Unraid starts the listed containers in file order, so the core goes in ahead of the API.
 ensure_autostart() {
-  local name
+  local name tmp
   [[ -f $AUTOSTART ]] || : >"$AUTOSTART"
   [[ ! -s $AUTOSTART || -z $(tail -c1 "$AUTOSTART") ]] || printf '\n' >>"$AUTOSTART"
+  if ! autostart_has "$CORE"; then
+    tmp=$(mktemp "$WORK/autostart.XXXXXX")
+    awk -v core="$CORE" -v api="$API" \
+      '!done && $1 == api { print core; done = 1 } { print } END { if (!done) print core }' \
+      "$AUTOSTART" >"$tmp"
+    cat -- "$tmp" >"$AUTOSTART" # in place: the file keeps its owner and mode
+    log "added $CORE to Unraid autostart"
+  fi
   for name in "$API" "$WEB"; do
-    if ! awk '{print $1}' "$AUTOSTART" | grep -qxF "$name"; then
+    if ! autostart_has "$name"; then
       printf '%s\n' "$name" >>"$AUTOSTART"
       log "added $name to Unraid autostart"
     fi
@@ -434,6 +529,8 @@ ensure_autostart() {
 }
 
 # ---- 7. prune ------------------------------------------------------------------------------
+# Only the game's own builds. The core's image is a fixed registry tag that the other app's core
+# may share, and the probe's is pinned too, so neither is ever removed here.
 prune_images() {
   local repo tag
   for repo in "$API" "$WEB"; do
