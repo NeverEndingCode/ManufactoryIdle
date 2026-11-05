@@ -1,0 +1,228 @@
+/* U-4c: the NEXT_BUY card (desktop, inside the content row) and sheet (phone, over the scrim).
+   --s2 fill with --advice text; --t3 never sits here (V-4). Born on the new tokens. Nothing
+   animates. */
+
+.card {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 420px;
+  max-width: calc(100% - 24px);
+  padding: 12px 14px;
+  border: 1px solid var(--advice);
+  border-radius: var(--radius);
+  background: var(--s2);
+  box-shadow: 0 0 0 4px var(--bg);
+  color: var(--advice);
+  font-family: var(--font-mono);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.title {
+  margin: 0;
+  color: var(--advice);
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1;
+  text-shadow: var(--glow-advice);
+}
+
+.close {
+  min-height: 36px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--advice-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.action {
+  margin: 0;
+  color: var(--advice);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.lines {
+  margin: 0;
+  padding: 0;
+  color: var(--advice-dim);
+  font-size: 12px;
+  line-height: 1.7;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.primary,
+.secondary,
+.sheetPrimary,
+.outlined {
+  box-sizing: border-box;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.primary,
+.sheetPrimary {
+  border: 1px solid var(--advice-fill);
+  background: var(--advice-fill);
+  color: var(--on-advice-fill);
+  font-weight: 500;
+}
+
+.primary {
+  flex: 1;
+  height: 40px;
+  font-size: 13px;
+}
+
+.secondary,
+.outlined {
+  border: 1px solid var(--advice-dim);
+  background: var(--s2);
+  color: var(--advice);
+}
+
+.secondary {
+  height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+/* Off (busy or unaffordable): outlined, so the countdown stays readable. */
+.primary[aria-disabled="true"],
+.sheetPrimary[aria-disabled="true"],
+.secondary[aria-disabled="true"],
+.outlined[aria-disabled="true"] {
+  border-color: var(--advice-dim);
+  background: var(--s2);
+  color: var(--advice-dim);
+  cursor: default;
+}
+
+.one {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.oneEffect {
+  color: var(--advice-dim);
+  font-size: 12px;
+}
+
+/* The phone sheet: pinned to the bottom over the scrim, the background inert (App). */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  background: var(--scrim);
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 85dvh;
+  overflow-y: auto;
+  padding: 14px 16px calc(22px + env(safe-area-inset-bottom, 0px));
+  border-top: 2px solid var(--advice);
+  background: var(--s2);
+  color: var(--advice);
+  font-family: var(--font-mono);
+}
+
+.grip {
+  align-self: center;
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--advice-dim);
+}
+
+.sheetTitle {
+  margin: 0;
+  color: var(--advice);
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.x {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--advice-line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--advice);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.sheet .action {
+  font-size: 16px;
+}
+
+.sheet .lines {
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.sheetButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sheetPrimary {
+  height: 56px;
+  font-size: 16px;
+}
+
+.pair {
+  display: flex;
+  gap: 8px;
+}
+
+.pair > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.outlined {
+  height: 48px;
+  padding: 0 8px;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

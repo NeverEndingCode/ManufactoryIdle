@@ -1,21 +1,15 @@
 // The one framed row (P-2): the "bottleneck" label in text, the advice, and its one action:
-// the inline buy (P-3), or storage, Quantum Storage or a reserve (Q-5). Spends are pessimistic
-// (W-13): the button is busy (aria-disabled, still focusable) until the batch's response
-// lands. The reserve is a setting.
-import { useState, type ReactNode } from "react";
+// the inline buy (P-3), or storage, Quantum Storage or a reserve (Q-5). Its buttons are the
+// command line's, imported back for one commit (V-23) so the buy is never missing; both send
+// under BOTTLENECK_BUY_LABEL, so they're busy together. Task 5 deletes the frame.
+import type { ReactNode } from "react";
 import type { Batch } from "../sync/outbox.js";
-import { serverNow, type Snapshot } from "../sync/snapshot.js";
+import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
-import {
-  BOTTLENECK_BUY_LABEL,
-  className,
-  type BottleneckModel,
-  type FrameAction,
-} from "./derive.js";
-import { Guarded } from "./Guarded.js";
-import { affordability } from "./quote.js";
+import { ReserveRun, RunButton } from "./CommandBar.js";
+import type { BottleneckModel } from "./derive.js";
 import styles from "./BottleneckFrame.module.css";
-import { useTick } from "./use-tick.js";
+import { useTheme } from "./theme.js";
 
 export interface BottleneckFrameProps {
   model: BottleneckModel;
@@ -32,98 +26,35 @@ export function BottleneckFrame({
   pending,
   children,
 }: BottleneckFrameProps) {
+  const voice = useTheme().applied.voice;
   return (
     <div className={styles.frame} data-frame>
       <div className={styles.label}>bottleneck</div>
       {children}
       <p className={styles.advice}>{model.text}</p>
       {model.action?.type === "SET_RESERVE" && (
-        <ReserveButton reserve={model.action} snapshot={snapshot} store={store} />
+        <ReserveRun
+          model={model}
+          reserve={model.action}
+          snapshot={snapshot}
+          store={store}
+          kind="card"
+          voice={voice}
+          className={`btn ${styles.buy}`}
+        />
       )}
       {model.action !== null && model.action.type !== "SET_RESERVE" && (
-        <SpendButton spend={model.action} snapshot={snapshot} store={store} pending={pending} />
+        <RunButton
+          model={model}
+          spend={model.action}
+          snapshot={snapshot}
+          store={store}
+          pending={pending}
+          kind="card"
+          voice={voice}
+          className={`btn ${styles.buy}`}
+        />
       )}
     </div>
-  );
-}
-
-type FrameSpend = Exclude<FrameAction, { type: "SET_RESERVE" }>;
-
-/** "Buy 1 Constructor", "Buy storage for Iron Plate", "Buy Quantum Storage for Iron". */
-function spendText(s: Snapshot, a: FrameSpend): string {
-  switch (a.type) {
-    case "BUY_MACHINE":
-      return `Buy ${a.count} ${className(s, a.machineClass, a.count)}`;
-    case "BUY_STORAGE":
-      return `Buy storage for ${s.content.items.get(a.itemId)?.name ?? a.itemId}`;
-    case "BUY_QS":
-      return `Buy Quantum Storage for ${s.content.lanes.get(a.lane)?.name ?? a.lane}`;
-  }
-}
-
-/** A setting, not a spend (W-13): never busy and never natively disabled. While its own send
- * is unsettled a second click is ignored, so a double tap can't send a duplicate. */
-function ReserveButton({
-  reserve,
-  snapshot,
-  store,
-}: {
-  reserve: Extract<FrameAction, { type: "SET_RESERVE" }>;
-  snapshot: Snapshot;
-  store: Pick<GameStore, "send">;
-}) {
-  const name = snapshot.content.items.get(reserve.itemId)?.name ?? reserve.itemId;
-  const [sending, setSending] = useState(false);
-  return (
-    <button
-      type="button"
-      className={`btn ${styles.buy}`}
-      aria-disabled={sending}
-      onClick={() => {
-        if (sending) return;
-        setSending(true);
-        store
-          .send([reserve], BOTTLENECK_BUY_LABEL)
-          .catch((err: unknown) => console.error(err))
-          .finally(() => setSending(false));
-      }}
-    >
-      {`Reserve ${Math.round(reserve.percent * 100)}% of ${name}`}
-    </button>
-  );
-}
-
-function SpendButton({
-  spend,
-  snapshot,
-  store,
-  pending,
-}: {
-  spend: FrameSpend;
-  snapshot: Snapshot;
-  store: Pick<GameStore, "now" | "send">;
-  pending: readonly Batch[];
-}) {
-  useTick(); // the countdown and the enable both move with the 4 Hz text tick
-  const busy = pending.some((b) => b.label === BOTTLENECK_BUY_LABEL);
-  const a = affordability(snapshot, spend, serverNow(snapshot, store.now()));
-  const label =
-    busy || a.affordable
-      ? spendText(snapshot, spend)
-      : a.inMs === null
-        ? "not affordable yet"
-        : `affordable in ${Math.max(1, Math.ceil(a.inMs / 1000))}s`;
-  // Guarded, not the native disabled: a focused button that turns busy keeps its focus.
-  return (
-    <Guarded
-      className={`btn ${styles.buy}`}
-      off={busy || !a.affordable}
-      aria-busy={busy}
-      onPress={() => {
-        store.send([spend], BOTTLENECK_BUY_LABEL).catch((err: unknown) => console.error(err));
-      }}
-    >
-      {label}
-    </Guarded>
   );
 }

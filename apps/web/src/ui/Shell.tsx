@@ -94,7 +94,7 @@ function ContentRow({ p, lead }: { p: ShellProps; lead?: ReactNode }) {
       >
         {p.slots.main}
       </div>
-      <Notices store={p.store} view={p.view} bottleneck={p.bottleneck} lead={lead} />
+      <Notices store={p.store} view={p.view} lead={lead} />
       {p.slots.overlays}
     </div>
   );

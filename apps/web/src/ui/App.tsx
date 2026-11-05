@@ -15,7 +15,9 @@ import { Handbook } from "./Handbook.js";
 import { LaneView } from "./LaneView.js";
 import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
 import { capabilities } from "./capabilities.js";
+import { CommandBar, CommandSplit } from "./CommandBar.js";
 import { PowerDock } from "./PowerDock.js";
+import { NextBuyCard, NextBuySheet } from "./NextBuy.js";
 import { useNotation } from "./notation.js";
 import { PriorityList } from "./PriorityList.js";
 import { ResetPassword } from "./ResetPassword.js";
@@ -41,7 +43,8 @@ function bottleneckKey(b: BottleneckModel | null): string | null {
  * S-15 / W-20: "Bottleneck: <advice>" when the framed item changes between adopted snapshots,
  * "No bottleneck" when it clears. Never on the first snapshot seen (again after the snapshot
  * goes away: a new factory), and never for a new snapshot with the same framed item, so never
- * at 4 Hz. A frameless bottleneck is already a notice line inside the region: not said twice.
+ * at 4 Hz. A frameless bottleneck is said too (V-14): it's the command line's comment now, no
+ * longer a notice line inside the region.
  */
 function useBottleneckAnnouncement(
   announcer: Announcer,
@@ -50,7 +53,6 @@ function useBottleneckAnnouncement(
 ) {
   const key = s === null ? undefined : bottleneckKey(bottleneck);
   const text = bottleneck?.text ?? null;
-  const framed = bottleneck !== null && bottleneck.itemId !== null;
   /** The key last seen; undefined before the first snapshot. */
   const seen = useRef<string | null | undefined>(undefined);
   useEffect(() => {
@@ -58,8 +60,8 @@ function useBottleneckAnnouncement(
     seen.current = key;
     if (key === undefined || before === undefined || before === key) return;
     if (key === null) announcer.announce("No bottleneck");
-    else if (framed) announcer.announce(`Bottleneck: ${text}`);
-  }, [announcer, key, text, framed]);
+    else announcer.announce(`Bottleneck: ${text}`);
+  }, [announcer, key, text]);
 }
 
 export function App({ store }: { store: GameStore }) {
@@ -83,14 +85,30 @@ export function App({ store }: { store: GameStore }) {
     returnFocus.current = true;
     setSheet(null);
   };
-  // S-11 / V-12: while the sheet is open everything outside it is inert, but the live region
-  // never is (W-20: the one region keeps speaking, and the sheet's announcements land there);
-  // only its controls go inert. Every commit, undone first, since lanes and notice buttons can
-  // mount while it is open.
+  /** U-4c: the NEXT_BUY card (desktop) or sheet (phone), and the control that opened it. */
+  const [whyOpen, setWhyOpen] = useState(false);
+  const whyOpener = useRef<HTMLElement | null>(null);
+  const whyReturn = useRef(false);
+  const openWhy = (opener: HTMLElement) => {
+    whyOpener.current = opener;
+    setWhyOpen(true);
+  };
+  const closeWhy = (returnFocus: boolean) => {
+    whyReturn.current = returnFocus;
+    setWhyOpen(false);
+  };
+  // S-11 / V-12: while a modal (the settings sheet, the phone's NEXT_BUY sheet) is open
+  // everything outside it is inert, but the live region never is (W-20: the one region keeps
+  // speaking, and the sheet's announcements land there); only its controls go inert. Every
+  // commit, undone first, since lanes and notice buttons can mount while it is open.
   useLayoutEffect(() => {
     const app = appRef.current;
-    if (app === null || sheet === null) return;
-    const host = app.querySelector("[data-settings-host]");
+    if (app === null) return;
+    const host =
+      sheet !== null
+        ? app.querySelector("[data-settings-host]")
+        : app.querySelector("[data-next-buy-host]");
+    if (sheet === null && host === null) return;
     return inertOutside(app, host === null ? [] : [host], app.querySelector(".notices"));
   });
   // Focus returns once inert is gone (every layout cleanup runs before any layout effect).
@@ -102,6 +120,18 @@ export function App({ store }: { store: GameStore }) {
     (back !== null && back.isConnected && back !== document.body
       ? back
       : appRef.current?.querySelector<HTMLElement>("[data-open-settings]")
+    )?.focus();
+  });
+  // The NEXT_BUY card or sheet closed by Esc, its close button or the backdrop: focus goes back
+  // to the why button (after the inert pass is undone).
+  useLayoutEffect(() => {
+    if (whyOpen || !whyReturn.current) return;
+    whyReturn.current = false;
+    const back = whyOpener.current;
+    whyOpener.current = null;
+    (back !== null && back.isConnected
+      ? back
+      : appRef.current?.querySelector<HTMLElement>("[data-why]")
     )?.focus();
   });
   const ticks = useMemo(() => createTickSource(store), [store]);
@@ -171,6 +201,15 @@ export function App({ store }: { store: GameStore }) {
     if (onHandbook) navigate({ kind: "game" });
   };
 
+  /** The sheet's "open ROTOR": the sheet closes and that item's drawer opens, on its lane. */
+  const openFromSheet = (itemId: ItemId) => {
+    closeWhy(false);
+    const lane = s?.content.items.get(itemId)?.lane;
+    if (lane !== undefined) setPicked(lane);
+    opened.current = true;
+    setOpenItem(itemId);
+  };
+
   const game = route.kind !== "reset-password" && s !== null && laneId !== null;
   let main: ReactNode;
   if (route.kind === "reset-password") {
@@ -235,6 +274,13 @@ export function App({ store }: { store: GameStore }) {
       />
     ) : null;
 
+  const command =
+    game && s !== null ? { model: bottleneck, snapshot: s, store, pending: view.pending } : null;
+  const card =
+    command !== null && whyOpen && mode !== "phone" ? (
+      <NextBuyCard {...command} onClose={closeWhy} />
+    ) : null;
+
   const props: ShellProps = {
     store,
     view,
@@ -250,9 +296,18 @@ export function App({ store }: { store: GameStore }) {
     onSaveChip: (opener) => openSheet({ section: "account", mode: "sign-up" }, opener),
     slots: {
       main,
-      overlays:
-        drawer !== null && mode !== "phone" ? <OverlayPanel>{drawer}</OverlayPanel> : drawer,
-      command: null,
+      overlays: (
+        <>
+          {drawer !== null && mode !== "phone" ? <OverlayPanel>{drawer}</OverlayPanel> : drawer}
+          {card}
+        </>
+      ),
+      command:
+        command === null ? null : mode === "phone" ? (
+          <CommandSplit {...command} onWhy={openWhy} />
+        ) : (
+          <CommandBar {...command} onWhy={openWhy} whyOpen={whyOpen} />
+        ),
       footer:
         game && mode !== "phone" ? (
           <PowerDock store={store} snapshot={s} taps={view.taps} pending={view.pending} />
@@ -274,6 +329,9 @@ export function App({ store }: { store: GameStore }) {
           data-polling={view.polling ? "armed" : "off"}
         >
           {mode === "phone" ? <PhoneShell {...props} /> : <DesktopShell {...props} />}
+          {command !== null && whyOpen && mode === "phone" && (
+            <NextBuySheet {...command} onClose={() => closeWhy(true)} onOpenItem={openFromSheet} />
+          )}
           {sheet !== null && <Settings store={store} view={view} {...sheet} onClose={closeSheet} />}
         </div>
       </TickContext.Provider>

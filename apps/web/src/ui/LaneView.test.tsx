@@ -155,7 +155,9 @@ describe("LaneView", { timeout: 60_000 }, () => {
   it("4. the bottleneck buy sends the P-3 action once, then waits busy, keeping focus", () => {
     const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
     mount(store);
-    const buy = screen.getByRole("button", { name: /^Buy 1 Constructor$/ });
+    // V-23: the frame shows the command line's own button, for one commit (Task 5 deletes it).
+    const frame = () => within(document.querySelector<HTMLElement>("[data-frame]")!);
+    const buy = frame().getByRole("button", { name: /^Buy 1 Constructor$/ });
     expect(buy.getAttribute("aria-disabled")).toBe("false");
     buy.focus();
     fireEvent.click(buy);
@@ -164,7 +166,7 @@ describe("LaneView", { timeout: 60_000 }, () => {
 
     const batch: Batch = { id: 1, key: "k1", actions: [P3_BUY], label: "bottleneck buy" };
     store.set({ pending: [batch] });
-    const busy = screen.getByRole("button", { name: /^Buy 1 Constructor$/ });
+    const busy = frame().getByRole("button", { name: /^Buy 1 Constructor$/ });
     // 7.2: Guarded, never the native disabled, so the focused button keeps focus.
     expect(busy.getAttribute("aria-disabled")).toBe("true");
     expect((busy as HTMLButtonElement).disabled).toBe(false);
@@ -177,10 +179,13 @@ describe("LaneView", { timeout: 60_000 }, () => {
   it("4b. before it is affordable the button counts down, off but focusable", () => {
     const store = fakeStore(fresh);
     mount(store);
-    const wait = screen.getByRole("button", { name: /^affordable in \d+s$/ });
+    const frame = within(document.querySelector<HTMLElement>("[data-frame]")!);
+    const wait = frame.getByRole("button", {
+      name: /^Buy 1 Constructor, affordable in \d+ seconds$/,
+    });
     expect(wait.getAttribute("aria-disabled")).toBe("true");
     expect((wait as HTMLButtonElement).disabled).toBe(false);
-    expect(wait.textContent).toMatch(/^affordable in (4[2-4])s$/);
+    expect(wait.textContent).toMatch(/affordable in (4[2-4])s$/);
     fireEvent.click(wait);
     expect(store.send).not.toHaveBeenCalled();
   });
@@ -440,6 +445,21 @@ describe("announcements (S-15, W-20)", { timeout: 60_000 }, () => {
 
     store.set({ snapshot: withBottleneck(fresh, null) });
     expect(announced()?.textContent).toBe("No bottleneck");
+
+    // V-14: a frameless bottleneck is said too, once; it's no longer a notice line.
+    const frameless = withBottleneck(fresh, {
+      kind: "power",
+      limitingTarget: "power",
+      generatorRecipeId: null,
+      machinesToClear: 0,
+      mark: null,
+    });
+    const fText = bottleneckRow(frameless)!.text;
+    store.set({ snapshot: frameless });
+    const said = announced();
+    expect(said?.textContent).toBe(`Bottleneck: ${fText}`);
+    store.set({ snapshot: { ...frameless } });
+    expect(announced()).toBe(said);
   });
 
   it("6. one live region in every state, with every notice inside it", () => {
@@ -457,7 +477,7 @@ describe("announcements (S-15, W-20)", { timeout: 60_000 }, () => {
     // A rejection.
     store.set({ notices: [{ kind: "rejected", text: "Not enough iron plate." }] });
     expect(theOneRegion().querySelector('[data-notice="rejected"]')).not.toBeNull();
-    // A frameless bottleneck: a line in the region, no frame.
+    // A frameless bottleneck: no frame, and no longer a line in the region (U-3e).
     store.set({
       notices: [],
       snapshot: withBottleneck(fresh, {
@@ -468,7 +488,7 @@ describe("announcements (S-15, W-20)", { timeout: 60_000 }, () => {
         mark: null,
       }),
     });
-    expect(theOneRegion().querySelector('[data-notice="bottleneck"]')).not.toBeNull();
+    expect(theOneRegion().querySelector('[data-notice="bottleneck"]')).toBeNull();
     expect(document.querySelector("[data-frame]")).toBeNull();
     // After a priority move's announcement (on the priority view).
     store.set({ snapshot: fresh });

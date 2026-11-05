@@ -1,0 +1,177 @@
+/* U-4a / U-4b: the command line. The desktop bar is 54 px with an --advice border; the phone's
+   split bar is 44 px, two buttons. Advice colours only: no state colour lives here. Born on
+   the new tokens (V-4). The cursor blinks in steps(1) opacity, under no-preference only. */
+
+.bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  height: 54px;
+  box-sizing: border-box;
+  padding: 0 8px 0 14px;
+  border: 1px solid var(--advice);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--advice);
+  font-family: var(--font-mono);
+  text-shadow: var(--glow-advice);
+}
+
+.prompt {
+  flex: none;
+  color: var(--t1);
+  font-size: var(--fs-label);
+  white-space: nowrap;
+}
+
+.command {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--advice);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The 10×20 block cursor: a steady block under reduced motion. */
+.cursor {
+  flex: none;
+  width: 10px;
+  height: 20px;
+  margin-left: -10px;
+  background: var(--advice);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cursor {
+    animation: blink 1.06s steps(1) infinite;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* [TAB] why: a real button, 12 px --advice-dim text, at least 36 px tall. */
+.why {
+  flex: none;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--advice-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* [ENTER] run: 40 px, --advice-fill. */
+.run {
+  flex: none;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--advice-fill);
+  border-radius: var(--radius);
+  background: var(--advice-fill);
+  color: var(--on-advice-fill);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  text-shadow: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Off (busy or unaffordable): outlined, so the countdown stays readable. */
+.run[aria-disabled="true"],
+.splitRun[aria-disabled="true"] {
+  border-color: var(--advice-dim);
+  background: var(--bg);
+  color: var(--advice-dim);
+  cursor: default;
+}
+
+/* U-4b: the phone's split bar. */
+.split {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  min-width: 0;
+  height: 44px;
+}
+
+.splitWhy {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 1ch;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--advice);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--advice);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.splitWhy[aria-disabled="true"] {
+  cursor: default;
+}
+
+.dollar {
+  flex: none;
+  color: var(--t1);
+}
+
+.short {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whyHint {
+  flex: none;
+  color: var(--advice-dim);
+  white-space: nowrap;
+}
+
+.splitRun {
+  flex: none;
+  width: 96px;
+  padding: 0 4px;
+  border: 1px solid var(--advice-fill);
+  border-radius: var(--radius);
+  background: var(--advice-fill);
+  color: var(--on-advice-fill);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Read, not seen: the command's words for a screen reader while the visible span types. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

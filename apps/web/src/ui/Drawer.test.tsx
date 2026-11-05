@@ -21,6 +21,9 @@ import {
   type Slice,
 } from "./test-fixtures.js";
 
+/** V-23: the frame shows the command line's own buttons for one commit; the bar has them too. */
+const inFrame = () => within(document.querySelector<HTMLElement>("[data-frame]")!);
+
 let slice: Slice;
 let fresh: Snapshot;
 let tier8: Snapshot;
@@ -88,7 +91,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(document.activeElement).toBe(rowButton("iron_ore"));
 
     // The frame's own buy does not open the drawer.
-    fireEvent.click(screen.getByRole("button", { name: /^Buy 1 Constructor$/ }));
+    fireEvent.click(inFrame().getByRole("button", { name: /^Buy 1 Constructor$/ }));
     expect(document.querySelector("[data-drawer]")).toBeNull();
   });
 
@@ -339,7 +342,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     );
     mount(store);
     expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    const reserve = screen.getByRole("button", { name: "Reserve 25% of Iron Ingot" });
+    const reserve = inFrame().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
     expect((reserve as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(reserve);
     expect(store.send).toHaveBeenCalledWith(
@@ -349,7 +352,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     // A setting: still enabled while its batch is pending.
     store.set({ pending: [batch("bottleneck buy")] });
     expect(
-      (screen.getByRole("button", { name: "Reserve 25% of Iron Ingot" }) as HTMLButtonElement)
+      (inFrame().getByRole("button", { name: "Reserve 25% of Iron Ingot" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
     cleanup();
@@ -368,13 +371,13 @@ describe("Drawer", { timeout: 60_000 }, () => {
     );
     mount(storage);
     expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Buy storage for Iron Plate" }));
+    fireEvent.click(inFrame().getByRole("button", { name: "Buy storage for Iron Plate" }));
     expect(storage.send).toHaveBeenCalledWith(
       [{ type: "BUY_STORAGE", itemId: "iron_plate", levels: 1 }],
       "bottleneck buy",
     );
     storage.set({ pending: [batch("bottleneck buy")] });
-    const busy = screen.getByRole("button", { name: "Buy storage for Iron Plate" });
+    const busy = inFrame().getByRole("button", { name: "Buy storage for Iron Plate" });
     expect(busy.getAttribute("aria-busy")).toBe("true");
     expect(busy.getAttribute("aria-disabled")).toBe("true");
     expect((busy as HTMLButtonElement).disabled).toBe(false);
@@ -394,7 +397,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
       ),
     );
     expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
+    expect(inFrame().getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
   });
 
   it("8. the layout follows the viewport; under 600 px the drawer is a dialog sheet", () => {
@@ -646,7 +649,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     let settle!: (o: Outcome) => void;
     store.send.mockImplementation(() => new Promise<Outcome>((r) => (settle = r)));
     mount(store);
-    const reserve = screen.getByRole("button", { name: "Reserve 25% of Iron Ingot" });
+    const reserve = inFrame().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
     fireEvent.click(reserve);
     fireEvent.click(reserve);
     expect(store.send).toHaveBeenCalledTimes(1);

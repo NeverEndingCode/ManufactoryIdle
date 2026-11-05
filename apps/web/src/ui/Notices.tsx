@@ -2,12 +2,13 @@
 // and the rate-limit countdown inside it is marked aria-live="off". Other components'
 // announcements (the priority list's moves) are read from here too (announce.ts).
 // U-2e: the visible list is an overlay at the foot of the main box, so a notice never moves a
-// row; the region element itself is unchanged and permanent.
+// row; the region element itself is unchanged and permanent. A frameless bottleneck is no
+// longer a line here (U-3e): it's the command line's comment, and announced (V-14).
 import type { CSSProperties, ReactNode } from "react";
 import { isPlateaued } from "../sync/interpolate.js";
 import type { GameStore, Notice, StoreView } from "../sync/store.js";
 import { useAnnouncement } from "./announce.js";
-import { plateauText, type BottleneckModel } from "./derive.js";
+import { plateauText } from "./derive.js";
 import { useTick } from "./use-tick.js";
 
 /** Toasts: the only notices a player dismisses. Banners clear when their cause does. */
@@ -25,27 +26,22 @@ const VISUALLY_HIDDEN: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-type Shown = { kind: Notice["kind"] | "offline" | "bottleneck"; text: string; retryAt?: number };
+type Shown = { kind: Notice["kind"] | "offline"; text: string; retryAt?: number };
 
 export interface NoticesProps {
   store: Pick<GameStore, "dismiss" | "newFactory" | "now">;
   view: StoreView;
-  bottleneck: BottleneckModel | null;
   /** The phone's save line (U-2e: the chip is the first notice line there). */
   lead?: ReactNode;
 }
 
-export function Notices({ store, view, bottleneck, lead = null }: NoticesProps) {
+export function Notices({ store, view, lead = null }: NoticesProps) {
   const said = useAnnouncement();
   const shown: Shown[] = [...view.notices];
   const s = view.snapshot;
   if (s !== null && isPlateaued(s) && !shown.some((n) => n.kind === "plateau"))
     shown.push({ kind: "plateau", text: plateauText(s)! });
   if (view.status === "offline") shown.push({ kind: "offline", text: OFFLINE_TEXT });
-  // P-2: a bottleneck no row can carry (a power shortfall with no generator, or an item not
-  // yet shown) frames nothing; it is a line here instead.
-  if (bottleneck !== null && bottleneck.laneId === null)
-    shown.push({ kind: "bottleneck", text: bottleneck.text });
 
   return (
     <div role="status" aria-live="polite" aria-atomic="false" className="notices">
