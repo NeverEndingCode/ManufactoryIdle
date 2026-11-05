@@ -142,7 +142,9 @@ describe("the shell (U-2)", { timeout: 60_000 }, () => {
     fireEvent.click(screen.getByRole("tab", { name: "power" }));
     expect(title()).toBe("POWER_GRID");
     expect(laneTabs()).toBeNull();
-    expect(document.getElementById("view-power")!.querySelector("[data-dock]")).not.toBeNull();
+    expect(
+      document.getElementById("view-power")!.querySelector("[data-power-panel]"),
+    ).not.toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     expect(title()).toBe("PRIORITY.CFG");
     // The plain voice names the tab.
@@ -250,10 +252,13 @@ describe("the shell (U-2)", { timeout: 60_000 }, () => {
     expect(main.getBoundingClientRect().top).toBe(top);
   });
 
-  it("9. About: the source and license links in Settings; no footer", () => {
+  it("9. About: the source and license links in Settings; the footer is the power bar", () => {
     stubWidth(1280);
     mount(fakeStore(fresh));
-    expect(document.querySelector("footer")).toBeNull();
+    // U-2e: the one footer is PWR (U-6); the GPL notice left it.
+    const footers = () => [...document.querySelectorAll("footer")];
+    expect(footers().map((f) => f.hasAttribute("data-power"))).toEqual([true]);
+    expect(document.querySelector("footer a")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     const about = within(dialog).getByRole("region", { name: "About" });
@@ -262,6 +267,6 @@ describe("the shell (U-2)", { timeout: 60_000 }, () => {
     const license = about.querySelector<HTMLAnchorElement>("a[data-license-link]")!;
     expect(source.getAttribute("href")).toMatch(/^https:\/\//);
     expect(license.textContent).toBe("License");
-    expect(document.querySelector("footer")).toBeNull();
+    expect(document.querySelector("footer a")).toBeNull();
   });
 });

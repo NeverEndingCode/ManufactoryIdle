@@ -11,6 +11,7 @@ import type { GameStore, StoreView } from "../sync/store.js";
 import { powerLaneId, type BottleneckModel, type LaneTab } from "./derive.js";
 import { useNames } from "./names.js";
 import { Notices } from "./Notices.js";
+import { PowerReading } from "./PowerFooter.js";
 import css from "./Shell.module.css";
 import { tabTarget } from "./tabs.js";
 import { useTheme, type Voice } from "./theme.js";
@@ -352,7 +353,12 @@ export function PhoneShell(p: ShellProps) {
             {PHONE_TITLES[s === null ? "factory" : p.shown][applied.voice]}
           </span>
         </h1>
-        {s !== null && <TierReadout snapshot={s} now={() => p.store.now()} phone />}
+        {s !== null && (
+          <div className={css.readouts}>
+            {p.shown !== "power" && <TierReadout snapshot={s} now={() => p.store.now()} phone />}
+            <PowerReading snapshot={s} powerTab={p.shown === "power"} />
+          </div>
+        )}
         <SettingsButton p={p} label="≡" className={css.menu} />
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone />}

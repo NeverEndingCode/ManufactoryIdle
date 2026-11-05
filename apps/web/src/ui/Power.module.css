@@ -1,0 +1,315 @@
+/* U-6: power. The footer (U-2b), the phone header's reading (U-2d), the floating TAP (U-6c) and
+   the power panel (U-6b). Born on the new tokens (V-4). The bottleneck colour lives under the
+   state class only; the time-left strip moves by transform, eased under no-preference only. */
+
+/* The footer: PWR, the bar with demand / supply, the kick, [T] TAP. */
+.footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  color: var(--t2);
+}
+
+.pwr {
+  flex: none;
+  color: var(--t1);
+  font-size: var(--fs-label);
+}
+
+.grid {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 1ch;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  --fs-bar: 22px;
+}
+
+.gridText {
+  flex: none;
+  color: var(--t1);
+  white-space: nowrap;
+}
+
+.footKick {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* [T] TAP: 48 px, --accent fill, the display face at 28 px. */
+.footTap {
+  flex: none;
+  height: 48px;
+  padding: 0 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.footer[data-holding] .footTap,
+.footTap:active {
+  box-shadow: inset 0 0 0 2px var(--on-accent);
+}
+
+/* The phone header's reading, under the tier readout. */
+.reading {
+  color: var(--t2);
+  font-size: var(--fs-small);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The floating TAP (U-6c): 68×76, right 14px, over the bottom tabs, and over the command bar too
+   on the factory tab. */
+.floating {
+  position: absolute;
+  right: 14px;
+  bottom: calc(52px + env(safe-area-inset-bottom, 0px) + 14px);
+  z-index: 20;
+}
+
+.floating.withCommand {
+  bottom: calc(52px + env(safe-area-inset-bottom, 0px) + 14px + 44px + 8px);
+}
+
+.tap {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 68px;
+  height: 76px;
+  padding: 6px 4px 4px;
+  border: 2px solid var(--bg);
+  border-radius: var(--radius);
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The glow where the theme has one (terminal); the 1px ring above where it's none. */
+.tap::before {
+  position: absolute;
+  inset: -2px;
+  box-shadow: var(--glow-tap);
+  content: "";
+  pointer-events: none;
+}
+
+.floating[data-holding] .tap,
+.tap:active {
+  box-shadow:
+    0 0 0 1px var(--accent),
+    inset 0 0 0 2px var(--on-accent);
+}
+
+.tapWord {
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.tapKick {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.ticks {
+  font-size: 8px;
+  letter-spacing: -1px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.time {
+  display: block;
+  width: 54px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.timeFill {
+  display: block;
+  height: 100%;
+  background: var(--on-accent);
+  transform-origin: left;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .timeFill {
+    transition: transform 250ms linear;
+  }
+}
+
+/* The panel: a single column, at most 720 px, in the main box; 10 px between sections on the
+   phone. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+  padding: 6px 0 12px;
+}
+
+.phonePanel {
+  gap: 10px;
+  /* The last section scrolls clear of the floating TAP. */
+  padding-bottom: 96px;
+}
+
+.section {
+  min-width: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+}
+
+.load {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  --fs-bar: 22px;
+}
+
+.head {
+  margin: 0;
+  padding: 6px 0;
+  border-bottom: 1px var(--rule) var(--line);
+  color: var(--t3);
+  font-size: var(--fs-small);
+  font-weight: 400;
+}
+
+.line {
+  margin: 0;
+  color: var(--t2);
+  font-size: var(--fs-small);
+}
+
+.line :global(.state-bottleneck) {
+  color: var(--state-bottleneck);
+  font-weight: var(--fw-strong);
+}
+
+.kickLine {
+  padding: 0 2px;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A generator: 52 px; name and detail, the MW now, the 44 px +1. */
+.gen {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 52px;
+  overflow: hidden;
+  border-bottom: 1px var(--rule) var(--line-soft);
+}
+
+.gen:last-child,
+.user:last-child {
+  border-bottom: 0;
+}
+
+.genText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.genName,
+.genDetail,
+.locked {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genName {
+  color: var(--t1);
+  font-family: var(--font-mono);
+}
+
+.genDetail {
+  color: var(--t2);
+  font-size: 11px;
+}
+
+.genMw {
+  flex: none;
+  color: var(--t-body);
+  white-space: nowrap;
+}
+
+.locked {
+  flex: 1;
+  min-width: 0;
+  color: var(--t3);
+  font-family: var(--font-mono);
+}
+
+.plus {
+  flex: none;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t-body);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plus[aria-disabled="true"] {
+  color: var(--t2);
+  cursor: default;
+}
+
+/* BIGGEST USERS: 36 px rows. */
+.user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 36px;
+  border-bottom: 1px var(--rule) var(--line-soft);
+  color: var(--t-body);
+}

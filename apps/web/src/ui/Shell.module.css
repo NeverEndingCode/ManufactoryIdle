@@ -244,3 +244,12 @@
   background: var(--s-hi);
   color: var(--t1);
 }
+
+/* U-2d: the header's right side, the tier readout over PWR (the load on the power tab). */
+.readouts {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+}

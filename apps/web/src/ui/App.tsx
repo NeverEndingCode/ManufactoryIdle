@@ -8,16 +8,24 @@ import type { ItemId, LaneId } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
-import { bottleneckRow, laneItemIds, laneTabs, type BottleneckModel } from "./derive.js";
+import {
+  bottleneckRow,
+  laneItemIds,
+  laneTabs,
+  powerLaneId,
+  type BottleneckModel,
+} from "./derive.js";
 import { inertOutside } from "./dialog.js";
 import { Drawer } from "./Drawer.js";
 import { Handbook } from "./Handbook.js";
 import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
 import { capabilities } from "./capabilities.js";
 import { CommandBar, CommandSplit } from "./CommandBar.js";
-import { PowerDock } from "./PowerDock.js";
+import { FloatingTap } from "./FloatingTap.js";
 import { NextBuyCard, NextBuySheet } from "./NextBuy.js";
 import { useNotation } from "./notation.js";
+import { PowerFooter } from "./PowerFooter.js";
+import { PowerPanel } from "./PowerPanel.js";
 import { PriorityList } from "./PriorityList.js";
 import { ResetPassword } from "./ResetPassword.js";
 import { replaceRoute, useRoute } from "./route.js";
@@ -180,8 +188,14 @@ export function App({ store }: { store: GameStore }) {
     return mine;
   };
 
-  /** V-25: the open drawer stays across a view switch, but renders on the factory view only. */
-  const drawerItem = shown === "factory" ? openItem : null;
+  const powerId = s === null ? null : powerLaneId(s);
+  /** V-25: the open drawer stays across a view switch, but renders on the factory view only,
+   * and on the phone's power view for a FUEL row (U-6b). */
+  const drawerItem =
+    shown === "factory" ||
+    (shown === "power" && openItem !== null && s?.content.items.get(openItem)?.lane === powerId)
+      ? openItem
+      : null;
   /** A row's click, → or Space: its drawer, the title taking focus (U-7c). */
   const openRow = (itemId: ItemId) => {
     opened.current = openItem !== itemId;
@@ -258,8 +272,22 @@ export function App({ store }: { store: GameStore }) {
         onFocused={() => setFocusEntry(null)}
       />
     );
-  } else if (shown === "power") {
-    main = <PowerDock store={store} snapshot={s} taps={view.taps} pending={view.pending} />;
+  } else if (shown === "power" || laneId === powerId) {
+    // U-6a: the phone's ~ power tab, or the desktop's 5 POWER lane tab: one panel.
+    const lane = powerId ?? laneId;
+    main = (
+      <PowerPanel
+        store={store}
+        snapshot={s}
+        view={view}
+        bottleneck={bottleneck}
+        selected={selection.get(lane) ?? null}
+        onSelect={(itemId) => select(lane, itemId)}
+        onOpen={openRow}
+        openItem={openItem}
+        mode={mode}
+      />
+    );
   } else {
     main = (
       <RowList
@@ -327,9 +355,18 @@ export function App({ store }: { store: GameStore }) {
         ),
       footer:
         game && mode !== "phone" ? (
-          <PowerDock store={store} snapshot={s} taps={view.taps} pending={view.pending} />
+          <PowerFooter store={store} snapshot={s} taps={view.taps} pending={view.pending} />
         ) : null,
-      floating: null,
+      floating:
+        game && mode === "phone" ? (
+          <FloatingTap
+            store={store}
+            snapshot={s}
+            taps={view.taps}
+            pending={view.pending}
+            withCommand={shown === "factory" && command !== null}
+          />
+        ) : null,
     },
   };
 

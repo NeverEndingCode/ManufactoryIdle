@@ -79,7 +79,6 @@ const ON_SURFACE_ATTRS = [/\[aria-selected="?true"?\]/, /\[aria-current/];
 const PENDING_RESKIN = new Set([
   "ui/Drawer.module.css",
   "ui/Handbook.module.css",
-  "ui/PowerDock.module.css",
   "ui/PriorityList.module.css",
   "ui/Settings.module.css",
 ]);
@@ -270,6 +269,7 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
         "ui/Shell.module.css",
         "ui/Row.module.css",
         "ui/Bar.module.css",
+        "ui/Power.module.css",
       ]),
     );
     expect(checked.flatMap((f) => usageViolations(read(f)))).toEqual([]);
