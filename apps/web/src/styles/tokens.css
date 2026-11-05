@@ -348,22 +348,7 @@
   --scanlines: none;
 }
 
-/* V-1: today's CSS modules still use these names. Each task moves its files onto the semantic
-   tokens; Task 8 deletes this block, and a test fails on any name left. */
-:root {
-  --sans: var(--font-ui);
-  --mono: var(--font-mono);
-  --fs-1: var(--fs-body);
-  --fs-2: var(--fs-label);
-  --fs-3: var(--fs-small);
-  --fw-regular: 400;
-  --fw-strong: 600;
-  --line2: var(--line);
-  --s3: var(--s-hi);
-  --hairline: 1px;
-}
-
 .num {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }

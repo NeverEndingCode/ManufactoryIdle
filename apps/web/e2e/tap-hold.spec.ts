@@ -8,8 +8,8 @@ import { actionPosts, isTapPost, startGuest } from "./helpers.js";
 test("holding the tap flushes once a second, then once after release", async ({ page }) => {
   const posts = actionPosts(page);
   await startGuest(page);
-  const dock = page.locator("[data-dock]");
-  const tap = page.locator("button[data-tap]");
+  const footer = page.locator("footer[data-power]");
+  const tap = footer.locator("button[data-tap]");
   const tapPost = () =>
     page.waitForRequest((r) => isTapPost(r.url(), r.method(), r.postDataJSON()));
 
@@ -17,13 +17,13 @@ test("holding the tap flushes once a second, then once after release", async ({ 
     await tap.hover();
     const first = tapPost();
     await page.mouse.down();
-    await expect(dock).toHaveAttribute("data-holding", "");
+    await expect(footer).toHaveAttribute("data-holding", "");
     await first;
     await tapPost();
     const last = tapPost();
     await page.mouse.up();
     await last;
-    await expect(dock).not.toHaveAttribute("data-holding");
+    await expect(footer).not.toHaveAttribute("data-holding");
   });
 
   await test.step("the flushes are a second apart, one TAP each", async () => {
@@ -38,9 +38,9 @@ test("holding the tap flushes once a second, then once after release", async ({ 
     }
   });
 
-  await test.step("the dock shows the full kick", async () => {
-    await expect(dock).toHaveAttribute("data-stacks", "10");
-    const kick = dock.getByText(/^×1\.50 · 10\/10 stacks · \d+s$/);
+  await test.step("the footer shows the full kick", async () => {
+    await expect(footer).toHaveAttribute("data-stacks", "10");
+    const kick = footer.getByText(/^KICK x1\.50 · 10 STK · \d+s$/);
     await expect(kick).toBeVisible();
     const secs = Number(/(\d+)s$/.exec((await kick.textContent()) ?? "")?.[1]);
     expect(secs).toBeGreaterThan(20);

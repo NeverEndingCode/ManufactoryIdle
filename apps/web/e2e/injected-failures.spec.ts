@@ -19,7 +19,11 @@ test("a lost POST and a 429 are resent with the same key", async ({ page }) => {
   const posts = actionPosts(page);
   const failed = failedActionPosts(page);
   const { root } = await startGuest(page);
-  const ore = page.locator('#pane-priority li[data-entry="item:iron_ore"]');
+  await page
+    .getByRole("tablist", { name: "Panels" })
+    .getByRole("tab", { name: /priority/ })
+    .click();
+  const ore = page.locator('#view-priority li[data-entry="item:iron_ore"]');
   const pause = ore.getByRole("button", { name: "Pause Iron Ore" });
   const chip = ore.locator("[data-chip]");
   const offline = page.locator('[data-notice="offline"]');

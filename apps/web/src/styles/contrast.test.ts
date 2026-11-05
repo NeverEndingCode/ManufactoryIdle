@@ -77,10 +77,6 @@ const ON_SURFACE: Record<string, string> = {
 };
 const ON_SURFACE_ATTRS = [/\[aria-selected="?true"?\]/, /\[aria-current/];
 
-/** CSS files not yet moved onto the new tokens; each task took its files out (V-4), and Task 7
- *  emptied it. Task 8 deletes the set. */
-const PENDING_RESKIN = new Set<string>([]);
-
 function rgb(color: string): [number, number, number] {
   const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
   if (!hex) throw new Error(`not an opaque hex colour: ${color}`);
@@ -258,9 +254,8 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
     expect(check(".a { background: var(--accent); border-color: var(--accent) }")).toEqual([]);
   });
 
-  it("5. no re-skinned CSS file uses a barred pair", () => {
-    const checked = files.filter((f) => !PENDING_RESKIN.has(f));
-    expect(checked).toEqual(
+  it("5. no CSS file uses a barred pair", () => {
+    expect(files).toEqual(
       expect.arrayContaining([
         "styles/tokens.css",
         "styles/base.css",
@@ -274,9 +269,6 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
         "ui/Settings.module.css",
       ]),
     );
-    expect([...PENDING_RESKIN]).toEqual([]);
-    expect(checked.flatMap((f) => usageViolations(read(f)))).toEqual([]);
-    // Every pending file exists, so a deleted one leaves the set.
-    for (const f of PENDING_RESKIN) expect(files).toContain(f);
+    expect(files.flatMap((f) => usageViolations(read(f)))).toEqual([]);
   });
 });

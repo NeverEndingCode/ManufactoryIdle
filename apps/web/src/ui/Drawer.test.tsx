@@ -819,4 +819,15 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
       z("./Power.module.css", ".floating"),
     );
   });
+
+  it("6. the phone sheet's head is sticky on the sheet's surface, so Close never scrolls away", () => {
+    const file = "./Drawer.module.css";
+    const path = fileURLToPath(new URL(file, import.meta.url));
+    const rule = Object.fromEntries(
+      declarations(file, readFileSync(path, "utf8"))
+        .filter((x) => x.stack.length === 1 && x.stack[0] === ".sheet .head")
+        .map((x) => [x.property, x.value]),
+    );
+    expect(rule).toMatchObject({ position: "sticky", top: "0", background: "var(--s1)" });
+  });
 });

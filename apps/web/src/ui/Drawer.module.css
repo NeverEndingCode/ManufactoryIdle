@@ -85,6 +85,15 @@
   font-size: 32px;
 }
 
+/* A long tab scrolls the sheet; its head (and Close) stays, on the sheet's own surface. */
+.sheet .head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 6px;
+  background: var(--s1);
+}
+
 .title:global(.state-bottleneck) {
   color: var(--state-bottleneck);
 }

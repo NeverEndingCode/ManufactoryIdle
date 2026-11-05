@@ -58,8 +58,12 @@ test("sign up claims the guest; sign out, a 409 park, the way back, and a reset"
   let firstGuest = "";
 
   await test.step("a guest with progress", async () => {
-    // Desktop Chrome is 1280 px wide: three panes, the priority list always shown.
-    const ore = page.locator('#pane-priority li[data-entry="item:iron_ore"]');
+    // The priority list is a Panels tab (U-2b).
+    await page
+      .getByRole("tablist", { name: "Panels" })
+      .getByRole("tab", { name: /priority/ })
+      .click();
+    const ore = page.locator('#view-priority li[data-entry="item:iron_ore"]');
     await ore.focus();
     await ore.press("Alt+ArrowDown");
     await expect(root).toHaveAttribute("data-state-version", "1");

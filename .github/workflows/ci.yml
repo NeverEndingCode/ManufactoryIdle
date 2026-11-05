@@ -156,10 +156,12 @@ jobs:
   # behind the W-2 proxy. Specs wait on store state, never on sleeps (P-9); the 4a spec waits
   # ~45 s of real time for the first buy to become affordable (P-10). 4b (Q-15) adds
   # drawer-buy (a Miner's ~18 s affordability wait), priority-drag, tap-hold and
-  # injected-failures (page.route aborts and fulfils, page.clock for the GET 4xx). Measured
-  # locally (2026-10-22, three runs, identical to 0.1 s): guest-buy 43.2s, drawer-buy 17.6s,
-  # injected-failures 4.6s + 0.1s, tap-hold 3.1s, priority-drag 0.4s; the whole `e2e` run
-  # 76s including the build.
+  # injected-failures (page.route aborts and fulfils, page.clock for the GET 4xx). 4c adds
+  # accounts, layout-320 and reduced-motion; UI-1 adds themes. Measured locally (2026-11-05,
+  # two runs, within 0.2 s): guest-buy 43.3s, drawer-buy 17.6s + 0.2s + 0.2s (rows never
+  # move), injected-failures 4.7s + 0.3s, tap-hold 3.3s, accounts 2.2s, layout-320 1.2s +
+  # 0.4s, priority-drag 0.6s, reduced-motion 0.2s + 0.3s, themes 0.3s + 0.1s + 0.2s + 0.1s;
+  # the whole `e2e` run 83s including the build.
   web-e2e:
     runs-on: ubuntu-latest
     # A hang guard, not a budget.

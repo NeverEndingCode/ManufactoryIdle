@@ -72,19 +72,25 @@ const SEMANTIC_TOKENS: readonly string[] = [
   "--fw-name",
 ];
 
-/** V-1's legacy aliases, on :root until Task 8. */
-const ALIASES: Record<string, string> = {
-  "--sans": "var(--font-ui)",
-  "--mono": "var(--font-mono)",
-  "--fs-1": "var(--fs-body)",
-  "--fs-2": "var(--fs-label)",
-  "--fs-3": "var(--fs-small)",
-  "--fw-regular": "400",
-  "--fw-strong": "600",
-  "--line2": "var(--line)",
-  "--s3": "var(--s-hi)",
-  "--hairline": "1px",
-};
+/** V-1's legacy aliases and the deleted dock/sheet/motion sizes: gone in Task 8 (8g). */
+const RETIRED: readonly string[] = [
+  "--sans",
+  "--mono",
+  "--fs-1",
+  "--fs-2",
+  "--fs-3",
+  "--fw-regular",
+  "--fw-strong",
+  "--line2",
+  "--s3",
+  "--hairline",
+  "--dock-h",
+  "--tabbar-h",
+  "--sheet-max",
+  "--sheet-bottom",
+  "--sweep-period",
+  "--conveyor-period",
+];
 
 const tokensCss = all.filter((d) => d.file === "styles/tokens.css");
 
@@ -302,7 +308,7 @@ describe("the CSS source", () => {
 
     const num = all.filter((d) => d.stack.at(-1) === ".num");
     expect(Object.fromEntries(num.map((d) => [d.property, d.value]))).toEqual({
-      "font-family": "var(--mono)",
+      "font-family": "var(--font-mono)",
       "font-variant-numeric": "tabular-nums",
     });
   });
@@ -327,10 +333,21 @@ describe("the CSS source", () => {
     for (const p of themed)
       for (const k of Object.keys(block(tokensCss, p)))
         expect(k === "color-scheme" || SEMANTIC_TOKENS.includes(k), `${p} ${k}`).toBe(true);
-    // The V-1 alias block, excluded by name from the semantic set and deleted in Task 8.
-    const root = block(tokensCss, ":root");
-    expect(Object.fromEntries(Object.keys(ALIASES).map((k) => [k, root[k]]))).toEqual(ALIASES);
-    for (const k of Object.keys(ALIASES)) expect(SEMANTIC_TOKENS).not.toContain(k);
+  });
+
+  it("8g. no CSS file names a retired token, and tokens.css defines none (V-1)", () => {
+    const named = (name: string) => new RegExp(`(?<![\\w-])${name}(?![\\w-])`);
+    const sources = files.map((f) => [relative(SRC, f), readFileSync(f, "utf8")] as const);
+    const uses = RETIRED.flatMap((name) =>
+      sources.filter(([, text]) => named(name).test(text)).map(([file]) => `${file}: ${name}`),
+    );
+    expect(uses).toEqual([]);
+    const defined = tokensCss.filter((d) => RETIRED.includes(d.property));
+    expect(defined.map((d) => `${d.stack.join(" > ")} { ${d.property} }`)).toEqual([]);
+    // The matcher takes whole names: --font-mono is not --mono, --fs-10 is not --fs-1.
+    expect(named("--mono").test("var(--font-mono)")).toBe(false);
+    expect(named("--fs-1").test("var(--fs-10)")).toBe(false);
+    expect(named("--mono").test("var(--mono)")).toBe(true);
   });
 
   it("8e. every registry swatch equals its block's --bg, --t-body and --advice", () => {

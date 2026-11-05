@@ -215,7 +215,7 @@
 
 .line :global(.state-bottleneck) {
   color: var(--state-bottleneck);
-  font-weight: var(--fw-strong);
+  font-weight: 600;
 }
 
 .kickLine {

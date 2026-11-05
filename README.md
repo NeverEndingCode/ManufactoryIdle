@@ -39,11 +39,20 @@ when the API stops. **Never in production**: only `src/dev.ts` can turn it on, a
 refuses under `NODE_ENV=production`. The real SuperTokens path is in
 [`infra/README.md`](infra/README.md).
 
-**In the client.** The header's Handbook opens the handbook: every item's recipe, what it
-traces back to and what it is used in, computed from the live recipes, plus a glossary
-(below 600 px it is the third view). Settings holds the number notation, the theme and the
-account. The footer says the game is free software under the GPL-3.0 and links the source
-at the exact commit the build was made from, and the license; production source maps are
+**In the client.** The default look is a retro terminal: green-on-black monospace, item
+names as `IRON_PLATE`. Settings → Theme also offers Clean (Dark), Clean (OLED Dark) and Clean
+(Light), free on any device; Cosy and Industrial are listed but locked, prestige unlocks for a
+later release. The factory is Layout C: fixed one-line rows in a listbox, and under them a
+command line that spells out the next buy (`buy 1 constructor_mk1 --lane iron --for
+iron_plate`) with a run button; `why` opens the NEXT_BUY card (a bottom sheet on a phone)
+with the reasoning. Clicking a row opens its drawer beside the list, without moving a row.
+On a desktop the footer carries power (PWR, the grid, the tap kick and TAP); below 600 px the
+bottom tabs are factory, power, priority and handbook, the power tab holds the grid and the
+generators, and a floating TAP sits on every tab. The handbook is every item's recipe, what it
+traces back to and what it is used in, computed from the live recipes, plus a glossary.
+Settings holds the number notation, the theme, the account and About: the game is free
+software under the GPL-3.0, with links to the source at the exact commit the build was made
+from and to the license (they were in the footer before); production source maps are
 published.
 
 **Deploying.** [`infra/README.md`](infra/README.md#deploying-example) has the example: a
