@@ -1,4 +1,6 @@
 // S-11: the settings sheet, a modal dialog with three sections: notation, theme and account.
+// U-1i: the Theme fieldset lists the six themes with a registry swatch; a locked one stays
+// listed and focusable, aria-disabled, and picking it does nothing.
 // A bottom sheet below 600 px and a centred panel above. Escape (anywhere: it listens on the
 // document), Close or the backdrop closes it. Tab wraps inside it, and focus never falls to
 // <body>: whatever unmounts the focused control, the title takes focus. App makes the
@@ -8,13 +10,11 @@ import type { GameStore, StoreView } from "../sync/store.js";
 import { AccountSection, type AccountMode } from "./AccountForms.js";
 import { NOTATION_LABELS, NOTATIONS, notationSample, useNotation } from "./notation.js";
 import styles from "./Settings.module.css";
-import { useTheme, type ThemeChoice } from "./theme.js";
+import { capabilities } from "./capabilities.js";
+import { isLocked, THEMES, useTheme } from "./theme.js";
 
-const THEMES: readonly { id: ThemeChoice; name: string }[] = [
-  { id: "system", name: "System" },
-  { id: "dark", name: "Dark" },
-  { id: "light", name: "Light" },
-];
+/** U-1i: the locked themes' line, and their radio's accessible description. */
+export const LOCKED_LINE = "Unlocks in the prestige store";
 
 const TABBABLE = "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])";
 
@@ -42,7 +42,8 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
   const title = useRef<HTMLHeadingElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const [notation, setNotation] = useNotation();
-  const [theme, setTheme] = useTheme();
+  const theme = useTheme();
+  const caps = capabilities(view);
   const [accountMode, setAccountMode] = useState<AccountMode>(mode);
   const atAccount = section === "account";
 
@@ -138,20 +139,50 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
 
         <fieldset className={styles.group}>
           <legend>Theme</legend>
-          {THEMES.map((t) => (
-            <div key={t.id} className={styles.option}>
-              <input
-                type="radio"
-                id={`${titleId}-t-${t.id}`}
-                name="theme"
-                value={t.id}
-                checked={theme === t.id}
-                onChange={() => setTheme(t.id)}
-                data-theme-choice={t.id}
-              />
-              <label htmlFor={`${titleId}-t-${t.id}`}>{t.name}</label>
-            </div>
-          ))}
+          {THEMES.map((t) => {
+            const locked = isLocked(t, caps);
+            const radioId = `${titleId}-t-${t.id}`;
+            const lineId = `${titleId}-tl-${t.id}`;
+            return (
+              <div
+                key={t.id}
+                className={styles.option}
+                data-theme-option={t.id}
+                data-locked-theme={locked ? "" : undefined}
+              >
+                <input
+                  type="radio"
+                  id={radioId}
+                  name="theme"
+                  value={t.id}
+                  checked={theme.applied.id === t.id}
+                  aria-disabled={locked ? "true" : undefined}
+                  aria-describedby={locked ? lineId : undefined}
+                  onChange={() => {
+                    if (locked) return;
+                    theme.set(t.id);
+                  }}
+                  data-theme-choice={t.id}
+                />
+                <span className={styles.swatch} aria-hidden="true" data-swatch={t.id}>
+                  <span style={{ background: t.swatch.bg }} />
+                  <span style={{ background: t.swatch.body }} />
+                  <span style={{ background: t.swatch.advice }} />
+                </span>
+                <label htmlFor={radioId}>{t.name}</label>
+                {locked && (
+                  <>
+                    <span className={styles.tag} data-locked>
+                      locked
+                    </span>
+                    <span id={lineId} className={styles.lockLine}>
+                      {LOCKED_LINE}
+                    </span>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </fieldset>
 
         <section aria-labelledby={accountId} className={styles.group} data-account>

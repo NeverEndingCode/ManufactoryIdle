@@ -4,6 +4,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { THEMES } from "../ui/theme.js";
+import { block, declarations, resolve, themePrelude, themeTokens } from "./css-walk.js";
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
 
@@ -17,52 +19,73 @@ function cssFiles(dir: string): string[] {
   );
 }
 
-interface Decl {
-  file: string;
-  property: string;
-  value: string;
-  /** Block preludes, outermost first: "@media (...)", "@keyframes x", "0%,100%", ".a .b". */
-  stack: string[];
-}
-
-/** A small CSS walker: comments stripped, blocks nested, declarations with their context. */
-function declarations(file: string, text: string): Decl[] {
-  const src = text.replace(/\/\*[\s\S]*?\*\//g, "");
-  const out: Decl[] = [];
-  const stack: string[] = [];
-  let buf = "";
-  const flush = () => {
-    const d = buf.trim();
-    buf = "";
-    if (!d) return;
-    const colon = d.indexOf(":");
-    if (colon === -1) throw new Error(`${file}: cannot parse "${d}"`);
-    out.push({
-      file,
-      property: d.slice(0, colon).trim().toLowerCase(),
-      value: d.slice(colon + 1).trim(),
-      stack: [...stack],
-    });
-  };
-  for (const ch of src) {
-    if (ch === "{") {
-      stack.push(buf.trim().replace(/\s+/g, " "));
-      buf = "";
-    } else if (ch === "}") {
-      flush();
-      stack.pop();
-    } else if (ch === ";") {
-      flush();
-    } else {
-      buf += ch;
-    }
-  }
-  if (stack.length !== 0) throw new Error(`${file}: unbalanced braces`);
-  return out;
-}
-
 const files = cssFiles(SRC);
 const all = files.flatMap((f) => declarations(relative(SRC, f), readFileSync(f, "utf8")));
+
+/** U-1b's semantic tokens: every theme block defines each one (8d). */
+const SEMANTIC_TOKENS: readonly string[] = [
+  "--bg",
+  "--s1",
+  "--s2",
+  "--s-hi",
+  "--line",
+  "--line-soft",
+  "--rule",
+  "--t1",
+  "--t-body",
+  "--t2",
+  "--t3",
+  "--accent",
+  "--on-accent",
+  "--advice",
+  "--advice-dim",
+  "--advice-hi",
+  "--advice-line",
+  "--advice-fill",
+  "--on-advice-fill",
+  "--link",
+  "--link-hover",
+  "--rate-up",
+  "--rate-down",
+  "--state-fed",
+  "--state-throttled",
+  "--state-bottleneck",
+  "--state-paused",
+  "--scrim",
+  "--font-ui",
+  "--font-mono",
+  "--font-display",
+  "--radius",
+  "--radius-pill",
+  "--bar-h",
+  "--bar-open",
+  "--bar-close",
+  "--bar-track",
+  "--bar-paint",
+  "--glow-text",
+  "--glow-title",
+  "--glow-advice",
+  "--glow-banner",
+  "--glow-tap",
+  "--scanlines",
+  "--fw-name",
+];
+
+/** V-1's legacy aliases, on :root until Task 8. */
+const ALIASES: Record<string, string> = {
+  "--sans": "var(--font-ui)",
+  "--mono": "var(--font-mono)",
+  "--fs-1": "var(--fs-body)",
+  "--fs-2": "var(--fs-label)",
+  "--fs-3": "var(--fs-small)",
+  "--fw-regular": "400",
+  "--fw-strong": "600",
+  "--line2": "var(--line)",
+  "--s3": "var(--s-hi)",
+  "--hairline": "1px",
+};
+
+const tokensCss = all.filter((d) => d.file === "styles/tokens.css");
 
 const MOTION_OK = new Set(["transform", "opacity", "none"]);
 const TIMING =
@@ -181,57 +204,134 @@ describe("the CSS source", () => {
     expect(all.some((d) => d.value.includes("var(--state-bottleneck)"))).toBe(true);
   });
 
-  it("8b. tokens.css defines the W-17 tokens, dark by default", () => {
-    const root = all.filter(
-      (d) => d.file === "styles/tokens.css" && d.stack.length === 1 && d.stack[0] === ":root",
+  it("8b. the terminal :root is U-1c, with V-2's paused and the shared sizes", () => {
+    // Whitespace-normalised: Prettier wraps long values across lines.
+    const norm = (v: string) => v.replace(/\s+/g, " ").replace(/\( /g, "(").replace(/ \)/g, ")");
+    const root = Object.fromEntries(
+      Object.entries(block(tokensCss, ":root")).map(([k, v]) => [k, norm(v)]),
     );
-    const defined = Object.fromEntries(root.map((d) => [d.property, d.value]));
-    expect(defined).toMatchObject({
-      "--bg": "#14181d",
-      "--s1": "#1a1f26",
-      "--s2": "#212832",
-      "--s3": "#2a323d",
-      "--line": "#2c343f",
-      "--line2": "#3a444f",
-      "--t1": "#e4e9ef",
-      "--t2": "#98a3b0",
-      "--t3": "#69737f",
-      "--accent": "#f59042",
-      "--state-fed": "#57b96a",
-      "--state-throttled": "#dda12e",
-      "--state-bottleneck": "#e0594a",
-      "--state-paused": "#69737f",
-      "--fs-1": "15px",
-      "--fs-2": "13px",
-      "--fs-3": "12px",
-      "--fw-regular": "400",
-      "--fw-strong": "600",
-      "--hairline": "0.5px",
+    expect(root).toMatchObject({
+      "color-scheme": "dark",
+      "--bg": "#050a06",
+      "--s1": "#071009",
+      "--s2": "#0b1208",
+      "--s-hi": "#0b1a0e",
+      "--line": "#1f6b30",
+      "--line-soft": "#123d1c",
+      "--rule": "dashed",
+      "--t1": "#7dff9a",
+      "--t-body": "#4ee06c",
+      "--t2": "#3fb85a",
+      "--t3": "#2a8c42",
+      "--accent": "#4ee06c",
+      "--on-accent": "#050a06",
+      "--advice": "#ffb000",
+      "--advice-dim": "#c98c00",
+      "--advice-hi": "#ffd166",
+      "--advice-line": "#5a4206",
+      "--advice-fill": "#ffb000",
+      "--on-advice-fill": "#050a06",
+      "--link": "#7dff9a",
+      "--link-hover": "#c8ffd4",
+      "--rate-up": "#4ee06c",
+      "--rate-down": "#ff6b5a",
+      "--state-fed": "#4ee06c",
+      "--state-throttled": "#d9c34a",
+      "--state-bottleneck": "#ffb000",
+      "--state-paused": "#2f9a4a",
+      "--scrim": "rgba(0, 0, 0, 0.55)",
+      "--radius": "0",
+      "--radius-pill": "0",
+      "--bar-seg": "1ch",
+      "--bar-open": '"["',
+      "--bar-close": '"]"',
+      "--bar-paint":
+        "repeating-linear-gradient(90deg, currentColor 0 calc(var(--bar-seg) - 2px), transparent 0 var(--bar-seg))",
+      "--glow-text": "0 0 5px rgba(78, 224, 108, 0.35)",
+      "--glow-title": "0 0 8px rgba(125, 255, 154, 0.6)",
+      "--glow-advice": "0 0 6px rgba(255, 176, 0, 0.45)",
+      "--glow-banner": "0 0 8px rgba(255, 209, 102, 0.6)",
+      "--glow-tap": "0 0 0 1px #4ee06c, 0 0 12px rgba(78, 224, 108, 0.45)",
+      "--scanlines":
+        "repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px)",
+      "--fw-name": "400",
+      "--fs-body": "14px",
+      "--fs-small": "12px",
+      "--fs-label": "13px",
+      "--fs-title": "34px",
+      "--fs-bar": "20px",
+      "--row-h": "44px",
       "--pulse-cycle": "2.6s",
     });
-    expect(defined["--mono"]).toMatch(/monospace/);
+    expect(root["--font-display"]).toMatch(/^VT323, .*monospace$/);
+    expect(root["--font-ui"]).toMatch(/^"IBM Plex Mono", .*monospace$/);
+    expect(root["--font-mono"]).toMatch(/^"IBM Plex Mono", .*monospace$/);
 
-    // A light set, by preference and by attribute.
-    const lightPref = all.filter(
-      (d) =>
-        d.file === "styles/tokens.css" &&
-        d.stack.some((s) => /prefers-color-scheme:\s*light/.test(s)) &&
-        d.property === "--bg",
-    );
-    const lightAttr = all.filter(
-      (d) =>
-        d.file === "styles/tokens.css" &&
-        d.stack.includes(':root[data-theme="light"]') &&
-        d.property === "--bg",
-    );
-    expect(lightPref).toHaveLength(1);
-    expect(lightAttr).toHaveLength(1);
+    // The breakpoints are useLayoutMode's (W-19): the sizes and the row height follow them.
+    const at = (q: string) =>
+      Object.fromEntries(
+        tokensCss
+          .filter((d) => d.stack.join(" > ") === `${q} > :root`)
+          .map((d) => [d.property, d.value]),
+      );
+    expect(at("@media (max-width: 1000px)")).toEqual({ "--fs-title": "28px" });
+    expect(at("@media (max-width: 599px)")).toEqual({
+      "--fs-body": "13px",
+      "--fs-small": "11px",
+      "--fs-label": "12px",
+      "--fs-title": "28px",
+      "--fs-bar": "17px",
+      "--row-h": "54px",
+      "--glow-title": "0 0 6px rgba(78, 224, 108, 0.45)",
+    });
+
+    // U-1a: the default ignores the OS preference; the old light set is gone.
+    expect(all.filter((d) => d.stack.some((s) => /prefers-color-scheme/.test(s)))).toEqual([]);
+    expect(all.filter((d) => d.stack.includes(':root[data-theme="light"]'))).toEqual([]);
 
     const num = all.filter((d) => d.stack.at(-1) === ".num");
     expect(Object.fromEntries(num.map((d) => [d.property, d.value]))).toEqual({
       "font-family": "var(--mono)",
       "font-variant-numeric": "tabular-nums",
     });
+  });
+
+  it("8d. each of the six blocks defines every semantic token (U-1b)", () => {
+    const missing: string[] = [];
+    for (const t of THEMES) {
+      const own = block(tokensCss, themePrelude(t.id));
+      for (const name of ["color-scheme", ...SEMANTIC_TOKENS])
+        if (!(name in own)) missing.push(`${t.id}: ${name}`);
+      expect(own["color-scheme"], t.id).toBe(t.scheme);
+    }
+    expect(missing).toEqual([]);
+    // No other theme block, and nothing under a theme block but its tokens.
+    const preludes = new Set(tokensCss.map((d) => d.stack[0]!));
+    const themed = [...preludes].filter((p) => p.includes("data-theme"));
+    expect(themed.sort()).toEqual(
+      THEMES.filter((t) => t.id !== "terminal")
+        .map((t) => themePrelude(t.id))
+        .sort(),
+    );
+    for (const p of themed)
+      for (const k of Object.keys(block(tokensCss, p)))
+        expect(k === "color-scheme" || SEMANTIC_TOKENS.includes(k), `${p} ${k}`).toBe(true);
+    // The V-1 alias block, excluded by name from the semantic set and deleted in Task 8.
+    const root = block(tokensCss, ":root");
+    expect(Object.fromEntries(Object.keys(ALIASES).map((k) => [k, root[k]]))).toEqual(ALIASES);
+    for (const k of Object.keys(ALIASES)) expect(SEMANTIC_TOKENS).not.toContain(k);
+  });
+
+  it("8e. every registry swatch equals its block's --bg, --t-body and --advice", () => {
+    for (const t of THEMES) {
+      const tokens = themeTokens(tokensCss, t.id);
+      const css = (name: string) => resolve(tokens, tokens[name]!);
+      expect(t.swatch, t.id).toEqual({
+        bg: css("--bg"),
+        body: css("--t-body"),
+        advice: css("--advice"),
+      });
+    }
   });
 
   it("9a. a segmented button is a 44 px target both ways (W-20)", () => {

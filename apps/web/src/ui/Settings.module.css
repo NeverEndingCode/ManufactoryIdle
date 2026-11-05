@@ -103,6 +103,39 @@
   cursor: pointer;
 }
 
+/* U-1i: the theme swatch, three chips from the registry (--bg, --t-body, --advice), coloured
+   inline. A locked theme's is at 60%, with its tag and line. */
+.swatch {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid var(--line);
+}
+
+.swatch > span {
+  width: 14px;
+  height: 20px;
+}
+
+.option[data-locked-theme] .swatch {
+  opacity: 0.6;
+}
+
+.tag {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+}
+
+.lockLine {
+  flex-basis: 100%;
+  padding-left: 30px;
+  color: var(--t2);
+  font-size: var(--fs-small);
+}
+
 .sample {
   color: var(--t3);
   font-size: var(--fs-3);

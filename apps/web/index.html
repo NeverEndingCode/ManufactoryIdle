@@ -3,7 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#050a06" />
     <title>Manufactory Idle</title>
+    <!-- V-6: the stored theme before first paint, migrated as theme.ts's migrateTheme does
+         (theme.test.ts runs this against its table). Locks aren't known yet: a locked theme
+         paints as terminal, and main.tsx applies the capability-aware result. -->
+    <script>
+      (function () {
+        var t = null;
+        try {
+          t = localStorage.getItem("mi.theme");
+        } catch (e) {}
+        if (t === "dark") t = "clean-dark";
+        else if (t === "light") t = "clean-light";
+        var free = ["terminal", "clean-dark", "clean-oled", "clean-light"];
+        if (free.indexOf(t) < 0) t = "terminal";
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -9,14 +9,11 @@ import { browserTokenStorage } from "./sync/identity.js";
 import type { ClientClock } from "./sync/snapshot.js";
 import { GameStore } from "./sync/store.js";
 import { App } from "./ui/App.js";
+import { capabilities } from "./ui/capabilities.js";
 import { applyTheme, storedTheme } from "./ui/theme.js";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
-
-// S-11: the stored theme first, before anything else runs or paints, so a light player never
-// sees a dark flash.
-applyTheme(storedTheme());
 
 /** P-8: the monotonic clock and the window's timers; never the device's wall clock. */
 const browserClock: ClientClock = {
@@ -57,6 +54,10 @@ window.addEventListener("pagehide", () => {
 window.addEventListener("focus", () => store.onFocus());
 window.addEventListener("online", () => store.onOnline());
 if (document.visibilityState === "hidden") syncVisibility();
+
+// U-1i / V-7: index.html's inline script already set the migrated theme before first paint;
+// this applies the capability-aware one and the theme-color meta, before the first render.
+applyTheme(storedTheme(), capabilities(store.getView()));
 
 void store.start();
 

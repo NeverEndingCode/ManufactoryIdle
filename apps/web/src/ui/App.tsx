@@ -15,6 +15,7 @@ import layout from "./Layout.module.css";
 import { LaneView } from "./LaneView.js";
 import styles from "./LaneView.module.css";
 import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
+import { capabilities } from "./capabilities.js";
 import { Notices } from "./Notices.js";
 import { PowerDock } from "./PowerDock.js";
 import { useNotation } from "./notation.js";
@@ -22,6 +23,7 @@ import { PriorityList } from "./PriorityList.js";
 import { ResetPassword } from "./ResetPassword.js";
 import { replaceRoute, useRoute } from "./route.js";
 import { Settings, type SettingsProps } from "./Settings.js";
+import { syncCapabilities } from "./theme.js";
 import { TierReadout } from "./TierReadout.js";
 import { usePanes } from "./use-panes.js";
 import { createTickSource, TickContext } from "./use-tick.js";
@@ -107,6 +109,8 @@ function useBottleneckAnnouncement(
 
 export function App({ store }: { store: GameStore }) {
   const view = useGame(store);
+  // V-7: a grant (Spec 2) re-applies the stored theme; a same-content set does nothing.
+  useEffect(() => syncCapabilities(capabilities(view)), [view]);
   const [route, navigate] = useRoute();
   // Every number goes through fmt(): a notation change re-renders the tree (S-11).
   useNotation();
