@@ -76,8 +76,8 @@ It runs, in order:
    password, which later runs keep from the existing template. A database owned by someone else is
    handed to its role. Every run also holds each role to
    `NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN`, and limits `CONNECT` on each database to its own
-   role (`REVOKE CONNECT … FROM PUBLIC`, then `GRANT CONNECT … TO` the owner). The admin role is a superuser, so it can still connect.
-   This runs as the container's own admin role, read at run
+   role (`REVOKE CONNECT … FROM PUBLIC`, then `GRANT CONNECT … TO` the owner). The admin role is a
+   superuser, so it can still connect. This runs as the container's own admin role, read at run
    time from its `POSTGRES_USER` (with `docker exec postgresql16 printenv POSTGRES_USER`), so no
    admin name is in the repo.
 4. Render `templates/my-manufactory-{supertokens,api,web}.xml` into
@@ -90,11 +90,12 @@ It runs, in order:
 5. Recreate the containers, the core first, then the API, then web. For each, build the
    `docker run` from the rendered template (a malformed template stops here, with the old
    container still up), `docker rm -fv` the old one (`-v` drops Caddy's anonymous `/data` and
-   `/config` volumes), and run the new one. The core is ready when `GET /hello` answers `Hello`, asked
-   with the image's own curl from inside the core's container:
-   `docker exec manufactory-supertokens curl -fsS --max-time 3 http://127.0.0.1:3567/hello`. If it never answers, the probe's last error and the core's last
-   30 log lines are printed, with any postgres URL's credentials redacted. The API and web are
-   ready when their HEALTHCHECK passes. Then add all three to `/var/lib/docker/unraid-autostart`,
+   `/config` volumes), and run the new one. The core is ready when `GET /hello` answers `Hello`,
+   asked with the image's own curl from inside the core's container:
+   `docker exec manufactory-supertokens curl -fsS --max-time 3 http://127.0.0.1:3567/hello`.
+   If it never answers, the probe's last error and the core's last 30 log lines are printed,
+   with any postgres URL's credentials redacted. The API and web are ready when their
+   HEALTHCHECK passes. Then add all three to `/var/lib/docker/unraid-autostart`,
    with the core ahead of the API. The file is rewritten through a temporary file next to it,
    moved over it, after a copy to `unraid-autostart.bak`.
 6. Smoke-test. First, through the published port, `curl -fsS http://127.0.0.1:8087/api/health`
@@ -227,8 +228,9 @@ passes the password to `psql` on stdin, and the container env through a temporar
 
 A password is put in a statement only when it is new (or its role is): once, on the first
 deploy (and once more for the core's role, on the first run with the core). `postgresql16` runs
-with `log_statement = none`, so a successful `ALTER ROLE` is not logged. A _failed_ one can still be: `log_min_error_statement` (default `error`) logs the
-statement text of an erroring statement, password included. If step 3 ever reports an error, check
+with `log_statement = none`, so a successful `ALTER ROLE` is not logged. A _failed_ one can still
+be: `log_min_error_statement` (default `error`) logs the statement text of an erroring
+statement, password included. If step 3 ever reports an error, check
 the Postgres log and rotate the password (delete `DATABASE_URL`'s line from the API template and
 rerun; a new one is generated and set). Its `pg_hba` already takes password logins from pgnet
 (SuperTokens and Linkwarden log in that way).
