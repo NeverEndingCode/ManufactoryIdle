@@ -234,7 +234,9 @@ function whyLine(s: Snapshot, m: BottleneckModel, theme: ThemeDef): string {
   const framed = m.itemId === null ? null : itemLabel(s, m.itemId, theme);
   switch (b.kind) {
     case "recipe":
-      return framed === null ? `limiting ${target}` : `${framed} limits ${target}`;
+      if (framed === null) return `limiting ${target}`;
+      // The framed item is its own target: it's short of machines, not "X limits X".
+      return framed === target ? `${framed} is short of machines` : `${framed} limits ${target}`;
     case "power":
       return `power limits ${target}`;
     case "storage":

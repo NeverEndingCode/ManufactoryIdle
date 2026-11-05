@@ -122,10 +122,13 @@ export function NextBuyCard(p: CommandProps & { onClose(returnFocus: boolean): v
     p.onClose(true);
   };
   // Focus leaving for another element closes it; focus lost to nowhere (a run button that
-  // unmounts when the next advice has none) keeps it.
+  // unmounts when the next advice has none) keeps it. Focus going to the why button keeps it
+  // too: that click toggles it closed, and closing here first would make the click reopen it.
   const onBlur = (e: FocusEvent<HTMLElement>) => {
     const to = e.relatedTarget;
-    if (to instanceof Node && !e.currentTarget.contains(to)) p.onClose(false);
+    if (!(to instanceof Element) || e.currentTarget.contains(to)) return;
+    if (to.closest("[data-why]") !== null) return;
+    p.onClose(false);
   };
   return (
     <section

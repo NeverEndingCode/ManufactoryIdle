@@ -2,11 +2,13 @@
 // U-4c: the NEXT_BUY card (desktop, non-modal) and sheet (phone, modal over the inert
 // background, the live region spared: V-12), and the phone's split bar (U-4b).
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Solution } from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { App } from "./App.js";
+import { bottleneckRow } from "./derive.js";
 import {
   CLIENT_T0,
   fakeStore,
@@ -75,6 +77,37 @@ describe("the NEXT_BUY card (U-4c, desktop)", { timeout: 60_000 }, () => {
     fireEvent.keyDown(primary, { key: "Escape" });
     expect(card()).toBeNull();
     expect(document.activeElement).toBe(why());
+  });
+
+  it("6. a second click on why closes the card (it toggles)", async () => {
+    const user = userEvent.setup();
+    mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
+    await user.click(why());
+    expect(card()).not.toBeNull();
+    expect(document.activeElement).toBe(card()!.querySelector("[data-run]"));
+    // The mouse moves focus from the card to why first: that blur must not close it, or the
+    // click would reopen it.
+    await user.click(why());
+    expect(card()).toBeNull();
+    expect(why().getAttribute("aria-expanded")).toBe("false");
+    await user.click(why());
+    expect(card()).not.toBeNull();
+  });
+
+  it("6. frameless: the card shows the advice, and its close button takes focus", () => {
+    const frameless = withBottleneck(fresh, {
+      kind: "power",
+      limitingTarget: "item:iron_plate",
+      generatorRecipeId: null,
+      machinesToClear: 0,
+      mark: null,
+    });
+    const text = bottleneckRow(frameless)!.text;
+    mount(fakeStore(frameless));
+    fireEvent.click(why());
+    expect(card()!.textContent).toContain(text);
+    expect(card()!.querySelector("[data-run]")).toBeNull();
+    expect(document.activeElement).toBe(card()!.querySelector("[data-close]"));
   });
 
   it("6. the card's run sends the same batch", () => {

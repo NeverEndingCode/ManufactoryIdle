@@ -37,6 +37,8 @@ let storage: Snapshot;
 let qs: Snapshot;
 let reserve: Snapshot;
 let frameless: Snapshot;
+/** Ten machines: a hard-coded 1 or a dropped plural shows. */
+let many: Snapshot;
 const model = (s: Snapshot) => bottleneckRow(s)!;
 
 beforeAll(() => {
@@ -69,6 +71,13 @@ beforeAll(() => {
     percent: 0.25,
     limitingTarget: "item:iron_rod",
   });
+  many = withBottleneck(fresh, {
+    kind: "recipe",
+    recipeId: "make_iron_plate",
+    limitingTarget: "item:iron_rod",
+    machinesToClear: 10,
+    mark: 1,
+  });
   frameless = withBottleneck(fresh, {
     kind: "power",
     limitingTarget: "item:iron_plate",
@@ -81,6 +90,13 @@ beforeAll(() => {
 describe("commandText, shortText (U-4a, U-4b)", () => {
   it("1. every FrameAction kind, in both voices", () => {
     const cases: [Snapshot, string, string, string, string][] = [
+      [
+        many,
+        "buy 10 constructor_mk1 --lane iron --for iron_plate",
+        "Buy 10 Constructor Mk.1 for Iron Plate",
+        "10 constructor → IRON_PLATE",
+        "10 Constructor → Iron Plate",
+      ],
       [
         fresh,
         "buy 1 constructor_mk1 --lane iron --for iron_plate",
@@ -137,6 +153,11 @@ describe("runLabel, runName (U-4a, V-17)", () => {
   it("1. the affordable label per kind and voice", () => {
     const cases: [Snapshot, Record<RunKind, string>, Record<RunKind, string>][] = [
       [
+        many,
+        { bar: "run", split: "[ buy 10 ]", card: "buy 10", sheet: "[ buy 10 ]" },
+        { bar: "Run", split: "Buy 10", card: "Buy 10", sheet: "Buy 10" },
+      ],
+      [
         fresh,
         { bar: "run", split: "[ buy 1 ]", card: "buy 1", sheet: "[ buy 1 ]" },
         { bar: "Run", split: "Buy 1", card: "Buy 1", sheet: "Buy 1" },
@@ -174,6 +195,12 @@ describe("runLabel, runName (U-4a, V-17)", () => {
     expect(runLabel(m, fresh, "shell", "split", IN_12S, false)).toBe("[ 12s ]");
     expect(runLabel(m, fresh, "shell", "sheet", IN_12S, false)).toBe("[ 12s ]");
     expect(runLabel(m, fresh, "shell", "bar", NEVER, false)).toBe("not affordable yet");
+    // The plain voice's countdown.
+    expect(runLabel(m, fresh, "plain", "bar", IN_12S, false)).toBe("Affordable in 12s");
+    expect(runLabel(m, fresh, "plain", "card", IN_12S, false)).toBe("Affordable in 12s");
+    expect(runLabel(m, fresh, "plain", "split", IN_12S, false)).toBe("[ 12s ]");
+    expect(runLabel(m, fresh, "plain", "bar", NEVER, false)).toBe("Not affordable yet");
+    expect(runLabel(m, fresh, "plain", "split", NEVER, false)).toBe("Not affordable yet");
     expect(runLabel(m, fresh, "shell", "split", NEVER, false)).toBe("not affordable yet");
     expect(runLabel(model(frameless), frameless, "shell", "split", AFFORDABLE, false)).toBe("—");
   });
@@ -184,6 +211,13 @@ describe("runLabel, runName (U-4a, V-17)", () => {
       "Buy 1 Constructor, affordable in 12 seconds",
     );
     expect(runName(model(fresh), fresh, NEVER)).toBe("Buy 1 Constructor, not affordable yet");
+    expect(runName(model(fresh), fresh, { affordable: false, inMs: 800 })).toBe(
+      "Buy 1 Constructor, affordable in 1 second",
+    );
+    expect(runName(model(many), many, AFFORDABLE)).toBe("Buy 10 Constructors");
+    expect(runName(model(many), many, IN_12S)).toBe(
+      "Buy 10 Constructors, affordable in 12 seconds",
+    );
     expect(runName(model(storage), storage, AFFORDABLE)).toBe("Buy storage for Iron Plate");
     expect(runName(model(qs), qs, AFFORDABLE)).toBe("Buy Quantum Storage for Iron");
     expect(runName(model(reserve), reserve, AFFORDABLE)).toBe("Reserve 25% of Iron Plate");
@@ -197,7 +231,11 @@ describe("nextBuyModel (U-4c)", { timeout: 60_000 }, () => {
     const m = model(fresh);
     const n = nextBuyModel(fresh, m, at(fresh), TERMINAL)!;
     expect(n.action).toBe("+1 CONSTRUCTOR_MK1 → IRON_PLATE");
-    expect(n.why).toBe("IRON_PLATE limits IRON_PLATE");
+    // The framed item is its own target: it's short of machines, not "X limits X".
+    expect(n.why).toBe("IRON_PLATE is short of machines");
+    expect(nextBuyModel(many, model(many), at(many), TERMINAL)!.why).toBe(
+      "IRON_PLATE limits IRON_ROD",
+    );
     expect(n.lane).toBe("IRON");
     expect(n.open).toBe("iron_plate");
     const p = preview(fresh, [m.action!]);
@@ -277,6 +315,7 @@ describe("nextBuyModel (U-4c)", { timeout: 60_000 }, () => {
     const n = nextBuyModel(fresh, model(fresh), at(fresh), themeDef("clean-dark"))!;
     expect(n.action).toBe("+1 Constructor Mk.1 → Iron Plate");
     expect(n.lane).toBe("Iron");
+    expect(n.why).toBe("Iron Plate is short of machines");
     const m: BottleneckModel = model(frameless);
     expect(nextBuyModel(frameless, m, at(frameless), TERMINAL)).toBeNull();
   });

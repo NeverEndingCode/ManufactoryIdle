@@ -89,7 +89,13 @@ export function App({ store }: { store: GameStore }) {
   const [whyOpen, setWhyOpen] = useState(false);
   const whyOpener = useRef<HTMLElement | null>(null);
   const whyReturn = useRef(false);
+  /** The why button toggles: a second press closes the card, focus staying on it. */
   const openWhy = (opener: HTMLElement) => {
+    if (whyOpen) {
+      whyReturn.current = true;
+      setWhyOpen(false);
+      return;
+    }
     whyOpener.current = opener;
     setWhyOpen(true);
   };
