@@ -1,23 +1,47 @@
-/* The buy drawer (the MVP's .drawer): a raised surface, rows not cards, hairlines (W-17).
-   Under 600 px it is a bottom sheet over the column (Q-7). Nothing scrolls sideways at 320 px:
-   button rows wrap, names ellipsize, numbers never leave the screen (W-19). */
+/* The item drawer, on the new tokens: rows, not cards (W-17). Desktop and tablet: U-5a's panel,
+   absolute in the content row over the main box's right columns, so no row moves (U-3). The
+   phone: V-19's sheet, U-5b's geometry without its modality. Both are --s1, so --t3 reads on
+   them (U-1f). Nothing scrolls sideways at 320 px: button rows wrap, names ellipsize, numbers
+   never leave the screen (W-19). */
 .drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
   min-width: 0;
-  padding: 10px 12px 12px;
-  border-radius: 9px;
-  background: var(--s2);
+  padding: 12px 16px;
+  overflow-y: auto;
+  background: var(--s1);
 }
 
+/* U-5a: top, right and bottom 0 in .contentRow, above the main box, under the notices. */
+.panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: min(560px, 100% - 340px);
+  border: 1px solid var(--accent);
+  box-shadow: -8px 0 0 var(--bg);
+}
+
+:global(.app[data-layout="tablet"]) .panel {
+  width: clamp(360px, 100% - 300px, 560px);
+}
+
+/* V-19: fixed below the header band, over the TAP (20) and the bottom tabs; under the NEXT_BUY
+   sheet (40) and Settings (50). */
 .sheet {
   position: fixed;
-  right: 0;
-  bottom: var(--sheet-bottom, 0px);
-  left: 0;
+  inset: clamp(56px, 18dvh, 150px) 0 0 0;
   z-index: 30;
-  max-height: var(--sheet-max, 60vh);
-  overflow-y: auto;
-  border-top: var(--hairline) solid var(--line2);
-  border-radius: 12px 12px 0 0;
+  padding: 12px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  border-top: 2px solid var(--accent);
+}
+
+.drawer > * {
+  flex: none;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -40,25 +64,36 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 10px;
-  margin-bottom: 8px;
 }
 
+/* U-5a: --font-display 30 px (32 px on the sheet), --t1, or the bottleneck's colour. */
 .title {
   overflow: hidden;
   flex: 1 1 8em;
   min-width: 0;
   margin: 0;
-  font-size: var(--fs-1);
-  font-weight: var(--fw-strong);
+  color: var(--t1);
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sheet .title {
+  font-size: 32px;
+}
+
+.title:global(.state-bottleneck) {
+  color: var(--state-bottleneck);
 }
 
 .close {
   margin-left: auto;
 }
 
-/* U-3c / V-18: what left the row, on its own line under the title. */
+/* U-3c / V-18: what left the row, 12 px --t2, on its own line under the title. */
 .meta {
   flex-basis: 100%;
   overflow: hidden;
@@ -69,12 +104,19 @@
   white-space: nowrap;
 }
 
+/* U-5a's hint, 12 px --t3 on --s1; .key-hint hides it until UI-2 (V-9). */
+.hint {
+  flex-basis: 100%;
+  color: var(--t3);
+  font-size: var(--fs-small);
+  white-space: pre;
+}
+
 /* §13.1's split bar, moved from the row (V-18): a button to the priority entry. */
 .splitButton {
   display: block;
   width: 100%;
   min-height: 44px;
-  margin-bottom: 8px;
   padding: 0;
   border: 0;
   background: none;
@@ -129,22 +171,23 @@
   text-decoration: none;
 }
 
+/* The segmented tabs, kept in UI-1 (U-5c replaces them in UI-2). */
 .seg {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin: 6px 0 10px;
 }
 
 .segBtn {
   min-width: 44px;
   min-height: 44px;
   padding: 6px 11px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
-  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-label);
   cursor: pointer;
 }
 
@@ -152,7 +195,7 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  font-weight: var(--fw-strong);
+  font-weight: 600;
 }
 
 .body {
@@ -169,16 +212,16 @@
   justify-content: space-between;
   gap: 4px 10px;
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 .select {
   min-height: 44px;
   max-width: 100%;
   padding: 6px 8px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
-  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
   color: var(--t1);
   font: inherit;
 }
@@ -189,7 +232,7 @@
   gap: 4px 12px;
   margin: 0;
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 .list {
@@ -205,7 +248,7 @@
   flex-direction: column;
   gap: 6px;
   padding: 8px 0;
-  border-bottom: var(--hairline) solid var(--line);
+  border-bottom: 1px var(--rule) var(--line);
 }
 
 .item:last-child {
@@ -214,7 +257,7 @@
 
 .subhead {
   color: var(--t1);
-  font-weight: var(--fw-strong);
+  font-weight: 600;
 }
 
 .spend {
@@ -238,7 +281,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 .cost li {
@@ -256,7 +299,7 @@
   white-space: nowrap;
 }
 
-/* Short: the bottleneck red (a state colour, W-17) plus the countdown's words, never colour
+/* Short: the bottleneck colour (a state class, W-17) plus the countdown's words, never colour
    alone (W-20). */
 .cost li.state-bottleneck {
   color: var(--state-bottleneck);
@@ -265,7 +308,7 @@
 .muted {
   margin: 0;
   color: var(--t3);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
 }
 
 .radio {
@@ -291,7 +334,7 @@
   align-items: center;
   gap: 4px 10px;
   padding: 6px 0;
-  border-bottom: var(--hairline) solid var(--line);
+  border-bottom: 1px var(--rule) var(--line);
 }
 
 .assign:last-child {
@@ -317,17 +360,18 @@
   padding: 8px 0;
 }
 
+/* The projection (Projection.tsx): a --rule box in --line, 13 px. */
 .preview {
   padding: 8px 10px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
-  font-size: var(--fs-2);
+  border: 1px var(--rule) var(--line);
+  border-radius: var(--radius);
+  font-size: var(--fs-label);
 }
 
 .caption {
   margin-bottom: 4px;
   color: var(--t3);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }

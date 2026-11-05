@@ -19,8 +19,8 @@
   max-height: 85dvh;
   overflow-y: auto;
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
-  border-top: var(--hairline) solid var(--line2);
-  border-radius: 12px 12px 0 0;
+  border-top: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0;
   background: var(--s1);
 }
 
@@ -32,8 +32,8 @@
 
   .sheet {
     width: min(480px, 100%);
-    border: var(--hairline) solid var(--line2);
-    border-radius: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
   }
 }
 
@@ -47,8 +47,8 @@
 
 .title {
   margin: 0;
-  font-size: var(--fs-1);
-  font-weight: var(--fw-strong);
+  font-size: var(--fs-body);
+  font-weight: 600;
 }
 
 .group {
@@ -56,7 +56,7 @@
   margin: 0;
   padding: 10px 0;
   border: 0;
-  border-top: var(--hairline) solid var(--line);
+  border-top: 1px solid var(--line);
 }
 
 .group > legend,
@@ -64,8 +64,8 @@
   margin: 0 0 6px;
   padding: 0;
   color: var(--t2);
-  font-size: var(--fs-3);
-  font-weight: var(--fw-strong);
+  font-size: var(--fs-small);
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -138,7 +138,7 @@
 
 .sample {
   color: var(--t3);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
@@ -152,8 +152,8 @@
 
 .formTitle {
   margin: 0;
-  font-size: var(--fs-1);
-  font-weight: var(--fw-strong);
+  font-size: var(--fs-body);
+  font-weight: 600;
 }
 
 .field {
@@ -165,7 +165,7 @@
 
 .field label {
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 .field input {
@@ -173,8 +173,8 @@
   width: 100%;
   min-height: 44px;
   padding: 8px 10px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--s2);
   color: var(--t1);
   font: inherit;
@@ -189,15 +189,15 @@
 .formError {
   margin: 0;
   color: var(--t1);
-  font-size: var(--fs-2);
-  font-weight: var(--fw-strong);
+  font-size: var(--fs-label);
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
 .formError {
   padding: 8px 10px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--s2);
 }
 
@@ -210,7 +210,7 @@
 .note {
   margin: 0;
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
   overflow-wrap: anywhere;
 }
 
@@ -222,14 +222,14 @@
 .switch {
   margin: 0;
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 /* A text-weight secondary button: still a 44 px target. */
 .linkish {
   padding-inline: 6px;
   border-color: transparent;
-  color: var(--accent);
+  color: var(--link);
   text-decoration: underline;
 }
 
@@ -238,8 +238,8 @@
   max-width: 480px;
   margin: 12px auto;
   padding: 12px 16px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--s1);
 }
 

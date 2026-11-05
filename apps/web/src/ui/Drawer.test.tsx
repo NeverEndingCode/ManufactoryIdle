@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { D, liquidCap, withInstalled, type Bottleneck, type WorldState } from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -6,7 +8,9 @@ import type { Outcome } from "../sync/errors.js";
 import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
+import { declarations } from "../styles/css-walk.js";
 import { App } from "./App.js";
+import { bottleneckRow } from "./derive.js";
 import { drawerLabel } from "./Drawer.js";
 import {
   CLIENT_T0,
@@ -408,7 +412,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(inBar().getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
   });
 
-  it("8. the layout follows the viewport; under 600 px the drawer is a dialog sheet", () => {
+  it("8. the layout follows the viewport; the drawer is the panel, under 600 px the sheet", () => {
     stubWidth(1200);
     mount(fakeStore(fresh));
     const app = () => document.querySelector<HTMLElement>(".app")!;
@@ -420,7 +424,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     mount(fakeStore(fresh));
     expect(app().dataset.layout).toBe("tablet");
     expect(screen.getByRole("tab", { name: "factory" })).toBeTruthy();
-    expect(open("iron_ore").getAttribute("role")).toBeNull();
+    expect(open("iron_ore").dataset.presentation).toBe("panel");
     cleanup();
 
     stubWidth(400);
@@ -429,6 +433,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(screen.getByRole("tab", { name: "factory" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "priority" })).toBeTruthy();
     const sheet = open("iron_ore");
+    expect(sheet.dataset.presentation).toBe("sheet");
     expect(sheet.getAttribute("role")).toBe("dialog");
     expect(sheet.getAttribute("aria-modal")).toBe("false");
     // The priority tab swaps the main box.
@@ -535,7 +540,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     const r = mount(fakeStore(fresh));
     const app = () => r.container.querySelector<HTMLElement>(".app")!;
     const d = open("iron_ore");
-    expect(d.getAttribute("role")).toBeNull();
+    expect(d.dataset.presentation).toBe("panel");
     const lane = screen.getByRole("tab", { name: /^Iron/ });
     lane.focus();
     // Tablet and desktop are one tree (U-2c): the same drawer, the same focus.
@@ -547,33 +552,37 @@ describe("Drawer", { timeout: 60_000 }, () => {
     media.resize(400);
     expect(app().dataset.layout).toBe("phone");
     const sheet = drawer("iron_ore")!;
-    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.dataset.presentation).toBe("sheet");
     expect(sheet.contains(document.activeElement)).toBe(false);
     media.resize(1200);
     expect(app().dataset.layout).toBe("desktop");
-    expect(drawer("iron_ore")!.getAttribute("role")).toBeNull();
+    expect(drawer("iron_ore")!.dataset.presentation).toBe("panel");
     expect(media.listeners).toBeGreaterThan(0);
     r.unmount();
     expect(media.listeners).toBe(0);
   });
 
-  it("14. the sheet: focus moves to its title, and back to the row on Escape", () => {
-    stubWidth(400);
+  it("14. a remount across 600 px keeps focus in the drawer when the drawer had it", () => {
+    const media = stubWidth(800);
     mount(fakeStore(fresh));
-    const sheet = open("iron_ore");
-    expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(document.activeElement).toBe(within(sheet).getByRole("heading", { name: "Iron Ore" }));
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    expect(drawer("iron_ore")).toBeNull();
-    expectBackOn("iron_ore");
-
-    // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
     open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
-    expect(drawer("iron_ore")).toBeNull();
+    const title = () => document.getElementById("drawer-title");
+    expect(document.activeElement).toBe(title());
+    // The phone is its own tree: the drawer remounts, and its title takes the focus back.
+    media.resize(400);
+    expect(drawer("iron_ore")!.dataset.presentation).toBe("sheet");
+    expect(document.activeElement).toBe(title());
+    // From a control inside it too, and back again.
+    within(drawer("iron_ore")!).getByRole("button", { name: "Close" }).focus();
+    media.resize(1200);
+    expect(drawer("iron_ore")!.dataset.presentation).toBe("panel");
+    expect(document.activeElement).toBe(title());
+    // A flag that wasn't used dies with its commit: the split, the priority view and back
+    // don't take focus later.
     const factory = screen.getByRole("tab", { name: "factory" });
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     factory.focus();
-    fireEvent.click(factory);
+    fireEvent.click(screen.getByRole("tab", { name: "factory" }));
     expect(drawer("iron_ore")).not.toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
   });
@@ -698,5 +707,116 @@ describe("Drawer", { timeout: 60_000 }, () => {
       await Promise.resolve();
     });
     expect(residual()).toBe(false);
+  });
+});
+
+describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
+  const contentRow = () => document.querySelector<HTMLElement>("[data-content-row]")!;
+  const mainBox = () => document.querySelector<HTMLElement>("[data-main-box]")!;
+
+  it("1. desktop: a non-modal panel over the content row, the rows still live", () => {
+    stubWidth(1280);
+    mount(fakeStore(fresh));
+    const d = open("iron_ore");
+    expect(d.dataset.presentation).toBe("panel");
+    // A sibling of the main box, never inside it: the rows keep their layout under it.
+    expect(d.parentElement).toBe(contentRow());
+    expect(mainBox().parentElement).toBe(contentRow());
+    expect(mainBox().contains(d)).toBe(false);
+    expect(d.getAttribute("role")).toBe("dialog");
+    expect(d.getAttribute("aria-modal")).toBe("false");
+    expect(document.getElementById(d.getAttribute("aria-labelledby")!)).toBe(
+      within(d).getByRole("heading", { level: 2 }),
+    );
+    // Non-modal: another row re-keys it.
+    fireEvent.click(option("iron_plate"));
+    expect(drawer("iron_ore")).toBeNull();
+    expect(drawer("iron_plate")!.parentElement).toBe(contentRow());
+  });
+
+  it("2. tablet: the same panel", () => {
+    stubWidth(800);
+    mount(fakeStore(fresh));
+    const d = open("iron_ore");
+    expect(document.querySelector<HTMLElement>(".app")!.dataset.layout).toBe("tablet");
+    expect(d.dataset.presentation).toBe("panel");
+    expect(d.parentElement).toBe(contentRow());
+    expect(d.getAttribute("role")).toBe("dialog");
+    expect(d.getAttribute("aria-modal")).toBe("false");
+  });
+
+  it("3. the phone: a sheet on the app root; focus in, Esc out, a remount takes none", () => {
+    stubWidth(390);
+    mount(fakeStore(fresh));
+    const sheet = open("iron_ore");
+    expect(sheet.dataset.presentation).toBe("sheet");
+    expect(sheet.parentElement).toBe(document.querySelector(".app"));
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.getAttribute("aria-modal")).toBe("false");
+    expect(document.activeElement).toBe(within(sheet).getByRole("heading", { name: "Iron Ore" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("iron_ore")).toBeNull();
+    expectBackOn("iron_ore");
+
+    // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
+    open("iron_ore");
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
+    expect(drawer("iron_ore")).toBeNull();
+    const factory = screen.getByRole("tab", { name: "factory" });
+    factory.focus();
+    fireEvent.click(factory);
+    expect(drawer("iron_ore")).not.toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
+  });
+
+  it("4. the head: the label, the content name to a reader, the meta, the bottleneck's colour", () => {
+    const st = fixtureState("slice-tier-8.world.json");
+    const meta = (d: HTMLElement) => d.querySelector("[data-meta]")!.textContent;
+    const title = (d: HTMLElement) => within(d).getByRole("heading", { level: 2 });
+    // "IRON lane · -85.1/s · 3.14 K/89.18 K": stock/cap, no spaces around the slash.
+    const n = String.raw`[\d.]+(?: ?[a-zA-Z]+)?`;
+    const line = new RegExp(String.raw`^IRON lane · [+−-]?${n}/s · ${n}/${n}`);
+
+    mount(fakeStore(snapshotOf(slice, { ...st, quantum: { ...st.quantum, iron_plate: D(0) } })));
+    let d = open("iron_plate");
+    expect(title(d).textContent).toBe("IRON_PLATE");
+    expect(title(d).getAttribute("aria-label")).toBe("Iron Plate");
+    expect(meta(d)).toMatch(line);
+    expect(meta(d)).not.toContain("QS");
+    cleanup();
+
+    mount(fakeStore(snapshotOf(slice, { ...st, quantum: { ...st.quantum, iron_plate: D(40) } })));
+    d = open("iron_plate");
+    expect(meta(d)).toMatch(line);
+    expect(meta(d)).toMatch(/ · QS 40(\.0)?$/);
+    cleanup();
+
+    // Only the bottleneck's title takes the bottleneck class (tier 8's is a generator's, in the
+    // power panel; a fresh factory's is a row).
+    const hot = bottleneckRow(fresh)?.itemId ?? null;
+    expect(hot).not.toBeNull();
+    mount(fakeStore(fresh));
+    const lane = fresh.content.items.get(hot!)!.lane;
+    const laneName = fresh.content.lanes.get(lane)!.name;
+    fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${laneName}`) }));
+    expect(title(open(hot!)).classList.contains("state-bottleneck")).toBe(true);
+    const cold = [...document.querySelectorAll<HTMLElement>('li[role="option"]')]
+      .map((o) => o.dataset.item!)
+      .find((id) => id !== hot)!;
+    expect(title(open(cold)).classList.contains("state-bottleneck")).toBe(false);
+  });
+
+  it("5. the phone sheet sits above the floating TAP (V-19)", () => {
+    const z = (file: string, selector: string) => {
+      const path = fileURLToPath(new URL(file, import.meta.url));
+      const decl = declarations(file, readFileSync(path, "utf8")).find(
+        (x) => x.stack.at(-1) === selector && x.property === "z-index",
+      );
+      expect(decl, `${file} ${selector}`).toBeDefined();
+      return Number(decl!.value);
+    };
+    expect(z("./Drawer.module.css", ".sheet")).toBeGreaterThan(
+      z("./Power.module.css", ".floating"),
+    );
   });
 });

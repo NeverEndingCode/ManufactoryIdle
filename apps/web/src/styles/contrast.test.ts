@@ -71,17 +71,15 @@ const ON_SURFACE: Record<string, string> = {
   nextBuy: "s2",
   // Task 3: the notice lines (base.css); the lane and bottom tabs' "on" is listed above.
   notice: "s2",
+  // Task 7: the priority list's reset confirmation and the account forms' error box.
+  confirm: "s2",
+  formError: "s2",
 };
 const ON_SURFACE_ATTRS = [/\[aria-selected="?true"?\]/, /\[aria-current/];
 
-/** CSS files not yet moved onto the new tokens; each task takes its files out (V-4). A new
- *  file is never listed: it's checked from the start (Task 3's Shell.module.css). */
-const PENDING_RESKIN = new Set([
-  "ui/Drawer.module.css",
-  "ui/Handbook.module.css",
-  "ui/PriorityList.module.css",
-  "ui/Settings.module.css",
-]);
+/** CSS files not yet moved onto the new tokens; each task took its files out (V-4), and Task 7
+ *  emptied it. Task 8 deletes the set. */
+const PENDING_RESKIN = new Set<string>([]);
 
 function rgb(color: string): [number, number, number] {
   const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
@@ -270,8 +268,13 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
         "ui/Row.module.css",
         "ui/Bar.module.css",
         "ui/Power.module.css",
+        "ui/Drawer.module.css",
+        "ui/Handbook.module.css",
+        "ui/PriorityList.module.css",
+        "ui/Settings.module.css",
       ]),
     );
+    expect([...PENDING_RESKIN]).toEqual([]);
     expect(checked.flatMap((f) => usageViolations(read(f)))).toEqual([]);
     // Every pending file exists, so a deleted one leaves the set.
     for (const f of PENDING_RESKIN) expect(files).toContain(f);

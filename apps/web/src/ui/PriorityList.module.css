@@ -16,8 +16,8 @@
 
 .title {
   margin: 0;
-  font-size: var(--fs-1);
-  font-weight: var(--fw-strong);
+  font-size: var(--fs-body);
+  font-weight: 600;
 }
 
 .seg {
@@ -29,11 +29,11 @@
   min-width: 44px;
   min-height: 44px;
   padding: 6px 11px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: none;
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
   cursor: pointer;
 }
 
@@ -41,21 +41,21 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  font-weight: var(--fw-strong);
+  font-weight: 600;
 }
 
 .confirm {
   margin: 6px 0 10px;
   padding: 10px 12px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--s2);
 }
 
 .warnText {
   margin: 0 0 8px;
   color: var(--t1);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 .confirmButtons {
@@ -74,7 +74,7 @@
   position: relative;
   min-width: 0;
   padding: 6px 0;
-  border-bottom: var(--hairline) solid var(--line);
+  border-bottom: 1px solid var(--line);
   background: var(--bg);
 }
 
@@ -91,7 +91,7 @@
 .row[data-dragging] {
   z-index: 2;
   opacity: 0.9;
-  box-shadow: 0 0 0 var(--hairline) var(--line2);
+  box-shadow: 0 0 0 1px var(--line);
 }
 
 .row[data-drop="before"] {
@@ -117,7 +117,7 @@
   border: 0;
   background: none;
   color: var(--t3);
-  font-size: var(--fs-1);
+  font-size: var(--fs-body);
   cursor: grab;
   touch-action: none;
 }
@@ -131,7 +131,7 @@
   flex: 1 1 6em;
   min-width: 0;
   color: var(--t1);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -141,17 +141,17 @@
   min-height: 44px;
   border: 0;
   background: none;
-  color: var(--accent);
-  font-size: var(--fs-1);
+  color: var(--t1);
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 
 .chip {
   padding: 3px 9px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   color: var(--t2);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
   white-space: nowrap;
 }
 
@@ -180,7 +180,7 @@
   border: 0;
   background: none;
   color: var(--t3);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
   cursor: pointer;
 }
 
@@ -210,11 +210,11 @@
 .modeChip {
   min-height: 44px;
   padding: 6px 11px;
-  border: var(--hairline) solid var(--accent);
-  border-radius: 7px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
   background: none;
-  color: var(--accent);
-  font-size: var(--fs-3);
+  color: var(--t1);
+  font-size: var(--fs-small);
   cursor: pointer;
 }
 
@@ -224,15 +224,15 @@
   gap: 6px;
   min-width: 0;
   color: var(--t2);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
 }
 
 .number {
   width: 5.5em;
   min-height: 44px;
   padding: 4px 6px;
-  border: var(--hairline) solid var(--line2);
-  border-radius: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--s1);
   color: var(--t1);
   font: inherit;
@@ -257,5 +257,5 @@
 .keys {
   margin: 8px 0 0;
   color: var(--t3);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
 }

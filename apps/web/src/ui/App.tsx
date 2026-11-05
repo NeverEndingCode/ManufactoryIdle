@@ -31,7 +31,7 @@ import { ResetPassword } from "./ResetPassword.js";
 import { replaceRoute, useRoute } from "./route.js";
 import { RowList } from "./RowList.js";
 import { Settings, type SettingsProps } from "./Settings.js";
-import { DesktopShell, OverlayPanel, PhoneShell, type ShellProps, type View } from "./Shell.js";
+import { DesktopShell, PhoneShell, type ShellProps, type View } from "./Shell.js";
 import { syncCapabilities } from "./theme.js";
 import { useLayoutMode } from "./use-layout-mode.js";
 import { createTickSource, TickContext } from "./use-tick.js";
@@ -182,11 +182,20 @@ export function App({ store }: { store: GameStore }) {
   /** Set when the player opens a drawer; the drawer's mount takes it, so a remount (a view
    * switch, a layout change) never steals focus. */
   const opened = useRef(false);
+  /** Set when the drawer unmounted holding focus: crossing 600 px swaps the shells (U-2c, U-2d)
+   * and remounts it, so the remount takes the focus back. A flag no mount took in its own commit
+   * is dropped by the effect below, so a later remount (a view switch back) never steals focus. */
+  const leftFocused = useRef(false);
   const claimFocus = () => {
-    const mine = opened.current;
+    const mine = opened.current || leftFocused.current;
     opened.current = false;
+    leftFocused.current = false;
     return mine;
   };
+  // After every commit, and after the drawer's own mount effect (children's run first).
+  useEffect(() => {
+    leftFocused.current = false;
+  });
 
   const powerId = s === null ? null : powerLaneId(s);
   /** V-25: the open drawer stays across a view switch, but renders on the factory view only,
@@ -313,9 +322,10 @@ export function App({ store }: { store: GameStore }) {
         itemId={drawerItem}
         pending={view.pending}
         onClose={close}
-        sheet={mode === "phone"}
-        claimFocus={claimFocus}
         onSplit={showEntry}
+        presentation={mode === "phone" ? "sheet" : "panel"}
+        claimFocus={claimFocus}
+        onLeaveFocused={() => (leftFocused.current = true)}
       />
     ) : null;
 
@@ -343,7 +353,8 @@ export function App({ store }: { store: GameStore }) {
       main,
       overlays: (
         <>
-          {drawer !== null && mode !== "phone" ? <OverlayPanel>{drawer}</OverlayPanel> : drawer}
+          {/* U-5a: the panel, an absolute sibling of the main box over its right columns. */}
+          {mode !== "phone" && drawer}
           {card}
         </>
       ),
@@ -383,6 +394,8 @@ export function App({ store }: { store: GameStore }) {
           data-polling={view.polling ? "armed" : "off"}
         >
           {mode === "phone" ? <PhoneShell {...props} /> : <DesktopShell {...props} />}
+          {/* V-19: the phone's sheet, fixed, on the app root above the TAP and the bottom tabs. */}
+          {mode === "phone" && drawer}
           {command !== null && whyOpen && mode === "phone" && (
             <NextBuySheet {...command} onClose={() => closeWhy(true)} onOpenItem={openFromSheet} />
           )}

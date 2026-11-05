@@ -1,17 +1,18 @@
-/* The handbook (S-13): rows, not cards, on the drawer's surface. At 320 px nothing scrolls
-   sideways: names ellipsize, numbers sit in .num spans that never shrink, rows wrap (W-19). */
+/* The handbook (S-13): rows, not cards, on the drawer's surface (--s1, so --t3 reads, U-1f). At
+   320 px nothing scrolls sideways: names ellipsize, numbers sit in .num spans that never shrink,
+   rows wrap (W-19). */
 .handbook {
   min-width: 0;
   padding: 10px 12px 12px;
-  border-radius: 9px;
-  background: var(--s2);
+  border-radius: var(--radius);
+  background: var(--s1);
 }
 
 .title {
   overflow: hidden;
   margin: 0 0 8px;
-  font-size: var(--fs-1);
-  font-weight: var(--fw-strong);
+  font-size: var(--fs-body);
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -20,8 +21,8 @@
 .laneName {
   margin: 14px 0 6px;
   color: var(--t2);
-  font-size: var(--fs-3);
-  font-weight: var(--fw-strong);
+  font-size: var(--fs-small);
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -31,8 +32,8 @@
   width: 100%;
   min-height: 44px;
   padding: 8px 10px;
-  border: 1px solid var(--line2);
-  border-radius: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--s1);
   color: var(--t1);
   font: inherit;
@@ -62,7 +63,7 @@
   min-height: 44px;
   padding: 6px 4px;
   border: 0;
-  border-bottom: var(--hairline) solid var(--line);
+  border-bottom: 1px solid var(--line);
   background: none;
   color: var(--t1);
   font: inherit;
@@ -86,7 +87,7 @@
 .tag {
   flex: 0 0 auto;
   color: var(--t3);
-  font-size: var(--fs-3);
+  font-size: var(--fs-small);
   white-space: nowrap;
 }
 
@@ -101,17 +102,17 @@
 
 .term {
   padding: 6px 0;
-  border-bottom: var(--hairline) solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .term dt {
-  font-weight: var(--fw-strong);
+  font-weight: 600;
 }
 
 .term dd {
   margin: 2px 0 0;
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 .entry {
@@ -124,13 +125,13 @@
   gap: 2px 12px;
   margin: 0;
   color: var(--t2);
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
 }
 
 .line {
   min-width: 0;
   padding: 6px 0;
-  border-bottom: var(--hairline) solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .line p {
@@ -147,7 +148,7 @@
 
 .lineHead .name {
   flex: 0 1 auto;
-  font-weight: var(--fw-strong);
+  font-weight: 600;
 }
 
 .io {
@@ -206,12 +207,12 @@
   max-width: 100%;
   min-height: 44px;
   padding: 6px 12px;
-  border: 1px solid var(--line2);
-  border-radius: 999px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
   background: none;
   color: var(--t1);
   font: inherit;
-  font-size: var(--fs-2);
+  font-size: var(--fs-label);
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;

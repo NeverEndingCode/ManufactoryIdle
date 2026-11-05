@@ -369,9 +369,3 @@ export function PhoneShell(p: ShellProps) {
     </>
   );
 }
-
-/** The desktop drawer's place (U-5a's box until Task 5 restyles the drawer): the right of the
- * content row, over the main box. */
-export function OverlayPanel({ children }: { children: ReactNode }) {
-  return <div className={css.overlayPanel}>{children}</div>;
-}
