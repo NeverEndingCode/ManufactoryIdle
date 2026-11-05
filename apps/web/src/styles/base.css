@@ -183,7 +183,7 @@ button {
 }
 
 /* W-9: a hidden tab pauses every animation. The property isn't inherited and "*" doesn't
-   match pseudo-elements, so they are named too (the frame's pulse is on ::before). */
+   match pseudo-elements, so they are named too. */
 @media (prefers-reduced-motion: no-preference) {
   :root.hidden-tab *,
   :root.hidden-tab *::before,

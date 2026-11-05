@@ -1,0 +1,75 @@
+/* U-3d / V-3: one bar in every theme. The track and the fill paint var(--bar-paint): 1ch
+   segments in the terminal, solid elsewhere. The brackets are var(--bar-open) and
+   var(--bar-close) ("[" "]" in the terminal, empty elsewhere). The fill is revealed through its
+   clip, never scaled, so the segments never squash (Bar.tsx sets both transforms). */
+.bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  /* A fixed number of cells in the terminal only: elsewhere --bar-seg is undefined, so this is
+     invalid at computed-value time and falls back to none. */
+  max-width: calc((var(--bar-cells) + 2) * var(--bar-seg));
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: var(--fs-bar);
+  line-height: 1;
+}
+
+.bar::before {
+  grid-column: 1;
+  content: var(--bar-open);
+}
+
+.bar::after {
+  grid-column: 3;
+  content: var(--bar-close);
+}
+
+.normal {
+  color: var(--t2);
+}
+
+.body {
+  color: var(--t-body);
+}
+
+.bar:global(.state-bottleneck) {
+  color: var(--state-bottleneck);
+}
+
+.track,
+.clip {
+  grid-row: 1;
+  grid-column: 2;
+  height: var(--bar-h);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+}
+
+/* The terminal's track is the paint at 25% (standing in for ░); elsewhere --bar-track fills it. */
+.track {
+  position: relative;
+  background: var(--bar-track);
+}
+
+.track::before {
+  position: absolute;
+  inset: 0;
+  background: var(--bar-paint);
+  content: "";
+  opacity: 0.25;
+}
+
+/* At rest, before Bar.tsx places them: empty. */
+.clip {
+  transform: translateX(-100%);
+}
+
+.fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--bar-paint);
+  transform: translateX(100%);
+}

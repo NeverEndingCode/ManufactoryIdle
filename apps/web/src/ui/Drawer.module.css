@@ -58,6 +58,69 @@
   margin-left: auto;
 }
 
+/* U-3c / V-18: what left the row, on its own line under the title. */
+.meta {
+  flex-basis: 100%;
+  overflow: hidden;
+  margin: 0;
+  color: var(--t2);
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* §13.1's split bar, moved from the row (V-18): a button to the priority entry. */
+.splitButton {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.splitWrap {
+  margin-top: 8px;
+}
+
+.split {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+
+.split > div {
+  flex-basis: 0;
+}
+
+.toneA {
+  background: var(--accent);
+}
+
+.toneB {
+  background: var(--t3);
+}
+
+.toneC {
+  background: var(--line);
+}
+
+.splitLabels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-top: 5px;
+  color: var(--t2);
+  font-size: var(--fs-small);
+}
+
 /* "Handbook entry": a link dressed as the secondary button, never underlined. */
 .handbookLink {
   display: inline-flex;

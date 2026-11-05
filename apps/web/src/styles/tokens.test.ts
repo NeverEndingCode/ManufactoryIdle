@@ -129,7 +129,12 @@ describe("the CSS source", () => {
 
   it("has the files the tests read", () => {
     expect(files.map((f) => relative(SRC, f)).sort()).toEqual(
-      expect.arrayContaining(["styles/tokens.css", "styles/base.css", "ui/ItemRow.module.css"]),
+      expect.arrayContaining([
+        "styles/tokens.css",
+        "styles/base.css",
+        "ui/Row.module.css",
+        "ui/Bar.module.css",
+      ]),
     );
   });
 
@@ -157,12 +162,16 @@ describe("the CSS source", () => {
     expect(outside).toEqual([]);
   });
 
-  it("7c. there is a pulse, on opacity, over --pulse-cycle", () => {
+  it("7c. there is a pulse, on opacity, over --pulse-cycle, on the bottleneck's gutter (U-3e)", () => {
     const pulse = all.filter((d) => d.stack.some((s) => s === "@keyframes pulse"));
     expect(pulse.map((d) => d.property)).toEqual(["opacity", "opacity"]);
-    expect(
-      all.some((d) => d.property === "animation" && d.value.includes("var(--pulse-cycle)")),
-    ).toBe(true);
+    expect(pulse.every((d) => d.file === "ui/Row.module.css")).toBe(true);
+    const uses = all.filter(
+      (d) => d.property === "animation" && d.value.includes("var(--pulse-cycle)"),
+    );
+    expect(uses.map((d) => `${d.file}: ${d.stack.at(-1)}`)).toEqual([
+      "ui/Row.module.css: .gutter:global(.state-bottleneck)",
+    ]);
   });
 
   it("7d. a hidden tab pauses animations on pseudo-elements too (W-9)", () => {
@@ -370,6 +379,38 @@ describe("the CSS source", () => {
         for (const f of rest) expect(SYSTEM.has(f) || SYSTEM_FALLBACK.has(f), f).toBe(true);
       }
     }
+  });
+
+  it("10a. a row is a pinned height that clips: no min-height, max-height or height: auto (U-3a)", () => {
+    // CSS modules scope the classes: only Row.module.css can reach a row or its cells.
+    const row = all.filter((d) => d.file === "ui/Row.module.css");
+    const rule = Object.fromEntries(
+      row
+        .filter((d) => d.stack.length === 1 && d.stack[0] === ".row")
+        .map((d) => [d.property, d.value]),
+    );
+    expect(rule.height).toBe("var(--row-h)");
+    expect(rule.overflow).toBe("hidden");
+    const CELLS = ["row", "gutter", "name", "rate", "sat", "machines", "storage", "stock"];
+    const reaches = (selector: string) =>
+      [...selector.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].some((m) => CELLS.includes(m[1]!));
+    const bad = row
+      .filter((d) => reaches(d.stack.filter((s) => !s.startsWith("@")).at(-1) ?? ""))
+      .filter(
+        (d) =>
+          d.property === "min-height" ||
+          d.property === "max-height" ||
+          d.property === "min-block-size" ||
+          d.property === "max-block-size" ||
+          ((d.property === "height" || d.property === "block-size") && d.value.trim() === "auto"),
+      )
+      .map((d) => `${d.stack.join(" > ")} { ${d.property}: ${d.value} }`);
+    expect(bad).toEqual([]);
+    // Every rule that sets a row's own height sets it to the token.
+    const heights = row.filter(
+      (d) => d.property === "height" && /(^|[\s,])\.row\b(?![-\w])/.test(d.stack.at(-1) ?? ""),
+    );
+    expect(heights.map((d) => d.value)).toEqual(heights.map(() => "var(--row-h)"));
   });
 
   it("9a. a segmented button is a 44 px target both ways (W-20)", () => {

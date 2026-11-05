@@ -3,7 +3,7 @@
 export const GLOSSARY: readonly { term: string; text: string }[] = [
   {
     term: "Bottleneck",
-    text: "The one recipe holding a lane back. Exactly one row per lane carries the frame, and its button buys what clears it. No frame means nothing in that lane is short.",
+    text: "The one recipe holding the factory back. Its row is marked with a !, and the command line's run button buys what clears it. No mark means nothing is short.",
   },
   {
     term: "Mark",
@@ -39,7 +39,7 @@ export const GLOSSARY: readonly { term: string; text: string }[] = [
   },
   {
     term: "Power",
-    text: "Generators burn fuel to feed the grid, and every machine draws from it. Short power slows every lane at once, and then the bottleneck frame moves to the dock.",
+    text: "Generators burn fuel to feed the grid, and every machine draws from it. Short power slows every lane at once, and then the bottleneck mark moves to power.",
   },
   {
     term: "Tap and kick",

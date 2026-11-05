@@ -21,8 +21,8 @@ import {
   type Slice,
 } from "./test-fixtures.js";
 
-/** V-23: the frame shows the command line's own buttons for one commit; the bar has them too. */
-const inFrame = () => within(document.querySelector<HTMLElement>("[data-frame]")!);
+/** The bottleneck's buy is the command line's (U-4): the frame is gone (U-3c). */
+const inBar = () => within(document.querySelector<HTMLElement>("[data-command]")!);
 
 let slice: Slice;
 let fresh: Snapshot;
@@ -48,12 +48,19 @@ function topped(state: WorldState, items: readonly string[]): WorldState {
   return { ...state, stored };
 }
 
-const rowButton = (item: string) =>
-  document.querySelector<HTMLButtonElement>(`[data-item="${item}"] button[data-open-row]`)!;
+/** A row is a listbox option (U-7d): a click selects it and opens its drawer. */
+const option = (item: string) =>
+  document.querySelector<HTMLElement>(`li[role="option"][data-item="${item}"]`)!;
+const listbox = () => screen.getByRole("listbox");
+/** U-7c: focus is back on the row list, with this row active. */
+function expectBackOn(item: string) {
+  expect(document.activeElement).toBe(listbox());
+  expect(listbox().getAttribute("aria-activedescendant")).toBe(`row-${item}`);
+}
 const drawer = (item: string) => document.querySelector<HTMLElement>(`[data-drawer="${item}"]`);
 
 function open(item: string): HTMLElement {
-  fireEvent.click(rowButton(item));
+  fireEvent.click(option(item));
   const d = drawer(item);
   expect(d).not.toBeNull();
   return d!;
@@ -66,32 +73,33 @@ function pick(d: HTMLElement, verb: string) {
 const batch = (label: string, id = 1): Batch => ({ id, key: `k${id}`, actions: [], label });
 
 describe("Drawer", { timeout: 60_000 }, () => {
-  it("1. a row's first line opens the drawer; Escape closes it and focus goes back", () => {
+  it("1. a row opens the drawer; Escape closes it and focus goes back to the list", () => {
     mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
     // The drawer is an overlay (U-5a): no pane, no hint.
     expect(screen.queryByText("Tap a row to buy, upgrade or store")).toBeNull();
-    const btn = rowButton("iron_ore");
-    expect(btn.getAttribute("aria-expanded")).toBe("false");
     const d = open("iron_ore");
-    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(option("iron_ore").getAttribute("aria-selected")).toBe("true");
     expect(d.id).toBe("detail");
     expect(d.getAttribute("aria-labelledby")).toBe("drawer-title");
     expect(document.activeElement).toBe(document.getElementById("drawer-title"));
     expect(within(d).getByText("Miner")).toBeTruthy();
     expect(within(d).getByText("8 more Miners → ×1.50")).toBeTruthy();
 
+    // U-7c: back to the list, with that row active.
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_ore"));
+    expect(document.activeElement).toBe(listbox());
+    expect(listbox().getAttribute("aria-activedescendant")).toBe("row-iron_ore");
 
     // The Close button too.
     const again = open("iron_ore");
     fireEvent.click(within(again).getByRole("button", { name: "Close" }));
     expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_ore"));
+    expect(document.activeElement).toBe(listbox());
+    expect(listbox().getAttribute("aria-activedescendant")).toBe("row-iron_ore");
 
-    // The frame's own buy does not open the drawer.
-    fireEvent.click(inFrame().getByRole("button", { name: /^Buy 1 Constructor$/ }));
+    // The command line's buy does not open the drawer.
+    fireEvent.click(inBar().getByRole("button", { name: /^Buy 1 Constructor$/ }));
     expect(document.querySelector("[data-drawer]")).toBeNull();
   });
 
@@ -327,7 +335,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     ).toBe(false);
   });
 
-  it("7. the frame renders the reserve and storage actions, with one label", () => {
+  it("7. the command line runs the reserve and storage actions, with one label", () => {
     const withBottleneck = (b: Bottleneck, base: Snapshot = fresh): Snapshot => ({
       ...base,
       display: { ...base.display, solution: { ...base.display.solution, bottleneck: b } },
@@ -341,8 +349,8 @@ describe("Drawer", { timeout: 60_000 }, () => {
       }),
     );
     mount(store);
-    expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    const reserve = inFrame().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
+    expect(option("iron_ingot").getAttribute("aria-label")).toMatch(/, bottleneck$/);
+    const reserve = inBar().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
     expect((reserve as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(reserve);
     expect(store.send).toHaveBeenCalledWith(
@@ -352,7 +360,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     // A setting: still enabled while its batch is pending.
     store.set({ pending: [batch("bottleneck buy")] });
     expect(
-      (inFrame().getByRole("button", { name: "Reserve 25% of Iron Ingot" }) as HTMLButtonElement)
+      (inBar().getByRole("button", { name: "Reserve 25% of Iron Ingot" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
     cleanup();
@@ -370,14 +378,14 @@ describe("Drawer", { timeout: 60_000 }, () => {
       ),
     );
     mount(storage);
-    expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    fireEvent.click(inFrame().getByRole("button", { name: "Buy storage for Iron Plate" }));
+    expect(option("iron_plate").getAttribute("aria-label")).toMatch(/, bottleneck$/);
+    fireEvent.click(inBar().getByRole("button", { name: "Buy storage for Iron Plate" }));
     expect(storage.send).toHaveBeenCalledWith(
       [{ type: "BUY_STORAGE", itemId: "iron_plate", levels: 1 }],
       "bottleneck buy",
     );
     storage.set({ pending: [batch("bottleneck buy")] });
-    const busy = inFrame().getByRole("button", { name: "Buy storage for Iron Plate" });
+    const busy = inBar().getByRole("button", { name: "Buy storage for Iron Plate" });
     expect(busy.getAttribute("aria-busy")).toBe("true");
     expect(busy.getAttribute("aria-disabled")).toBe("true");
     expect((busy as HTMLButtonElement).disabled).toBe(false);
@@ -396,8 +404,8 @@ describe("Drawer", { timeout: 60_000 }, () => {
         ),
       ),
     );
-    expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    expect(inFrame().getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
+    expect(option("iron_plate").getAttribute("aria-label")).toMatch(/, bottleneck$/);
+    expect(inBar().getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
   });
 
   it("8. the layout follows the viewport; under 600 px the drawer is a dialog sheet", () => {
@@ -491,17 +499,18 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(store.send).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(busy, { key: "Escape" });
     expect(drawer("iron_plate")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_plate"));
+    expectBackOn("iron_plate");
   });
 
-  it("11. closing after the row left: focus goes to the selected lane tab", () => {
+  it("11. closing after the row left: focus goes to the shown lane's row list", () => {
     mount(fakeStore(fresh));
     const d = open("iron_ore");
     fireEvent.click(screen.getByRole("tab", { name: /Power/ }));
     expect(document.querySelector('[data-item="iron_ore"]')).toBeNull();
     fireEvent.click(within(d).getByRole("button", { name: "Close" }));
     expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: /Power/ }));
+    expect(document.activeElement).toBe(listbox());
+    expect(listbox().getAttribute("aria-label")).toBe("Power lane");
   });
 
   it("12. the priority view hides the drawer; it's still open on the factory view (V-25)", () => {
@@ -518,7 +527,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(d).not.toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
     fireEvent.click(within(d).getByRole("button", { name: "Close" }));
-    expect(document.activeElement).toBe(rowButton("iron_ore"));
+    expectBackOn("iron_ore");
   });
 
   it("13. a layout change re-lays out and never steals focus", () => {
@@ -556,7 +565,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(document.activeElement).toBe(within(sheet).getByRole("heading", { name: "Iron Ore" }));
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_ore"));
+    expectBackOn("iron_ore");
 
     // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
     open("iron_ore");
@@ -588,10 +597,6 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(document.getElementById("view-priority")).not.toBeNull();
     fireEvent.keyDown(p, { key: "Home" });
     expect(screen.getByRole("tab", { name: "factory" }).getAttribute("aria-selected")).toBe("true");
-    // A closed row's button controls nothing; an open one controls #detail.
-    expect(rowButton("iron_ore").getAttribute("aria-controls")).toBeNull();
-    open("iron_ore");
-    expect(rowButton("iron_ore").getAttribute("aria-controls")).toBe("detail");
   });
 
   it("16. an assign 409 reverts the steppers to the server's counts", async () => {
@@ -635,7 +640,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(store.send).toHaveBeenCalledTimes(1);
   });
 
-  it("17. the frame's reserve ignores a second click while its send is unsettled", async () => {
+  it("17. the command line's reserve ignores a second click while its send is unsettled", async () => {
     const b: Bottleneck = {
       kind: "reserve",
       itemId: "iron_ingot",
@@ -649,7 +654,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     let settle!: (o: Outcome) => void;
     store.send.mockImplementation(() => new Promise<Outcome>((r) => (settle = r)));
     mount(store);
-    const reserve = inFrame().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
+    const reserve = inBar().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
     fireEvent.click(reserve);
     fireEvent.click(reserve);
     expect(store.send).toHaveBeenCalledTimes(1);

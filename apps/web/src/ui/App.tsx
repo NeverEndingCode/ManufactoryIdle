@@ -1,8 +1,8 @@
 // The app: the store wiring, the announcer, the tick, the settings sheet (S-11: state, not a
 // route) and the route (S-10). The markup is the shell's (U-2): DesktopShell for desktop and
 // tablet, PhoneShell below 600 px, both filling this .app root. App holds the view state (V-25):
-// the selected lane, the factory / priority / phone power view, and the open drawer; the
-// handbook view is its route. The store is created and started outside React (main.tsx).
+// the selected lane, the factory / priority / phone power view, the open drawer, and each lane's
+// selected row (U-7d); the handbook view is its route. The store is created and started outside React (main.tsx).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ItemId, LaneId } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
@@ -12,7 +12,6 @@ import { bottleneckRow, laneTabs, type BottleneckModel } from "./derive.js";
 import { inertOutside } from "./dialog.js";
 import { Drawer } from "./Drawer.js";
 import { Handbook } from "./Handbook.js";
-import { LaneView } from "./LaneView.js";
 import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
 import { capabilities } from "./capabilities.js";
 import { CommandBar, CommandSplit } from "./CommandBar.js";
@@ -22,14 +21,18 @@ import { useNotation } from "./notation.js";
 import { PriorityList } from "./PriorityList.js";
 import { ResetPassword } from "./ResetPassword.js";
 import { replaceRoute, useRoute } from "./route.js";
+import { RowList } from "./RowList.js";
 import { Settings, type SettingsProps } from "./Settings.js";
 import { DesktopShell, OverlayPanel, PhoneShell, type ShellProps, type View } from "./Shell.js";
 import { syncCapabilities } from "./theme.js";
 import { useLayoutMode } from "./use-layout-mode.js";
 import { createTickSource, TickContext } from "./use-tick.js";
 
-const openerOf = (itemId: ItemId) =>
-  document.querySelector<HTMLElement>(`[data-item="${itemId}"] [data-open-row]`);
+/** A row is shown while its item is in that lane, at or under the tier (laneRows). */
+function isShownRow(s: Snapshot, laneId: LaneId, itemId: ItemId): boolean {
+  const item = s.content.items.get(itemId);
+  return item !== undefined && item.lane === laneId && item.tier <= s.state.tier;
+}
 
 type SheetAt = Pick<SettingsProps, "section" | "mode">;
 
@@ -161,6 +164,18 @@ export function App({ store }: { store: GameStore }) {
       : pane;
   const [openItem, setOpenItem] = useState<ItemId | null>(null);
   const [focusEntry, setFocusEntry] = useState<string | null>(null);
+  /** U-7d: each lane's selected row. It survives lane switches and snapshots; an item that's no
+   * longer a row drops out, so its lane falls back to the default (RowList) and stays there. */
+  const [selection, setSelection] = useState<ReadonlyMap<LaneId, ItemId>>(() => new Map());
+  const select = (lane: LaneId, itemId: ItemId) =>
+    setSelection((m) => (m.get(lane) === itemId ? m : new Map(m).set(lane, itemId)));
+  useEffect(() => {
+    if (s === null) return;
+    setSelection((m) => {
+      const kept = [...m].filter(([lane, item]) => isShownRow(s, lane, item));
+      return kept.length === m.size ? m : new Map(kept);
+    });
+  }, [s]);
 
   /** Set when the player opens a drawer; the drawer's mount takes it, so a remount (a view
    * switch, a layout change) never steals focus. */
@@ -173,22 +188,23 @@ export function App({ store }: { store: GameStore }) {
 
   /** V-25: the open drawer stays across a view switch, but renders on the factory view only. */
   const drawerItem = shown === "factory" ? openItem : null;
-  const toggle = (itemId: ItemId) => {
+  /** A row's click, → or Space: its drawer, the title taking focus (U-7c). */
+  const openRow = (itemId: ItemId) => {
     opened.current = openItem !== itemId;
-    setOpenItem(openItem === itemId ? null : itemId);
+    setOpenItem(itemId);
   };
-  /** Closing returns focus to the row button that opened the drawer; when that row is gone
-   * (another lane), to the selected lane tab, else the shown view's tab. */
+  /** U-7c: closing returns focus to the row list, the drawer's row still active; without a list
+   * (another view), to the selected lane tab, else the shown view's tab. */
   const close = () => {
     const back =
-      (openItem === null ? null : openerOf(openItem)) ??
+      appRef.current?.querySelector<HTMLElement>('[role="listbox"]') ??
       (laneId === null ? null : document.getElementById(`lane-tab-${laneId}`)) ??
       document.querySelector<HTMLElement>(`[data-view="${shown}"]`);
     back?.focus();
     setOpenItem(null);
   };
 
-  /** §13.1: a split bar goes to its item's entry in the priority list. */
+  /** §13.1 / V-18: the drawer's split bar goes to its item's entry in the priority list. */
   const showEntry = (itemId: ItemId) => {
     const entry = s?.state.priority.find((e) => e.kind === "item" && e.itemId === itemId);
     if (entry === undefined) return;
@@ -211,7 +227,10 @@ export function App({ store }: { store: GameStore }) {
   const openFromSheet = (itemId: ItemId) => {
     closeWhy(false);
     const lane = s?.content.items.get(itemId)?.lane;
-    if (lane !== undefined) setPicked(lane);
+    if (lane !== undefined) {
+      setPicked(lane);
+      select(lane, itemId);
+    }
     opened.current = true;
     setOpenItem(itemId);
   };
@@ -253,15 +272,16 @@ export function App({ store }: { store: GameStore }) {
     main = <PowerDock store={store} snapshot={s} taps={view.taps} pending={view.pending} />;
   } else {
     main = (
-      <LaneView
+      <RowList
         store={store}
         snapshot={s}
         laneId={laneId}
         bottleneck={bottleneck}
-        pending={view.pending}
+        selected={selection.get(laneId) ?? null}
+        onSelect={(itemId) => select(laneId, itemId)}
+        onOpen={openRow}
         openItem={openItem}
-        onOpen={toggle}
-        onSplit={showEntry}
+        mode={mode}
       />
     );
   }
@@ -277,6 +297,7 @@ export function App({ store }: { store: GameStore }) {
         onClose={close}
         sheet={mode === "phone"}
         claimFocus={claimFocus}
+        onSplit={showEntry}
       />
     ) : null;
 

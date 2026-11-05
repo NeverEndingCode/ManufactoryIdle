@@ -73,11 +73,8 @@ const ON_SURFACE_ATTRS = [/\[aria-selected="?true"?\]/, /\[aria-current/];
 /** CSS files not yet moved onto the new tokens; each task takes its files out (V-4). A new
  *  file is never listed: it's checked from the start (Task 3's Shell.module.css). */
 const PENDING_RESKIN = new Set([
-  "ui/BottleneckFrame.module.css",
   "ui/Drawer.module.css",
   "ui/Handbook.module.css",
-  "ui/ItemRow.module.css",
-  "ui/LaneView.module.css",
   "ui/PowerDock.module.css",
   "ui/PriorityList.module.css",
   "ui/Settings.module.css",
@@ -217,7 +214,13 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
   it("5. no re-skinned CSS file uses a barred pair", () => {
     const checked = files.filter((f) => !PENDING_RESKIN.has(f));
     expect(checked).toEqual(
-      expect.arrayContaining(["styles/tokens.css", "styles/base.css", "ui/Shell.module.css"]),
+      expect.arrayContaining([
+        "styles/tokens.css",
+        "styles/base.css",
+        "ui/Shell.module.css",
+        "ui/Row.module.css",
+        "ui/Bar.module.css",
+      ]),
     );
     expect(checked.flatMap((f) => usageViolations(read(f)))).toEqual([]);
     // Every pending file exists, so a deleted one leaves the set.

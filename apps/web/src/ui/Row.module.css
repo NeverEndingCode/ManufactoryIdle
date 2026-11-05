@@ -1,0 +1,248 @@
+/* U-3: rows never move. A row is exactly --row-h (44 px, 54 px on the phone), pinned and clipped,
+   and every cell is one ellipsized line of a fixed width or flex (tokens.test 10a). State is paint
+   only: colour classes, the gutter's glyph, the selected row's fill and inset bar, the focus
+   ring. The list is a size container: columns drop by its width, not the viewport's (U-3b). */
+.rows {
+  container: rows / inline-size;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The ring is on the active row, not the list (U-3a). */
+.list:focus-visible {
+  outline: none;
+}
+
+.head,
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px 0 4px;
+}
+
+.head {
+  padding-bottom: 4px;
+  border-bottom: 1px var(--rule) var(--line);
+  color: var(--t3);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+.row {
+  height: var(--row-h);
+  overflow: hidden;
+  border-bottom: 1px var(--rule) var(--line-soft);
+  color: var(--t1);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.row[aria-selected="true"] {
+  background: var(--s-hi);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.list:focus-visible .row[aria-selected="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The cells: one line each, ellipsized. */
+.gutter,
+.name,
+.rate,
+.sat,
+.machines,
+.stock {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gutter {
+  flex: none;
+  width: 16px;
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+.name {
+  flex: none;
+  width: 170px;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-name);
+}
+
+.rate {
+  flex: none;
+  width: 100px;
+  color: var(--t2);
+}
+
+.rate-up {
+  color: var(--rate-up);
+}
+
+.rate-down {
+  color: var(--rate-down);
+}
+
+.sat {
+  flex: none;
+  width: 48px;
+}
+
+.machines {
+  flex: none;
+  width: 210px;
+  color: var(--t2);
+  font-size: var(--fs-small);
+}
+
+.storage {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 64px;
+}
+
+.stock {
+  flex: none;
+  width: 130px;
+  color: var(--t2);
+  font-size: var(--fs-small);
+  text-align: right;
+}
+
+.head .rate,
+.head .machines,
+.head .stock {
+  color: inherit;
+}
+
+/* The state colours, through state classes only (8a). */
+.name:global(.state-bottleneck) {
+  color: var(--state-bottleneck);
+}
+
+.sat:global(.state-fed) {
+  color: var(--state-fed);
+}
+
+.sat:global(.state-throttled) {
+  color: var(--state-throttled);
+}
+
+.sat:global(.state-paused),
+.sat:global(.state-idle) {
+  color: var(--state-paused);
+}
+
+/* U-3e: the bottleneck's "!" pulses (W-18's cycle); static under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .gutter:global(.state-bottleneck) {
+    animation: pulse var(--pulse-cycle) ease-in-out infinite;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Columns drop by the list's own width (U-3b). */
+@container rows (max-width: 899px) {
+  .machines {
+    display: none;
+  }
+}
+
+@container rows (max-width: 699px) {
+  .name {
+    width: 150px;
+  }
+
+  .rate {
+    width: 90px;
+  }
+
+  .machines {
+    width: 190px;
+  }
+
+  .stock {
+    width: 110px;
+  }
+}
+
+/* The phone: U-3b's two lines in the same 54 px row, by grid areas. Line 2 starts 18 px in (the
+   gutter's 10 px and the 8 px gap). No header, no MACHINES. */
+.phone .head,
+.phone .machines {
+  display: none;
+}
+
+.phone .row {
+  display: grid;
+  grid-template-areas:
+    "gutter name name rate"
+    ". storage sat stock";
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 2px 8px;
+  padding: 0 4px;
+}
+
+.phone .gutter {
+  grid-area: gutter;
+  width: auto;
+}
+
+.phone .name {
+  grid-area: name;
+  width: auto;
+}
+
+.phone .rate {
+  grid-area: rate;
+  width: auto;
+  text-align: right;
+}
+
+.phone .storage {
+  grid-area: storage;
+  min-width: 0;
+}
+
+.phone .sat {
+  grid-area: sat;
+  width: auto;
+  font-size: var(--fs-small);
+}
+
+.phone .stock {
+  grid-area: stock;
+  width: auto;
+  font-size: var(--fs-small);
+}
+
+/* Read, not seen: the list's key hint (aria-describedby). */
+.hint {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

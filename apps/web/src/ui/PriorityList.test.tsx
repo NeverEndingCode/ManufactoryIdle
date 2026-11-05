@@ -437,13 +437,14 @@ describe("PriorityList", { timeout: 60_000 }, () => {
     expect(chip.getAttribute("data-state")).toBe("paused");
   });
 
-  it("9. a split bar focuses its item's entry in the list", () => {
+  it("9. the drawer's split bar focuses its item's entry in the list (V-18)", () => {
     // slice-tier-8-reinforced-full: screw is contested (derive test 4).
     const full = snapshotOf(slice, fixtureState("slice-tier-8-reinforced-full.world.json"));
     render(<App store={fakeStore(full) as unknown as GameStore} />);
     fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
+    fireEvent.click(document.querySelector<HTMLElement>('li[role="option"][data-item="screw"]')!);
     const split = document.querySelector<HTMLButtonElement>(
-      '[data-item="screw"] button[data-split]',
+      '[data-drawer="screw"] button[data-split]',
     );
     expect(split).not.toBeNull();
     const item = "screw";

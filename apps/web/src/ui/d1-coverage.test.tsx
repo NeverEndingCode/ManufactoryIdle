@@ -79,9 +79,7 @@ function expectSent(store: FakeStore, s: Snapshot, type: Action["type"]): Action
 const lane = (name: RegExp) => fireEvent.click(screen.getByRole("tab", { name }));
 
 function open(item: string): HTMLElement {
-  fireEvent.click(
-    document.querySelector<HTMLButtonElement>(`[data-item="${item}"] button[data-open-row]`)!,
-  );
+  fireEvent.click(document.querySelector<HTMLElement>(`li[role="option"][data-item="${item}"]`)!);
   const d = document.querySelector<HTMLElement>(`[data-drawer="${item}"]`);
   expect(d).not.toBeNull();
   return d!;

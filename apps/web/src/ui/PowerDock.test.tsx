@@ -84,7 +84,7 @@ describe("PowerDock (W-12, W-20, Q-12)", { timeout: 60_000 }, () => {
     expect(root.textContent).toContain("29s");
   });
 
-  it("4. when power limits production the bar says so, and the frame keeps the one 'bottleneck'", () => {
+  it("4. when power limits production the bar says so, and the framed row carries the mark", () => {
     const store = fakeStore(tier8);
     render(<App store={store as unknown as GameStore} />);
     const root = document.querySelector<HTMLElement>("[data-dock]")!;
@@ -92,10 +92,11 @@ describe("PowerDock (W-12, W-20, Q-12)", { timeout: 60_000 }, () => {
     expect(meter.classList.contains("state-bottleneck")).toBe(true);
     expect(root.textContent).toContain("Power limits production");
     expect(root.textContent).toContain("needs");
-    // Show the framed row's lane, so the frame is on screen.
+    // Show the framed row's lane: one row is marked, its name saying so (U-3e).
     fireEvent.click(screen.getByRole("tab", { name: /, bottleneck$/ }));
-    expect(document.querySelector("[data-frame]")).not.toBeNull();
-    expect(screen.getAllByText(/bottleneck/i)).toHaveLength(1);
+    const marked = document.querySelectorAll("li[role=option][aria-label$=', bottleneck']");
+    expect(marked).toHaveLength(1);
+    expect(marked[0]!.firstElementChild!.textContent).toBe("!");
     expect(document.querySelector(".app")!.getAttribute("data-polling")).toBe("armed");
   });
 

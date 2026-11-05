@@ -1,7 +1,7 @@
 // S-11 / W-17: the number notation, one small external store. Every number on screen goes
 // through fmt(), never the engine's format with a literal mode (a source scan enforces it).
 // Components that show numbers re-render on a change because App reads useNotation(); the
-// per-snapshot memos (laneRows in LaneView, drawerModel) take the mode as an argument.
+// per-snapshot memos (laneRows in RowList, drawerModel) take the mode as an argument.
 import { useSyncExternalStore } from "react";
 import { D, format, type Dec, type NotationMode } from "@manufactory/engine";
 

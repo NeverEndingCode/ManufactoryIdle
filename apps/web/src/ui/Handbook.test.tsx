@@ -107,7 +107,7 @@ describe("Handbook (S-13, V-25)", { timeout: 60_000 }, () => {
   it("3. F3 handbook with the iron plate drawer open opens its entry in the main box", () => {
     stubWidth(1200);
     const { container, pushed } = mount(fakeStore(tier8));
-    fireEvent.click(container.querySelector('[data-item="iron_plate"] [data-open-row]')!);
+    fireEvent.click(container.querySelector('li[role="option"][data-item="iron_plate"]')!);
     expect(container.querySelector('[data-drawer="iron_plate"]')).not.toBeNull();
     const f3 = () => screen.getByRole("tab", { name: "handbook" });
     fireEvent.click(f3());
@@ -137,7 +137,7 @@ describe("Handbook (S-13, V-25)", { timeout: 60_000 }, () => {
   it("3b. the drawer's Handbook entry goes to its item", () => {
     stubWidth(800);
     const { container } = mount(fakeStore(tier8));
-    fireEvent.click(container.querySelector('[data-item="screw"] [data-open-row]')!);
+    fireEvent.click(container.querySelector('li[role="option"][data-item="screw"]')!);
     const drawer = container.querySelector<HTMLElement>('[data-drawer="screw"]')!;
     fireEvent.click(within(drawer).getByRole("link", { name: "Handbook entry" }));
     expect(location.pathname).toBe("/handbook/screw");
