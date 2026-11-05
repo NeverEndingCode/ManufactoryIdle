@@ -2,8 +2,8 @@
    whatever the OS prefers (U-1a); each other theme is :root[data-theme="<id>"], which outranks
    :root, so every block defines every semantic token (tokens.test.ts 8d) and nothing leaks.
    Values: U-1c to U-1e and V-2/V-3; contrast.test.ts measures them (U-1f). The four state
-   colours are for state classes only (8a), so no other token refers to them. The faces name
-   families that fonts.css declares (Task 2); until then they fall back to the system's. */
+   colours are for state classes only (8a), so no other token refers to them. Each face is a
+   family fonts.css self-hosts (U-1g), then system fallbacks (8f). */
 :root {
   color-scheme: dark;
   --bg: #050a06;
@@ -38,7 +38,7 @@
   --scrim: rgba(0, 0, 0, 0.55);
   --font-ui: "IBM Plex Mono", ui-monospace, monospace;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --font-display: VT323, ui-monospace, monospace;
+  --font-display: "VT323", ui-monospace, monospace;
   --fw-name: 400;
   --radius: 0;
   --radius-pill: 0;
@@ -122,9 +122,9 @@
   --state-bottleneck: #fb923c;
   --state-paused: #a1a1aa;
   --scrim: rgba(0, 0, 0, 0.6);
-  --font-ui: Inter, system-ui, sans-serif;
+  --font-ui: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --font-display: Inter, system-ui, sans-serif;
+  --font-display: "Inter", system-ui, sans-serif;
   --fw-name: 400;
   --radius: 8px;
   --radius-pill: 999px;
@@ -171,9 +171,9 @@
   --state-bottleneck: #fb923c;
   --state-paused: #a1a1aa;
   --scrim: rgba(0, 0, 0, 0.7);
-  --font-ui: Inter, system-ui, sans-serif;
+  --font-ui: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --font-display: Inter, system-ui, sans-serif;
+  --font-display: "Inter", system-ui, sans-serif;
   --fw-name: 400;
   --radius: 8px;
   --radius-pill: 999px;
@@ -221,9 +221,9 @@
   --state-bottleneck: #c2410c;
   --state-paused: #68686f;
   --scrim: rgba(24, 24, 27, 0.4);
-  --font-ui: Inter, system-ui, sans-serif;
+  --font-ui: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --font-display: Inter, system-ui, sans-serif;
+  --font-display: "Inter", system-ui, sans-serif;
   --fw-name: 400;
   --radius: 8px;
   --radius-pill: 999px;
@@ -272,9 +272,9 @@
   --state-bottleneck: #9c4226;
   --state-paused: #72604d;
   --scrim: rgba(59, 47, 38, 0.4);
-  --font-ui: Nunito, system-ui, sans-serif;
+  --font-ui: "Nunito", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --font-display: Fraunces, Georgia, serif;
+  --font-display: "Fraunces", Georgia, serif;
   --fw-name: 400;
   --radius: 18px;
   --radius-pill: 999px;
@@ -323,7 +323,7 @@
   --scrim: rgba(0, 0, 0, 0.6);
   --font-ui: "IBM Plex Mono", ui-monospace, monospace;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --font-display: Oswald, "Arial Narrow", sans-serif;
+  --font-display: "Oswald", "Arial Narrow", sans-serif;
   --fw-name: 600;
   --radius: 0;
   --radius-pill: 0;

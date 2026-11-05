@@ -92,6 +92,7 @@ The Phase 4 rulings and the post-launch rulings stand unless a U-ruling supersed
 
     The UI and display faces aren't checked. A glyph they lack falls back per character, and every meaning glyph sits in a `.glyph` span set in `--font-mono`.
   - **If a mono face lacks a glyph upstream**, the test fails. The implementer then swaps the glyph for the face's nearest equivalent (`■□` for `▮▯`, `▲` for `▴`) and records the swap here.
+    - **Recorded (Task 2).** Neither face has `▮ ▯`, so UI-1 draws **`■ □`** for the stack ticks. IBM Plex Mono has no geometric shapes at all (Google's v20 and IBM's `@ibm/plex-mono` 2.5.0 both lack `● ▮ ▯ ▴ ≡ ■ □ ▲`), so `fonts.css` fills `● ■ □ ▴ ≡` under the Plex Mono family from the JetBrains Mono symbols file (both 1000 UPM, 600 advance). The checked set is `→ ● ■ □ ▴ ≡ · ▁▂▃▄▅▆▇█`. Google's `text=` endpoint serves one file per family for every weight, so there is one symbols file per family, declared per weight.
   - *Cost if wrong:* a few KB per face. The test catches a missing glyph.
 - **V-6. A blocking inline script in `index.html` applies the theme before first paint.** `main.tsx` is a module script, so it's deferred, and a browser can paint the parsed body first. For a Clean (Light) player that's a dark flash.
   - A 10-line classic `<script>` in `<head>` reads `mi.theme`, migrates it (the U-1i table), and sets `data-theme`. It doesn't check locks, so a stored `cosy` is set as `terminal`, the same as no capability.

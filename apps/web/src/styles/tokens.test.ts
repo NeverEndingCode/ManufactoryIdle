@@ -263,7 +263,7 @@ describe("the CSS source", () => {
       "--row-h": "44px",
       "--pulse-cycle": "2.6s",
     });
-    expect(root["--font-display"]).toMatch(/^VT323, .*monospace$/);
+    expect(root["--font-display"]).toMatch(/^"VT323", .*monospace$/);
     expect(root["--font-ui"]).toMatch(/^"IBM Plex Mono", .*monospace$/);
     expect(root["--font-mono"]).toMatch(/^"IBM Plex Mono", .*monospace$/);
 
@@ -331,6 +331,44 @@ describe("the CSS source", () => {
         body: css("--t-body"),
         advice: css("--advice"),
       });
+    }
+  });
+
+  it("8f. each theme's faces are U-1c to U-1e, and each one is self-hosted (U-1g)", () => {
+    const FACES: Record<string, [ui: string, mono: string, display: string]> = {
+      terminal: ["IBM Plex Mono", "IBM Plex Mono", "VT323"],
+      "clean-dark": ["Inter", "JetBrains Mono", "Inter"],
+      "clean-oled": ["Inter", "JetBrains Mono", "Inter"],
+      "clean-light": ["Inter", "JetBrains Mono", "Inter"],
+      cosy: ["Nunito", "JetBrains Mono", "Fraunces"],
+      industrial: ["IBM Plex Mono", "IBM Plex Mono", "Oswald"],
+    };
+    expect(Object.keys(FACES).sort()).toEqual(THEMES.map((t) => t.id).sort());
+    /** Stacks end in system faces; only these may lack an @font-face. */
+    const SYSTEM = new Set(["ui-monospace", "monospace", "system-ui", "sans-serif", "serif"]);
+    const SYSTEM_FALLBACK = new Set(["Georgia", "Arial Narrow"]);
+    const declared = new Set(
+      all
+        .filter((d) => d.file === "styles/fonts.css" && d.property === "font-family")
+        .filter((d) => d.stack.length === 1 && d.stack[0] === "@font-face")
+        .map((d) => d.value.replace(/^"|"$/g, "")),
+    );
+    expect(declared.size).toBe(7);
+    for (const t of THEMES) {
+      const own = block(tokensCss, themePrelude(t.id));
+      const stacks = ["--font-ui", "--font-mono", "--font-display"].map((k) =>
+        own[k]!.split(",").map((f) => f.trim()),
+      );
+      expect(
+        stacks.map((s) => s[0]),
+        t.id,
+      ).toEqual(FACES[t.id]!.map((f) => `"${f}"`));
+      for (const stack of stacks) {
+        const [face, ...rest] = stack.map((f) => f.replace(/^"|"$/g, ""));
+        expect(declared.has(face!), `${t.id}: ${face} has an @font-face`).toBe(true);
+        expect(SYSTEM.has(rest.at(-1)!), `${t.id}: ${stack.join(", ")} ends generic`).toBe(true);
+        for (const f of rest) expect(SYSTEM.has(f) || SYSTEM_FALLBACK.has(f), f).toBe(true);
+      }
     }
   });
 
