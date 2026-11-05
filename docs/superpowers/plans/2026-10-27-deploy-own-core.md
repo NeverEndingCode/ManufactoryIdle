@@ -14,7 +14,7 @@
 **Spec:** `docs/superpowers/plans/2026-10-25-deploy-unraid.md` (D-1 to D-8), extended here.
 
 ## Rulings
-- **DC-1. The core is managed by `deploy.sh` like the other two.** It gets the same template, env file, dockerman label and autostart, and is recreated before the API. Its readiness check is `GET /hello` from inside `pgnet`, done through the API container or a short `docker run --network pgnet curlimages/curl`. *Why:* one runbook, and rollback covers it.
+- **DC-1. The core is managed by `deploy.sh` like the other two.** It gets the same template, env file, dockerman label and autostart, and is recreated before the API. Its readiness check is `GET /hello`, asked with the core image's own curl (`docker exec manufactory-supertokens curl -fsS --max-time 3 http://127.0.0.1:3567/hello`; fix round 1, which replaced a `curlimages/curl` container on `pgnet`). Its image is pulled, if missing, before anything changes. Prune leaves the core's image alone: it is a pinned registry tag that the other app's core may share. *Why:* one runbook, and rollback covers it.
 - **DC-2. No published port.** Only the API reaches the core, by name. *Why:* least exposure. The shared core's published 3567 stays as it is, since it belongs to the other app.
 - **DC-3. Migration.** The game has 0 account players, so switching cores loses nothing.
   - The first run with DC-1 renders `SUPERTOKENS_CONNECTION_URI=http://manufactory-supertokens:3567` and the new key into the API template, replacing the values read from the shared core.

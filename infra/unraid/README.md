@@ -68,33 +68,44 @@ It runs, in order:
 2. Build both targets from `git archive` of that commit (so only committed files go in), web with
    `SOURCE_COMMIT=<full sha>` for the footer's source link, `--pull` for fresh base images; tag
    `:<12-char sha>`. `:current` moves only after steps 3 and 4 succeed, just before step 5, so a
-   failure up to then leaves the running game and `:current` on the old images.
-3. In `postgresql16`, create two roles (no superuser) and the databases they own, if they are
-   missing: `manufactory` for the API, `manufactory_supertokens` for its core. Each gets a
-   generated password, which later runs keep from the existing template. A database owned by
-   someone else is handed to its role. This runs as the container's own admin role, read at run
+   failure up to then leaves the running game and `:current` on the old images. Then pull the
+   core's image, `supertokens/supertokens-postgresql:12.3.1`, if it is not on the server. If that
+   pull fails, the run stops there, with the databases, templates and containers unchanged.
+3. In `postgresql16`, create two roles and the databases they own, if they are missing:
+   `manufactory` for the API, `manufactory_supertokens` for its core. Each gets a generated
+   password, which later runs keep from the existing template. A database owned by someone else is
+   handed to its role. Every run also holds each role to
+   `NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN`, and limits `CONNECT` on each database to its own
+   role (`REVOKE CONNECT … FROM PUBLIC`, then `GRANT CONNECT … TO` the owner). The admin role is a superuser, so it can still connect.
+   This runs as the container's own admin role, read at run
    time from its `POSTGRES_USER` (with `docker exec postgresql16 printenv POSTGRES_USER`), so no
    admin name is in the repo.
 4. Render `templates/my-manufactory-{supertokens,api,web}.xml` into
    `/boot/config/plugins/dockerMan/templates-user/` (mode 600). The core's template gets its
-   database URL and an API key, generated on the first run and kept after that. The API's
+   database URL and an API key, generated on the first run and kept after that. Only the first key
+   in `API_KEYS` is kept: a second key added there by hand is dropped at the next render. The API's
    `SUPERTOKENS_CONNECTION_URI` is `http://manufactory-supertokens:3567`, and its
    `SUPERTOKENS_API_KEY` is copied from the core's template (DC-3). `<Config>` entries added there
    by hand are carried over.
 5. Recreate the containers, the core first, then the API, then web. For each, build the
    `docker run` from the rendered template (a malformed template stops here, with the old
    container still up), `docker rm -fv` the old one (`-v` drops Caddy's anonymous `/data` and
-   `/config` volumes), and run the new one. The core is ready when `GET /hello` answers `Hello`
-   from inside `pgnet`, asked by a throwaway `curlimages/curl:8.11.1` container named
-   `manufactory-supertokens-probe`. The API and web are ready when their HEALTHCHECK passes. Then
-   add all three to `/var/lib/docker/unraid-autostart`, with the core ahead of the API.
-6. Smoke-test through the published port: `curl -fsS http://127.0.0.1:8087/api/health` must say
-   `"accounts":true`, which says only that the SuperTokens env is set. Then
-   `/auth/emailpassword/email/exists?email=smoke@example.invalid` must answer `"status":"OK"`;
-   that one goes to the core, so a wrong `API_KEYS` or a core the SDK can't talk to fails here.
+   `/config` volumes), and run the new one. The core is ready when `GET /hello` answers `Hello`, asked
+   with the image's own curl from inside the core's container:
+   `docker exec manufactory-supertokens curl -fsS --max-time 3 http://127.0.0.1:3567/hello`. If it never answers, the probe's last error and the core's last
+   30 log lines are printed, with any postgres URL's credentials redacted. The API and web are
+   ready when their HEALTHCHECK passes. Then add all three to `/var/lib/docker/unraid-autostart`,
+   with the core ahead of the API. The file is rewritten through a temporary file next to it,
+   moved over it, after a copy to `unraid-autostart.bak`.
+6. Smoke-test. First, through the published port, `curl -fsS http://127.0.0.1:8087/api/health`
+   must say `"accounts":true`, which says only that the SuperTokens env is set. Then, from inside
+   the API container, `node -e` fetches `$SUPERTOKENS_CONNECTION_URI/users/count` with
+   `api-key: $SUPERTOKENS_API_KEY`, which must answer 200. That check depends on no sign-in
+   recipe, and the key never leaves the container. A wrong key, a core the API can't reach, or a
+   core that is down fails here.
 7. Prune all but the 3 newest sha tags of `manufactory-api` and `manufactory-web`. A failure here
-   is only a warning. The core's image and the probe's image are pinned registry tags, and the
-   other app's core may share the first, so neither is pruned.
+   is only a warning. The core's image is a pinned registry tag that the other app's core may share,
+   so it is never pruned.
 
 If step 5 or 6 fails and containers ran before, it puts back the old images (by ID, retagged
 `:current`) and the old templates, restarts them, and exits non-zero. On the first run with the
@@ -106,7 +117,25 @@ core's template stays, so the next deploy reuses its key and password.
 
 Until this change, the API used the other app's core (`SuperTokens---PostgreSQL`) with that
 core's key. The game has no account players yet (DC-3), so the switch loses nothing. The deploy
-runs one version behind itself (see "Redeploy"), so it takes two runs:
+runs one version behind itself (see "Redeploy"), so it takes two runs.
+
+First, check that the core's names are still free. These should show nothing:
+
+    docker exec postgresql16 psql -U "$(docker exec postgresql16 printenv POSTGRES_USER)" \
+      -d postgres -c '\du manufactory_supertokens' -c '\l manufactory_supertokens'
+    docker ps -a --filter name=manufactory-supertokens
+
+Check that only the game's API connects to the `manufactory` database, since step 3 now revokes
+`CONNECT` from everyone else. This should list only the `manufactory` role:
+
+    docker exec postgresql16 psql -U "$(docker exec postgresql16 printenv POSTGRES_USER)" \
+      -d postgres -c "SELECT DISTINCT usename FROM pg_stat_activity WHERE datname = 'manufactory'"
+
+Pre-pull the core's image (step 0 would pull it too), so a registry problem shows up first:
+
+    docker pull supertokens/supertokens-postgresql:12.3.1
+
+Then run both runs inside `tmux` or `screen`, so a dropped SSH session can't cut one off halfway:
 
     bash /mnt/user/appdata/manufactory/src/infra/unraid/deploy.sh <branch-or-sha>   # old script: builds, still on the shared core
     bash /mnt/user/appdata/manufactory/src/infra/unraid/deploy.sh --recreate        # new script: creates the core, switches the API
@@ -141,8 +170,9 @@ so changes to them take effect at once.
 
 ### Adding a variable (SMTP, `ADMIN_TOKEN`, sign-in providers)
 
-Edit `/boot/config/plugins/dockerMan/templates-user/my-manufactory-api.xml` directly. Add one line per variable before `</Container>`, in the same one-line form as
-the others, with `Mask="true"` for a secret:
+Edit `/boot/config/plugins/dockerMan/templates-user/my-manufactory-api.xml` directly. Add one
+line per variable before `</Container>`, in the same one-line form as the others, with
+`Mask="true"` for a secret:
 
     <Config Name="SMTP_PASSWORD" Target="SMTP_PASSWORD" Default="" Mode="" Description="" Type="Variable" Display="always" Required="false" Mask="true">…</Config>
 
@@ -159,7 +189,9 @@ when both of its variables are set (R-12). For example:
     <Config Name="DISCORD_CLIENT_ID" Target="DISCORD_CLIENT_ID" Default="" Mode="" Description="Discord OAuth app" Type="Variable" Display="always" Required="false" Mask="false">…</Config>
     <Config Name="DISCORD_CLIENT_SECRET" Target="DISCORD_CLIENT_SECRET" Default="" Mode="" Description="Discord OAuth app" Type="Variable" Display="always" Required="false" Mask="true">…</Config>
 
-Register these callback (redirect) URLs in the providers' OAuth apps:
+Register these callback (redirect) URLs in the providers' OAuth apps. They are for the upcoming
+OAuth work in the web client, which doesn't serve them yet. Until then, setting these variables
+turns the providers on in the API, but nobody can sign in with them from the site.
 
 - Discord: `https://manufactory.neverendingcode.com/account/callback/discord`
 - GitHub: `https://manufactory.neverendingcode.com/account/callback/github`
@@ -194,8 +226,8 @@ passes the password to `psql` on stdin, and the container env through a temporar
 (mode 600, in `/tmp`, deleted at exit), never on a command line.
 
 A password is put in a statement only when it is new (or its role is): once, on the first
-deploy (and once more for the core's role, on the first run with the core). `postgresql16` runs with `log_statement = none`, so a successful `ALTER ROLE` is not
-logged. A _failed_ one can still be: `log_min_error_statement` (default `error`) logs the
+deploy (and once more for the core's role, on the first run with the core). `postgresql16` runs
+with `log_statement = none`, so a successful `ALTER ROLE` is not logged. A _failed_ one can still be: `log_min_error_statement` (default `error`) logs the
 statement text of an erroring statement, password included. If step 3 ever reports an error, check
 the Postgres log and rotate the password (delete `DATABASE_URL`'s line from the API template and
 rerun; a new one is generated and set). Its `pg_hba` already takes password logins from pgnet
@@ -204,6 +236,13 @@ rerun; a new one is generated and set). Its `pg_hba` already takes password logi
 The core's secrets rotate the same way. Delete the `API_KEYS` line (or the
 `POSTGRESQL_CONNECTION_URI` line) from `my-manufactory-supertokens.xml` and run `--recreate`. A new
 key (or password) is generated, set, and copied to the API.
+
+**Rotate only when the deploy is otherwise a no-op:** a `--recreate` on a running, healthy game,
+with nothing else changed. A new password is set on the role in step 3, before the containers are
+replaced. If that run then fails, the rollback puts back the old template, holding the old
+password, which the role no longer accepts. If that happens, rerun `--recreate`. The template
+then lacks the line again, so a new password is generated and set, and the containers start
+with it.
 
 `/boot` is FAT, so the templates' mode is whatever its mount gives (root only). Anyone with root on
 the server can read them, as with every other Unraid template. **Check that Unraid's `flash` SMB
