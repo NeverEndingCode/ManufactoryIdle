@@ -61,6 +61,7 @@ const SEMANTIC_TOKENS: readonly string[] = [
   "--bar-open",
   "--bar-close",
   "--bar-track",
+  "--bar-wash",
   "--bar-paint",
   "--glow-text",
   "--glow-title",
@@ -253,6 +254,7 @@ describe("the CSS source", () => {
       "--radius-pill": "0",
       "--bar-seg": "1ch",
       "--bar-open": '"["',
+      "--bar-wash": "0.25",
       "--bar-close": '"]"',
       "--bar-paint":
         "repeating-linear-gradient(90deg, currentColor 0 calc(var(--bar-seg) - 2px), transparent 0 var(--bar-seg))",

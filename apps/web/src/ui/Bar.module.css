@@ -48,7 +48,8 @@
   border-radius: var(--radius-pill);
 }
 
-/* The terminal's track is the paint at 25% (standing in for ░); elsewhere --bar-track fills it. */
+/* The track is --bar-track under a --bar-paint layer at --bar-wash: 25% in the terminal (standing
+   in for ░), 0 elsewhere, where a wash of the fill's own colour would cost contrast (3b). */
 .track {
   position: relative;
   background: var(--bar-track);
@@ -59,7 +60,7 @@
   inset: 0;
   background: var(--bar-paint);
   content: "";
-  opacity: 0.25;
+  opacity: var(--bar-wash);
 }
 
 /* At rest, before Bar.tsx places them: empty. */

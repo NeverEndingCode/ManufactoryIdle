@@ -8,7 +8,7 @@ import type { ItemId, LaneId } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
-import { bottleneckRow, laneTabs, type BottleneckModel } from "./derive.js";
+import { bottleneckRow, laneItemIds, laneTabs, type BottleneckModel } from "./derive.js";
 import { inertOutside } from "./dialog.js";
 import { Drawer } from "./Drawer.js";
 import { Handbook } from "./Handbook.js";
@@ -27,12 +27,6 @@ import { DesktopShell, OverlayPanel, PhoneShell, type ShellProps, type View } fr
 import { syncCapabilities } from "./theme.js";
 import { useLayoutMode } from "./use-layout-mode.js";
 import { createTickSource, TickContext } from "./use-tick.js";
-
-/** A row is shown while its item is in that lane, at or under the tier (laneRows). */
-function isShownRow(s: Snapshot, laneId: LaneId, itemId: ItemId): boolean {
-  const item = s.content.items.get(itemId);
-  return item !== undefined && item.lane === laneId && item.tier <= s.state.tier;
-}
 
 type SheetAt = Pick<SettingsProps, "section" | "mode">;
 
@@ -172,7 +166,7 @@ export function App({ store }: { store: GameStore }) {
   useEffect(() => {
     if (s === null) return;
     setSelection((m) => {
-      const kept = [...m].filter(([lane, item]) => isShownRow(s, lane, item));
+      const kept = [...m].filter(([lane, item]) => laneItemIds(s, lane).includes(item));
       return kept.length === m.size ? m : new Map(kept);
     });
   }, [s]);
@@ -193,14 +187,10 @@ export function App({ store }: { store: GameStore }) {
     opened.current = openItem !== itemId;
     setOpenItem(itemId);
   };
-  /** U-7c: closing returns focus to the row list, the drawer's row still active; without a list
-   * (another view), to the selected lane tab, else the shown view's tab. */
+  /** U-7c: closing returns focus to the row list, the drawer's row still active. The drawer
+   * renders on the factory view only, where the list always is. */
   const close = () => {
-    const back =
-      appRef.current?.querySelector<HTMLElement>('[role="listbox"]') ??
-      (laneId === null ? null : document.getElementById(`lane-tab-${laneId}`)) ??
-      document.querySelector<HTMLElement>(`[data-view="${shown}"]`);
-    back?.focus();
+    appRef.current?.querySelector<HTMLElement>('[role="listbox"]')?.focus();
     setOpenItem(null);
   };
 

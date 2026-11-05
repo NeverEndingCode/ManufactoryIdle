@@ -122,6 +122,14 @@ export function splitOf(s: Snapshot, itemId: ItemId): RowModel["split"] {
   return parts.length >= 2 ? parts : null;
 }
 
+/** The lane's rows' items, in bundle order: its items at or under the tier. laneRows and the
+ *  App's selection (U-7d) both read this, so a row and a kept selection can't disagree. */
+export function laneItemIds(s: Snapshot, laneId: LaneId): ItemId[] {
+  return s.content.bundle.items
+    .filter((item) => item.lane === laneId && item.tier <= s.state.tier)
+    .map((item) => item.id);
+}
+
 export function laneRows(
   s: Snapshot,
   laneId: LaneId,
@@ -129,8 +137,9 @@ export function laneRows(
 ): RowModel[] {
   const { content, state } = s;
   const solution = s.display.solution;
+  const shown = new Set(laneItemIds(s, laneId));
   return content.bundle.items
-    .filter((item) => item.lane === laneId && item.tier <= state.tier)
+    .filter((item) => shown.has(item.id))
     .map((item) => ({
       itemId: item.id,
       name: item.name,

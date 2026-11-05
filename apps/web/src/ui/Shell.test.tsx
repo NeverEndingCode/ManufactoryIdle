@@ -192,6 +192,10 @@ describe("the shell (U-2)", { timeout: 60_000 }, () => {
     await user.keyboard("{ArrowLeft}");
     expect(document.activeElement).toBe(tab("iron"));
     expect(tab("iron").getAttribute("aria-selected")).toBe("true");
+    // Roving tabindex: the selected lane is the tablist's one tab stop.
+    const lanes = [...document.querySelectorAll<HTMLElement>('[role="tab"][data-lane]')];
+    expect(lanes.length).toBeGreaterThan(2);
+    expect(lanes.map((t) => t.tabIndex)).toEqual(lanes.map((t) => (t === tab("iron") ? 0 : -1)));
   });
 
   it("5b. the phone swaps the bottleneck's light for its !", () => {

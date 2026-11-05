@@ -48,6 +48,9 @@
   --bar-open: "[";
   --bar-close: "]";
   --bar-track: transparent;
+  /* The track's --bar-paint layer, standing in for ░: the terminal only, since elsewhere it would
+     wash the track in the fill's own colour (contrast.test 3b). */
+  --bar-wash: 0.25;
   --bar-paint: repeating-linear-gradient(
     90deg,
     currentColor 0 calc(var(--bar-seg) - 2px),
@@ -132,6 +135,7 @@
   --bar-open: "";
   --bar-close: "";
   --bar-track: var(--line);
+  --bar-wash: 0;
   --bar-paint: currentColor;
   --glow-text: none;
   --glow-title: none;
@@ -181,6 +185,7 @@
   --bar-open: "";
   --bar-close: "";
   --bar-track: var(--line);
+  --bar-wash: 0;
   --bar-paint: currentColor;
   --glow-text: none;
   --glow-title: none;
@@ -231,6 +236,7 @@
   --bar-open: "";
   --bar-close: "";
   --bar-track: var(--line);
+  --bar-wash: 0;
   --bar-paint: currentColor;
   --glow-text: none;
   --glow-title: none;
@@ -282,6 +288,7 @@
   --bar-open: "";
   --bar-close: "";
   --bar-track: var(--line);
+  --bar-wash: 0;
   --bar-paint: currentColor;
   --glow-text: none;
   --glow-title: none;
@@ -331,6 +338,7 @@
   --bar-open: "";
   --bar-close: "";
   --bar-track: #0f1112;
+  --bar-wash: 0;
   --bar-paint: currentColor;
   --glow-text: none;
   --glow-title: none;

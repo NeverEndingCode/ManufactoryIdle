@@ -54,6 +54,10 @@ const NON_TEXT = [
   ["accent", "s2"],
 ] as const;
 
+/** U-3d: the fills a Bar paints (tone normal, body, bottleneck); each must read against its own
+ *  track as well as against the surface. */
+const BAR_FILLS = ["t2", "t-body", "state-bottleneck"] as const;
+
 /** The pairs allowed to fail the matrix, policed in the CSS instead (U-1f). */
 const BARRED = ["terminal t3/s-hi", "terminal t3/s2"];
 
@@ -98,6 +102,45 @@ function luminance(color: string): number {
 function ratio(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi! + 0.05) / (lo! + 0.05);
+}
+
+/** fg at alpha over an opaque bg, as a hex colour (source-over, in sRGB as browsers do). */
+function over(fg: string, bg: string, alpha: number): string {
+  const f = rgb(fg);
+  const b = rgb(bg);
+  return `#${[0, 1, 2]
+    .map((i) => Math.round(f[i]! * alpha + b[i]! * (1 - alpha)))
+    .map((v) => v.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+/** The track's wash: the opacity of the --bar-paint layer over --bar-track, in a theme. */
+function trackWash(id: string): number {
+  const decl = read("ui/Bar.module.css").find(
+    (d) => d.stack.at(-1) === ".track::before" && d.property === "opacity",
+  );
+  if (decl === undefined) return 0;
+  const tokens = themeTokens(tokensCss, id);
+  return Number(resolve(tokens, decl.value));
+}
+
+/** Each bar fill against its track, composited: --bar-track (or the surface, when transparent)
+ *  under the fill's own colour at the wash's opacity. */
+function fillOnTrackFailures(): string[] {
+  const bad: string[] = [];
+  for (const t of THEMES) {
+    const c = colours(t.id);
+    const wash = trackWash(t.id);
+    expect(Number.isFinite(wash), t.id).toBe(true);
+    const track = c("bar-track");
+    for (const fill of BAR_FILLS)
+      for (const surface of SURFACES) {
+        const base = track === "transparent" ? c(surface) : track;
+        const r = ratio(c(fill), over(c(fill), base, wash));
+        if (r < 3) bad.push(`${t.id} ${fill}/track on ${surface} ${r.toFixed(2)}`);
+      }
+  }
+  return bad;
 }
 
 function colours(id: string) {
@@ -193,6 +236,13 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
       }
     }
     expect(bad).toEqual([]);
+  });
+
+  it("3b. each bar fill reaches 3:1 against its own composited track (U-3d, WCAG 1.4.11)", () => {
+    // The self-check: a full wash leaves nothing to tell apart.
+    expect(ratio("#3fb85a", over("#3fb85a", "#000000", 1))).toBe(1);
+    expect(over("#ffffff", "#000000", 0.5)).toBe("#808080");
+    expect(fillOnTrackFailures()).toEqual([]);
   });
 
   it("4. the usage checker catches each barred pattern", () => {
