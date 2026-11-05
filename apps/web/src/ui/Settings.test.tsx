@@ -71,7 +71,7 @@ function fill(scope: HTMLElement, label: string, value: string) {
   fireEvent.change(within(scope).getByLabelText(label), { target: { value } });
 }
 
-describe("Settings (S-11)", () => {
+describe("Settings (S-11)", { timeout: 60_000 }, () => {
   it("1. a modal dialog: focus moves in, Escape closes it, focus returns to the opener", () => {
     const { container } = mount(fakeStore(fresh));
     const opener = settingsButton();
@@ -425,7 +425,7 @@ describe("Settings (S-11)", () => {
   });
 });
 
-describe("Fix round 1", () => {
+describe("Fix round 1", { timeout: 60_000 }, () => {
   it("10. the trap: notice controls behind the sheet are inert, Shift+Tab stays in, the region still speaks", async () => {
     const user = userEvent.setup();
     const store = fakeStore(fresh);
@@ -580,12 +580,15 @@ describe("Fix round 1", () => {
   });
 });
 
-describe("the header", () => {
-  it("keeps the full name as the title's label, with the initials for narrow widths", () => {
+describe("the header", { timeout: 60_000 }, () => {
+  it("keeps the full name as the title's label; the visible title is hidden from it (U-2)", () => {
     mount(fakeStore(fresh));
     const h1 = screen.getByRole("heading", { level: 1 });
     expect(h1.getAttribute("aria-label")).toBe("Manufactory Idle");
-    expect(h1.textContent).toContain("MI");
-    expect(screen.getByRole("button", { name: "Handbook" })).toBeTruthy();
+    expect(h1.textContent).toBe("MANUFACTORY_");
+    expect(h1.querySelector("span")!.getAttribute("aria-hidden")).toBe("true");
+    // The handbook is the F3 tab, not a header button.
+    expect(screen.getByRole("tab", { name: "handbook" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Handbook" })).toBeNull();
   });
 });

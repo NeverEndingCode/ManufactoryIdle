@@ -21,13 +21,13 @@ import {
 import { isPlateaued, storageFraction } from "../sync/interpolate.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import { currentNotation, fmt } from "./notation.js";
+import type { LayoutMode } from "./use-layout-mode.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
 
 /** The frame's one button (P-3, Q-5): the sim `bottleneck` policy's four actions. */
 export type FrameAction =
-  | BuyMachine
-  | Extract<Action, { type: "BUY_STORAGE" | "BUY_QS" | "SET_RESERVE" }>;
+  BuyMachine | Extract<Action, { type: "BUY_STORAGE" | "BUY_QS" | "SET_RESERVE" }>;
 
 /** "+0.333/s": a net rate, signed when positive. */
 export function rateText(net: number): string {
@@ -219,7 +219,9 @@ function recipeRow(
     : `Limiting ${targetName(s, limitingTarget)}. ${more}`;
   // A generator's primary output is the power pseudo-item, which has no row: frame its
   // scarcest stock input (Q-5).
-  const itemId = generator ? scarcestInput(s, [...recipe.inputPerSecond.keys()]) : recipe.primaryOutput;
+  const itemId = generator
+    ? scarcestInput(s, [...recipe.inputPerSecond.keys()])
+    : recipe.primaryOutput;
   return {
     laneId: itemId === null ? null : (s.content.items.get(itemId)?.lane ?? null),
     itemId,
@@ -331,4 +333,65 @@ export function stateClass(
   if (row.paused) return "paused";
   if (row.idle) return "idle";
   return row.satisfaction >= 0.98 ? "fed" : "throttled";
+}
+
+/** U-3e: a lane tab's light, the first match. */
+export type LaneStatus = "bottleneck" | "throttled" | "idle" | "fed";
+
+export function laneStatus(
+  s: Snapshot,
+  laneId: LaneId,
+  bottleneck: BottleneckModel | null,
+): LaneStatus {
+  if (bottleneck !== null && bottleneck.laneId === laneId) return "bottleneck";
+  const rows = laneRows(s, laneId);
+  // A paused or idle row isn't starved: stateClass says so, as on the row's own meter.
+  if (rows.some((r) => stateClass(r) === "throttled")) return "throttled";
+  if (rows.every((r) => r.production <= 0)) return "idle";
+  return "fed";
+}
+
+/** V-16: the generators' lane, the lane of the first recipe that makes power; null without one. */
+export function powerLaneId(s: Snapshot): LaneId | null {
+  const recipeId = s.content.producersOf.get(POWER_ITEM)?.[0];
+  if (recipeId === undefined) return null;
+  return s.content.recipes.get(recipeId)?.lane ?? null;
+}
+
+export interface LaneTab {
+  id: LaneId;
+  /** The positional key: production lanes 1…n in content order, power n+1 (U-6a). */
+  key: number;
+  locked: boolean;
+  unlockTier: number;
+  /** null when locked. */
+  status: LaneStatus | null;
+  bottleneck: boolean;
+  power: boolean;
+}
+
+/** Production lanes in content order (locked ones too, U-3e), then power last on desktop and
+ *  tablet; no power on the phone, where it's a bottom tab (U-6a). */
+export function laneTabs(
+  s: Snapshot,
+  bottleneck: BottleneckModel | null,
+  mode: LayoutMode,
+): LaneTab[] {
+  const powerId = powerLaneId(s);
+  const lanes = [...s.content.bundle.lanes].sort((a, b) => a.order - b.order);
+  const production = lanes.filter((l) => l.id !== powerId);
+  const power = lanes.find((l) => l.id === powerId);
+  const ordered = mode === "phone" || power === undefined ? production : [...production, power];
+  return ordered.map((l, i) => {
+    const locked = l.unlockTier > s.state.tier;
+    return {
+      id: l.id,
+      key: i + 1,
+      locked,
+      unlockTier: l.unlockTier,
+      status: locked ? null : laneStatus(s, l.id, bottleneck),
+      bottleneck: bottleneck !== null && bottleneck.laneId === l.id,
+      power: l.id === powerId,
+    };
+  });
 }

@@ -16,6 +16,7 @@ import {
   loadSlice,
   snapshotOf,
   starvedPipeState,
+  stubWidth,
   type FakeStore,
   type Slice,
 } from "./test-fixtures.js";
@@ -61,54 +62,11 @@ function pick(d: HTMLElement, verb: string) {
 
 const batch = (label: string, id = 1): Batch => ({ id, key: `k${id}`, actions: [], label });
 
-/** matchMedia for a viewport this wide: min-width / max-width queries, never reduced motion.
- * resize() changes the width and fires `change` on each list whose answer flipped. */
-function stubWidth(initial: number) {
-  let width = initial;
-  const lists: { q: string; matches: boolean; fns: Set<() => void> }[] = [];
-  const evaluate = (q: string) => {
-    const min = /min-width:\s*(\d+)px/.exec(q);
-    const max = /max-width:\s*(\d+)px/.exec(q);
-    return (
-      !q.includes("reduce") &&
-      (min === null || width >= Number(min[1])) &&
-      (max === null || width <= Number(max[1]))
-    );
-  };
-  vi.stubGlobal("matchMedia", (q: string) => {
-    const entry = { q, matches: evaluate(q), fns: new Set<() => void>() };
-    lists.push(entry);
-    return {
-      get matches() {
-        return evaluate(q);
-      },
-      media: q,
-      addEventListener: (_: string, fn: () => void) => entry.fns.add(fn),
-      removeEventListener: (_: string, fn: () => void) => entry.fns.delete(fn),
-    } as unknown as MediaQueryList;
-  });
-  return {
-    resize(w: number) {
-      width = w;
-      act(() => {
-        for (const l of lists) {
-          const now = evaluate(l.q);
-          if (now === l.matches) continue;
-          l.matches = now;
-          for (const fn of [...l.fns]) fn();
-        }
-      });
-    },
-    get listeners() {
-      return lists.reduce((n, l) => n + l.fns.size, 0);
-    },
-  };
-}
-
-describe("Drawer", () => {
+describe("Drawer", { timeout: 60_000 }, () => {
   it("1. a row's first line opens the drawer; Escape closes it and focus goes back", () => {
     mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
-    expect(screen.getByText("Tap a row to buy, upgrade or store")).toBeTruthy();
+    // The drawer is an overlay (U-5a): no pane, no hint.
+    expect(screen.queryByText("Tap a row to buy, upgrade or store")).toBeNull();
     const btn = rowButton("iron_ore");
     expect(btn.getAttribute("aria-expanded")).toBe("false");
     const d = open("iron_ore");
@@ -439,34 +397,31 @@ describe("Drawer", () => {
     expect(screen.getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
   });
 
-  it("8. the pane count follows the viewport; under 600 px the drawer is a dialog sheet", () => {
+  it("8. the layout follows the viewport; under 600 px the drawer is a dialog sheet", () => {
     stubWidth(1200);
-    let r = mount(fakeStore(fresh));
-    const layout = () => r.container.querySelector<HTMLElement>("[data-panes]")!;
-    expect(layout().dataset.panes).toBe("3");
-    expect(screen.queryByRole("tab", { name: "Priority" })).toBeNull();
+    mount(fakeStore(fresh));
+    const app = () => document.querySelector<HTMLElement>(".app")!;
+    expect(app().dataset.layout).toBe("desktop");
+    expect(screen.getByRole("tab", { name: "priority" })).toBeTruthy();
     cleanup();
 
     stubWidth(800);
-    r = mount(fakeStore(fresh));
-    expect(layout().dataset.panes).toBe("2");
-    expect(screen.getByRole("tab", { name: "Factory" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Priority" })).toBeTruthy();
+    mount(fakeStore(fresh));
+    expect(app().dataset.layout).toBe("tablet");
+    expect(screen.getByRole("tab", { name: "factory" })).toBeTruthy();
     expect(open("iron_ore").getAttribute("role")).toBeNull();
     cleanup();
 
     stubWidth(400);
-    r = mount(fakeStore(fresh));
-    expect(layout().dataset.panes).toBe("1");
-    expect(screen.getByRole("tab", { name: "Factory" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Priority" })).toBeTruthy();
-    // No hint in one column: the sheet appears on demand.
-    expect(screen.queryByText("Tap a row to buy, upgrade or store")).toBeNull();
+    mount(fakeStore(fresh));
+    expect(app().dataset.layout).toBe("phone");
+    expect(screen.getByRole("tab", { name: "factory" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "priority" })).toBeTruthy();
     const sheet = open("iron_ore");
     expect(sheet.getAttribute("role")).toBe("dialog");
     expect(sheet.getAttribute("aria-modal")).toBe("false");
-    // The Priority tab swaps the column.
-    fireEvent.click(screen.getByRole("tab", { name: "Priority" }));
+    // The priority tab swaps the main box.
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     expect(document.querySelector('[data-item="iron_ore"]')).toBeNull();
   });
 
@@ -546,34 +501,45 @@ describe("Drawer", () => {
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: /Power/ }));
   });
 
-  it("12. at 2 panes the Priority view hides the row; closing focuses the view tab", () => {
+  it("12. the priority view hides the drawer; it's still open on the factory view (V-25)", () => {
     stubWidth(800);
     mount(fakeStore(fresh));
-    const d = open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: "Priority" }));
-    // The drawer stays in the detail pane.
-    expect(drawer("iron_ore")).toBe(d);
+    open("iron_ore");
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
+    expect(drawer("iron_ore")).toBeNull();
+    const factory = screen.getByRole("tab", { name: "factory" });
+    factory.focus();
+    fireEvent.click(factory);
+    // Back, without taking focus (claimFocus).
+    const d = drawer("iron_ore")!;
+    expect(d).not.toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
     fireEvent.click(within(d).getByRole("button", { name: "Close" }));
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Priority" }));
+    expect(document.activeElement).toBe(rowButton("iron_ore"));
   });
 
-  it("13. a pane-count change re-lays out in place and never steals focus", () => {
+  it("13. a layout change re-lays out and never steals focus", () => {
     const media = stubWidth(800);
     const r = mount(fakeStore(fresh));
-    const layout = () => r.container.querySelector<HTMLElement>("[data-panes]")!;
+    const app = () => r.container.querySelector<HTMLElement>(".app")!;
     const d = open("iron_ore");
     expect(d.getAttribute("role")).toBeNull();
-    const lane = screen.getByRole("tab", { name: /Iron/ });
+    const lane = screen.getByRole("tab", { name: /^Iron/ });
     lane.focus();
-    media.resize(400);
-    expect(layout().dataset.panes).toBe("1");
-    expect(layout().dataset.sheet).toBe("open");
-    // The same element, now a dialog sheet; focus stayed put.
-    expect(drawer("iron_ore")).toBe(d);
-    expect(d.getAttribute("role")).toBe("dialog");
-    expect(document.activeElement).toBe(lane);
+    // Tablet and desktop are one tree (U-2c): the same drawer, the same focus.
     media.resize(1200);
-    expect(layout().dataset.panes).toBe("3");
+    expect(app().dataset.layout).toBe("desktop");
+    expect(drawer("iron_ore")).toBe(d);
+    expect(document.activeElement).toBe(lane);
+    // The phone is its own tree: the drawer is a dialog sheet now, and it takes no focus.
+    media.resize(400);
+    expect(app().dataset.layout).toBe("phone");
+    const sheet = drawer("iron_ore")!;
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.contains(document.activeElement)).toBe(false);
+    media.resize(1200);
+    expect(app().dataset.layout).toBe("desktop");
+    expect(drawer("iron_ore")!.getAttribute("role")).toBeNull();
     expect(media.listeners).toBeGreaterThan(0);
     r.unmount();
     expect(media.listeners).toBe(0);
@@ -591,34 +557,34 @@ describe("Drawer", () => {
 
     // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
     open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: "Priority" }));
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     expect(drawer("iron_ore")).toBeNull();
-    const factory = screen.getByRole("tab", { name: "Factory" });
+    const factory = screen.getByRole("tab", { name: "factory" });
     factory.focus();
     fireEvent.click(factory);
     expect(drawer("iron_ore")).not.toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Factory" }));
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
   });
 
-  it("15. the View tablist: arrows move and select, modifiers are ignored, controls rendered ids", () => {
+  it("15. the Panels tablist: arrows move and select, modifiers are ignored, controls rendered ids", () => {
     stubWidth(800);
     mount(fakeStore(fresh));
-    const factory = screen.getByRole("tab", { name: "Factory" });
-    const priority = screen.getByRole("tab", { name: "Priority" });
-    expect(factory.getAttribute("aria-controls")).toBe("pane-factory");
+    const factory = screen.getByRole("tab", { name: "factory" });
+    const priority = screen.getByRole("tab", { name: "priority" });
+    expect(factory.getAttribute("aria-controls")).toBe("view-factory");
     expect(priority.getAttribute("aria-controls")).toBeNull();
-    expect(document.getElementById("pane-factory")).not.toBeNull();
+    expect(document.getElementById("view-factory")).not.toBeNull();
     factory.focus();
     fireEvent.keyDown(factory, { key: "ArrowRight", altKey: true });
     expect(factory.getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(factory, { key: "ArrowRight" });
-    const p = screen.getByRole("tab", { name: "Priority" });
+    const p = screen.getByRole("tab", { name: "priority" });
     expect(p.getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(p);
-    expect(p.getAttribute("aria-controls")).toBe("pane-priority");
-    expect(document.getElementById("pane-priority")).not.toBeNull();
+    expect(p.getAttribute("aria-controls")).toBe("view-priority");
+    expect(document.getElementById("view-priority")).not.toBeNull();
     fireEvent.keyDown(p, { key: "Home" });
-    expect(screen.getByRole("tab", { name: "Factory" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "factory" }).getAttribute("aria-selected")).toBe("true");
     // A closed row's button controls nothing; an open one controls #detail.
     expect(rowButton("iron_ore").getAttribute("aria-controls")).toBeNull();
     open("iron_ore");

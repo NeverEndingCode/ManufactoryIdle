@@ -1,4 +1,5 @@
-// S-11: the settings sheet, a modal dialog with three sections: notation, theme and account.
+// S-11: the settings sheet, a modal dialog with four sections: notation, theme, account and
+// About (U-2e: the GPL notice, W-25, moved out of the footer).
 // U-1i: the Theme fieldset lists the six themes with a registry swatch; a locked one stays
 // listed and focusable, aria-disabled, and picking it does nothing.
 // A bottom sheet below 600 px and a centred panel above. Escape (anywhere: it listens on the
@@ -11,21 +12,12 @@ import { AccountSection, type AccountMode } from "./AccountForms.js";
 import { NOTATION_LABELS, NOTATIONS, notationSample, useNotation } from "./notation.js";
 import styles from "./Settings.module.css";
 import { capabilities } from "./capabilities.js";
+import { trapTab } from "./dialog.js";
+import { currentBuildInfo, sourceLinks } from "./source-link.js";
 import { isLocked, THEMES, useTheme } from "./theme.js";
 
 /** U-1i: the locked themes' line, and their radio's accessible description. */
 export const LOCKED_LINE = "Unlocks in the prestige store";
-
-const TABBABLE = "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])";
-
-function tabbables(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) => {
-    if (el.tabIndex < 0 || el.closest("[inert]") !== null) return false;
-    // A radio group is one stop: only its checked radio is in the Tab order.
-    if (el instanceof HTMLInputElement && el.type === "radio" && !el.checked) return false;
-    return true;
-  });
-}
 
 export interface SettingsProps {
   store: Pick<GameStore, "signUp" | "signIn" | "signOut" | "sendReset">;
@@ -39,6 +31,8 @@ export interface SettingsProps {
 export function Settings({ store, view, section, mode = "sign-up", onClose }: SettingsProps) {
   const titleId = useId();
   const accountId = useId();
+  const aboutId = useId();
+  const links = sourceLinks(currentBuildInfo());
   const title = useRef<HTMLHeadingElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const [notation, setNotation] = useNotation();
@@ -73,19 +67,9 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
     if (d !== null && !d.contains(document.activeElement)) title.current?.focus();
   });
 
-  /** The Tab wrap: past the last control to the first, before the first to the last. */
+  /** The Tab wrap (V-12's trapTab). */
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== "Tab" || dialog.current === null) return;
-    const all = tabbables(dialog.current);
-    if (all.length === 0) return;
-    const at = all.indexOf(document.activeElement as HTMLElement);
-    if (e.shiftKey && at <= 0) {
-      e.preventDefault();
-      all[all.length - 1]!.focus();
-    } else if (!e.shiftKey && (at === -1 || at === all.length - 1)) {
-      e.preventDefault();
-      all[0]!.focus();
-    }
+    if (dialog.current !== null) trapTab(e.nativeEvent, dialog.current);
   };
 
   return (
@@ -196,6 +180,23 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
             onMode={setAccountMode}
             focusFirst={atAccount}
           />
+        </section>
+
+        <section aria-labelledby={aboutId} className={styles.group} data-about>
+          <h3 id={aboutId} className={styles.legend}>
+            About
+          </h3>
+          <p className={styles.about}>
+            <span>Free software under the GPL-3.0</span>
+            <span aria-hidden="true"> · </span>
+            <a href={links.source.href} data-source-link>
+              {links.source.text}
+            </a>
+            <span aria-hidden="true"> · </span>
+            <a href={links.license.href} data-license-link>
+              License
+            </a>
+          </p>
         </section>
       </div>
     </div>

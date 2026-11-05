@@ -40,12 +40,8 @@ export function LaneView({
   const now = useCallback(() => store.now(), [store]);
   const production = useMemo(() => rows.reduce((sum, r) => sum + r.production, 0), [rows]);
   return (
-    <section
-      role="tabpanel"
-      id="lane-panel"
-      aria-labelledby={`lane-tab-${laneId}`}
-      className={styles.panel}
-    >
+    // The main box is the lane tabs' tabpanel (U-2, Shell.tsx); this is its content.
+    <section id="lane-panel" className={styles.panel}>
       <Conveyor production={production} />
       <ul className={styles.rows}>
         {rows.map((row) => {

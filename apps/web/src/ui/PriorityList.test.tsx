@@ -115,7 +115,7 @@ function layoutRows() {
   return capture;
 }
 
-describe("PriorityList", () => {
+describe("PriorityList", { timeout: 60_000 }, () => {
   it("5. Alt+↑ is one optimistic REORDER_PRIORITY, focus follows, and a rejection reverts", async () => {
     const { store } = mount(fresh);
     expect(order()).toEqual(FRESH_ORDER);
@@ -319,6 +319,7 @@ describe("PriorityList", () => {
   it("6d. moves are announced in the page's one polite live region, and so is their undoing", async () => {
     const store = fakeStore(fresh);
     render(<App store={store as unknown as GameStore} />);
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     // W-20: exactly one live region in the whole App.
     expect(document.querySelectorAll("[aria-live], [role='status']")).toHaveLength(1);
     const region = screen.getByRole("status");

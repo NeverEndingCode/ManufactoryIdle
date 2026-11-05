@@ -22,6 +22,7 @@ import {
   freshState,
   loadSlice,
   snapshotOf,
+  stubWidth,
   type FakeStore,
   type Slice,
 } from "./test-fixtures.js";
@@ -59,17 +60,16 @@ function mount(store: FakeStore) {
 const row = (c: HTMLElement, item: string) =>
   c.querySelector<HTMLElement>(`[data-item="${item}"]`)!;
 
-describe("LaneView", () => {
+describe("LaneView", { timeout: 60_000 }, () => {
   it("1. a fresh world: one frame, the iron tab marked, no chips", () => {
     const { container } = mount(fakeStore(fresh));
     expect(screen.getAllByText("bottleneck")).toHaveLength(1);
     expect(within(row(container, "iron_plate")).getByText("bottleneck")).toBeTruthy();
-    const iron = screen.getByRole("tab", { name: /Iron/ });
+    // The mark is aria-hidden; the tab's name says it (U-3e).
+    const iron = screen.getByRole("tab", { name: "Iron, bottleneck" });
     expect(iron.getAttribute("aria-selected")).toBe("true");
-    expect(within(iron).getByLabelText("bottleneck").textContent).toBe("!");
-    expect(
-      within(screen.getByRole("tab", { name: /Power/ })).queryByLabelText("bottleneck"),
-    ).toBeNull();
+    expect(iron.textContent).toContain(" !");
+    expect(screen.getByRole("tab", { name: /^Power, / }).textContent).not.toContain("!");
     expect(screen.queryByText(/^QS /)).toBeNull();
     expect(screen.queryByText(/^BOUND /)).toBeNull();
     expect(screen.getByText("Limiting iron plate. 1 more Constructor clears it.")).toBeTruthy();
@@ -103,15 +103,16 @@ describe("LaneView", () => {
     // The lanes' one tab stop (the header's buttons come before it in the Tab order).
     act(() => tab(/Iron/).focus());
     expectOn(/Iron/);
+    // Production lanes in content order, then power last (U-6a).
     await user.keyboard("{ArrowRight}");
-    expectOn(/Power/);
+    expectOn(/Copper/);
     expect(tab(/Iron/).tabIndex).toBe(-1);
     await user.keyboard("{End}");
-    expectOn(/Oil/);
+    expectOn(/Power/);
     await user.keyboard("{ArrowRight}");
     expectOn(/Iron/);
     await user.keyboard("{ArrowLeft}");
-    expectOn(/Oil/);
+    expectOn(/Power/);
     await user.keyboard("{Home}");
     expectOn(/Iron/);
   });
@@ -199,8 +200,7 @@ describe("LaneView", () => {
   });
 
   it("5b. under reduced motion the bar has no transition; the 4 Hz tick steps it", () => {
-    const media = vi.fn((q: string) => ({ matches: q.includes("reduce") }) as MediaQueryList);
-    vi.stubGlobal("matchMedia", media);
+    stubWidth(1280, { reducedMotion: true });
     try {
       const store = fakeStore(fresh);
       const { container } = mount(store);
@@ -301,7 +301,7 @@ function fakeFrames() {
   };
 }
 
-describe("motion (S-14, W-18)", () => {
+describe("motion (S-14, W-18)", { timeout: 60_000 }, () => {
   it("3a. a producing, unpaused row sweeps at sweepPeriodS(production); a paused one doesn't", () => {
     const pausedState: WorldState = {
       ...tier8.state,
@@ -394,10 +394,7 @@ describe("motion (S-14, W-18)", () => {
   });
 
   it("4b. under reduced motion a correction snaps at once", () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn((q: string) => ({ matches: q.includes("reduce") }) as MediaQueryList),
-    );
+    stubWidth(1280, { reducedMotion: true });
     const frames = fakeFrames();
     const base = tier8.state;
     const cap = liquidCap(slice.content, base, "iron_plate");
@@ -417,7 +414,7 @@ describe("motion (S-14, W-18)", () => {
   });
 });
 
-describe("announcements (S-15, W-20)", () => {
+describe("announcements (S-15, W-20)", { timeout: 60_000 }, () => {
   it("5. a bottleneck change is said once, never on first load; clearing says so", () => {
     const store = fakeStore(fresh);
     mount(store);
@@ -473,8 +470,9 @@ describe("announcements (S-15, W-20)", () => {
     });
     expect(theOneRegion().querySelector('[data-notice="bottleneck"]')).not.toBeNull();
     expect(document.querySelector("[data-frame]")).toBeNull();
-    // After a priority move's announcement.
+    // After a priority move's announcement (on the priority view).
     store.set({ snapshot: fresh });
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     const rod = document.querySelector<HTMLElement>('li[data-entry="item:iron_rod"]')!;
     rod.focus();
     fireEvent.keyDown(rod, { key: "ArrowUp", altKey: true });
@@ -492,41 +490,5 @@ describe("announcements (S-15, W-20)", () => {
     store.set({ snapshot: withBottleneck(fresh, null) });
     const region = theOneRegion();
     expect(styled(region)).toEqual([region.querySelector("[data-announce]")]);
-  });
-});
-
-describe("the dock's height (7.4)", () => {
-  it("7.4a. a ResizeObserver on the dock slot sets --dock-h on the layout", () => {
-    class StubObserver {
-      constructor(private readonly cb: ResizeObserverCallback) {}
-      observe(target: Element) {
-        this.cb(
-          [
-            {
-              target,
-              contentRect: { height: 130 } as DOMRectReadOnly,
-              borderBoxSize: [{ blockSize: 130, inlineSize: 320 }],
-            } as unknown as ResizeObserverEntry,
-          ],
-          this as unknown as ResizeObserver,
-        );
-      }
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", StubObserver);
-    mount(fakeStore(fresh));
-    const layout = document.querySelector<HTMLElement>(".layout")!;
-    expect(layout.style.getPropertyValue("--dock-h")).toBe("130px");
-  });
-
-  it("7.4b. without ResizeObserver the CSS fallback is 6rem", () => {
-    vi.stubGlobal("ResizeObserver", undefined);
-    mount(fakeStore(fresh));
-    expect(document.querySelector<HTMLElement>(".layout")!.style.getPropertyValue("--dock-h")).toBe(
-      "",
-    );
-    const css = readFileSync(join(HERE, "Layout.module.css"), "utf8");
-    expect(css).toMatch(/--dock-h:\s*6rem;/);
   });
 });

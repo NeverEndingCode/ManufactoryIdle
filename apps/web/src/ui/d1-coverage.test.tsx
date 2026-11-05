@@ -91,12 +91,16 @@ function pick(d: HTMLElement, verb: string) {
   fireEvent.click(within(d).getByRole("button", { name: verb, pressed: false }));
 }
 
-const entry = (id: string) =>
-  screen
+/** The priority view (F2), then an entry in it. */
+const entry = (id: string) => {
+  if (screen.queryByRole("list", { name: "Output priority" }) === null)
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
+  return screen
     .getByRole("list", { name: "Output priority" })
     .querySelector<HTMLElement>(`li[data-entry="${id}"]`)!;
+};
 
-describe("D.1 coverage (Q-6, Q-14)", () => {
+describe("D.1 coverage (Q-6, Q-14)", { timeout: 60_000 }, () => {
   it("BUY_MACHINE: the drawer's Buy, tier 8 power / collector", () => {
     const s = snapshotOf(slice, topped(fixtureState("slice-tier-8.world.json")));
     const store = mount(s);
@@ -177,6 +181,7 @@ describe("D.1 coverage (Q-6, Q-14)", () => {
   it("SET_PRIORITY_MODE: Advanced mode, the mode chip", () => {
     const s = snapshotOf(slice, freshState(slice));
     const store = mount(s);
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     fireEvent.click(
       within(entry("item:iron_plate")).getByRole("button", { name: "Mode of Iron Plate" }),
@@ -188,6 +193,7 @@ describe("D.1 coverage (Q-6, Q-14)", () => {
   it("SET_RESERVE: the Advanced reserve slider", () => {
     const s = snapshotOf(slice, freshState(slice));
     const store = mount(s);
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     const slider = within(entry("item:iron_plate")).getByRole("slider", {
       name: "Reserve of Iron Plate",

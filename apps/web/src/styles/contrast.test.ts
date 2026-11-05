@@ -65,13 +65,22 @@ const ON_SURFACE: Record<string, string> = {
   card: "s2",
   sheet: "s2",
   nextBuy: "s2",
+  // Task 3: the notice lines (base.css); the lane and bottom tabs' "on" is listed above.
+  notice: "s2",
 };
 const ON_SURFACE_ATTRS = [/\[aria-selected="?true"?\]/, /\[aria-current/];
 
-/** CSS files not yet moved onto the new tokens; each task takes its files out (V-4). */
+/** CSS files not yet moved onto the new tokens; each task takes its files out (V-4). A new
+ *  file is never listed: it's checked from the start (Task 3's Shell.module.css). */
 const PENDING_RESKIN = new Set([
-  "styles/base.css",
-  ...files.filter((f) => f.startsWith("ui/") && f.endsWith(".module.css")),
+  "ui/BottleneckFrame.module.css",
+  "ui/Drawer.module.css",
+  "ui/Handbook.module.css",
+  "ui/ItemRow.module.css",
+  "ui/LaneView.module.css",
+  "ui/PowerDock.module.css",
+  "ui/PriorityList.module.css",
+  "ui/Settings.module.css",
 ]);
 
 function rgb(color: string): [number, number, number] {
@@ -207,7 +216,9 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
 
   it("5. no re-skinned CSS file uses a barred pair", () => {
     const checked = files.filter((f) => !PENDING_RESKIN.has(f));
-    expect(checked).toContain("styles/tokens.css");
+    expect(checked).toEqual(
+      expect.arrayContaining(["styles/tokens.css", "styles/base.css", "ui/Shell.module.css"]),
+    );
     expect(checked.flatMap((f) => usageViolations(read(f)))).toEqual([]);
     // Every pending file exists, so a deleted one leaves the set.
     for (const f of PENDING_RESKIN) expect(files).toContain(f);

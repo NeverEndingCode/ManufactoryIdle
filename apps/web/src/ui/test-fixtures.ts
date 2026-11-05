@@ -174,3 +174,46 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     },
   };
 }
+
+/** matchMedia for a viewport this wide: min-width / max-width queries, plus
+ * `prefers-reduced-motion: reduce` when `reducedMotion`. resize() changes the width and fires
+ * `change` on each list whose answer flipped. Undo with vi.unstubAllGlobals(). */
+export function stubWidth(initial: number, opts: { reducedMotion?: boolean } = {}) {
+  let width = initial;
+  const lists: { q: string; matches: boolean; fns: Set<() => void> }[] = [];
+  const evaluate = (q: string) => {
+    if (q.includes("prefers-reduced-motion"))
+      return /:\s*reduce\)/.test(q) === !!opts.reducedMotion;
+    const min = /min-width:\s*(\d+)px/.exec(q);
+    const max = /max-width:\s*(\d+)px/.exec(q);
+    return (min === null || width >= Number(min[1])) && (max === null || width <= Number(max[1]));
+  };
+  vi.stubGlobal("matchMedia", (q: string) => {
+    const entry = { q, matches: evaluate(q), fns: new Set<() => void>() };
+    lists.push(entry);
+    return {
+      get matches() {
+        return evaluate(q);
+      },
+      media: q,
+      addEventListener: (_: string, fn: () => void) => entry.fns.add(fn),
+      removeEventListener: (_: string, fn: () => void) => entry.fns.delete(fn),
+    } as unknown as MediaQueryList;
+  });
+  return {
+    resize(w: number) {
+      width = w;
+      act(() => {
+        for (const l of lists) {
+          const now = evaluate(l.q);
+          if (now === l.matches) continue;
+          l.matches = now;
+          for (const fn of [...l.fns]) fn();
+        }
+      });
+    },
+    get listeners() {
+      return lists.reduce((n, l) => n + l.fns.size, 0);
+    },
+  };
+}

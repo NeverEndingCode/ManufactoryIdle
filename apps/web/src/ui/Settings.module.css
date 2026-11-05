@@ -242,3 +242,22 @@
   border-radius: 12px;
   background: var(--s1);
 }
+
+/* U-2e / W-25: the GPL notice. It wraps at 320 px; its links are 44 px targets (W-20). */
+.about {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 4px;
+  margin: 0;
+  color: var(--t2);
+  font-size: var(--fs-small);
+}
+
+.about a {
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--link);
+}

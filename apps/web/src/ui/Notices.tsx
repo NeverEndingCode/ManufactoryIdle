@@ -1,7 +1,9 @@
 // Discrete events, all in one polite live region (W-20). Ticking numbers are never in it,
 // and the rate-limit countdown inside it is marked aria-live="off". Other components'
 // announcements (the priority list's moves) are read from here too (announce.ts).
-import type { CSSProperties } from "react";
+// U-2e: the visible list is an overlay at the foot of the main box, so a notice never moves a
+// row; the region element itself is unchanged and permanent.
+import type { CSSProperties, ReactNode } from "react";
 import { isPlateaued } from "../sync/interpolate.js";
 import type { GameStore, Notice, StoreView } from "../sync/store.js";
 import { useAnnouncement } from "./announce.js";
@@ -29,9 +31,11 @@ export interface NoticesProps {
   store: Pick<GameStore, "dismiss" | "newFactory" | "now">;
   view: StoreView;
   bottleneck: BottleneckModel | null;
+  /** The phone's save line (U-2e: the chip is the first notice line there). */
+  lead?: ReactNode;
 }
 
-export function Notices({ store, view, bottleneck }: NoticesProps) {
+export function Notices({ store, view, bottleneck, lead = null }: NoticesProps) {
   const said = useAnnouncement();
   const shown: Shown[] = [...view.notices];
   const s = view.snapshot;
@@ -45,9 +49,10 @@ export function Notices({ store, view, bottleneck }: NoticesProps) {
 
   return (
     <div role="status" aria-live="polite" aria-atomic="false" className="notices">
-      {/* The visible notices; empty, it takes no room (base.css), so the hidden announcement
-          alone never leaves a margin. */}
-      <div className="notice-list">
+      {/* The visible notices, an overlay (base.css): two at a time, scrolling for the rest
+          (V-13); empty, it isn't drawn. */}
+      <div className="notice-list notice-overlay">
+        {lead}
         {shown.map((n) => (
           <div key={n.kind} className="notice" data-notice={n.kind}>
             <span>{n.text}</span>
