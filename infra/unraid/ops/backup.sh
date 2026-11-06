@@ -96,7 +96,9 @@ dump_one() {
 # prune <db> <cutoff-stamp>: deletes <db>-YYYYMMDD-HHMMSS.dump files whose stamp is older than
 # the cutoff, except the newest one, which is kept however old it is. The stamp in the name, not
 # the mtime, is the age: a copy or a touch cannot make a dump look newer or older. Nothing that
-# does not match that exact pattern is ever touched.
+# does not match that exact pattern is ever touched. When even the newest dump is older than the
+# cutoff (backups failing for weeks, or the clock jumped ahead), nothing is pruned: the window
+# would otherwise empty the history down to one file.
 prune() {
   local db=$1 cutoff=$2 f name stamp newest=""
   local -a files=()
@@ -108,6 +110,13 @@ prune() {
   ((${#files[@]})) || return 0
   # The glob is sorted, and so is the stamp: the last match is the newest.
   newest=${files[-1]}
+  stamp=${newest##*/}
+  stamp=${stamp#"$db"-}
+  stamp=${stamp%.dump}
+  if [[ $stamp < "$cutoff" ]]; then
+    log "warning: the newest $db dump is older than $KEEP_DAYS days ($stamp); not pruning $db" >&2
+    return 0
+  fi
   for f in "${files[@]}"; do
     [[ $f == "$newest" ]] && continue
     name=${f##*/}
@@ -136,13 +145,22 @@ main() {
     exit 1
   fi
 
+  # Temp files of a run that was killed (power cut, OOM) before its EXIT trap: this script's own
+  # names only, one database at a time, and only old ones (a running backup holds the lock anyway).
+  local db f
+  for db in "${DATABASES[@]}"; do
+    while IFS= read -r f; do
+      log "deleted stale ${f##*/}"
+    done < <(find "$BACKUP_DIR" -maxdepth 1 -name ".${db}-*.partial" -mtime +1 -print -delete)
+  done
+
   # The admin role is the container's own POSTGRES_USER, read at run time (as deploy.sh does) so
   # no name is in the repo. Never logged.
   PG_ADMIN=$(docker exec "$PG_CONTAINER" printenv POSTGRES_USER) ||
     die "could not read POSTGRES_USER from $PG_CONTAINER (is it running?)"
   [[ -n $PG_ADMIN ]] || die "$PG_CONTAINER has an empty POSTGRES_USER"
 
-  local now stamp cutoff db
+  local now stamp cutoff
   now=$(date +%s)
   stamp=$(date -d "@$now" +%Y%m%d-%H%M%S)
   cutoff=$(date -d "@$((now - KEEP_DAYS * 86400))" +%Y%m%d-%H%M%S)
@@ -155,8 +173,8 @@ main() {
     fi
   done
 
-  # Pruning runs after a failed night too: the newest dump of each database always survives, and
-  # the alert below says the new one is missing.
+  # Pruning runs after a failed night too: the newest dump of each database always survives,
+  # nothing is pruned once even that is past the window, and the alert below says what failed.
   for db in "${DATABASES[@]}"; do
     prune "$db" "$cutoff"
   done

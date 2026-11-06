@@ -89,8 +89,10 @@ if [[ $answer == down ]]; then
 fi
 printf '%s\n%s' "${answer#* }" "${answer%% *}"
 EOF
+# notify: fails (and records nothing) while $STUB/notify-fail exists.
 cat >"$BIN/notify" <<'EOF'
 #!/bin/bash
+[[ -f $STUB/notify-fail ]] && exit 1
 printf '%s\n' "$*" >>"$STUB/notify.log"
 EOF
 # flock: busy when $STUB/flock-busy exists.
@@ -205,16 +207,43 @@ check "keeps a 13-day-old dump" test -e "$T/backups/manufactory-$(days_ago 13).d
 check "keeps tonight's dumps" test -e "$T/backups/manufactory-$S.dump"
 for f in "${FOREIGN[@]}"; do check "never touches $f" test -e "$T/backups/$f"; done
 
-section "backup.sh: the newest dump survives a failing month"
+section "backup.sh: no pruning when the newest dump looks older than 14 days"
+# A failing month, or a clock that jumped ahead: either way the window would empty the history.
 reset
 mkdir -p "$T/backups"
 touch "$T/backups/manufactory_supertokens-$(days_ago 40).dump" \
-  "$T/backups/manufactory_supertokens-$(days_ago 30).dump"
+  "$T/backups/manufactory_supertokens-$(days_ago 30).dump" \
+  "$T/backups/manufactory-$(days_ago 20).dump"
 touch "$STUB/fail-dump-manufactory_supertokens"
 backup
 check "exits non-zero" test "$RC" -ne 0
-check "deletes the older of two old dumps" test ! -e "$T/backups/manufactory_supertokens-$(days_ago 40).dump"
+check "keeps the older of two old dumps" test -e "$T/backups/manufactory_supertokens-$(days_ago 40).dump"
 check "keeps the newest, 30 days old" test -e "$T/backups/manufactory_supertokens-$(days_ago 30).dump"
+check "logs a warning naming the database" grep -q 'warning: the newest manufactory_supertokens dump is older than 14 days' "$T/out"
+check "still prunes the database whose newest dump is tonight's" test ! -e "$T/backups/manufactory-$(days_ago 20).dump"
+NOW_SAVED=$NOW
+# The clock jumps 30 days ahead: tonight's dump is the newest, so the guard does not fire...
+reset
+mkdir -p "$T/backups"
+touch "$T/backups/manufactory-$(days_ago 1).dump"
+echo $((NOW + 30 * 86400)) >"$STUB/now"
+touch "$STUB/fail-dump-manufactory"
+backup
+check "a jumped clock with a failed dump: nothing deleted" test -e "$T/backups/manufactory-$(days_ago 1).dump"
+NOW=$NOW_SAVED
+
+section "backup.sh: stale temp files"
+reset
+mkdir -p "$T/backups"
+OLD_PARTIALS=(".manufactory-20261101-033000.AbC123.partial" ".manufactory_supertokens-20261101-033000.XyZ789.partial")
+KEPT_PARTIALS=(".manufactory-20261106-033000.fresh1.partial" ".other-20261101-033000.AbC123.partial"
+  "manufactory-20261101-033000.AbC123.partial" ".manufactory-20261101-033000.AbC123.partial.keep")
+for f in "${OLD_PARTIALS[@]}" "${KEPT_PARTIALS[@]}"; do touch "$T/backups/$f"; done
+for f in "${OLD_PARTIALS[@]}" "${KEPT_PARTIALS[@]:1}"; do touch -d '3 days ago' "$T/backups/$f"; done
+backup
+check "exits 0" test "$RC" -eq 0
+for f in "${OLD_PARTIALS[@]}"; do check "deletes the stale $f" test ! -e "$T/backups/$f"; done
+for f in "${KEPT_PARTIALS[@]}"; do check "keeps $f" test -e "$T/backups/$f"; done
 
 section "backup.sh: lock contention"
 reset
@@ -261,10 +290,16 @@ health
 check "still down again: no new alert" test "$(alerts)" -eq 1
 rm "$STUB/curl-local"
 health
-check "up: exits 0, one recovery notice" test "$RC" -eq 0 -a "$(alerts)" -eq 2
+check "up once: exits 0, no recovery notice yet" test "$RC" -eq 0 -a "$(alerts)" -eq 1
+health
+check "up twice: one recovery notice" test "$RC" -eq 0 -a "$(alerts)" -eq 2
 check "the recovery is -i normal" grep -q -- '-s Manufactory Idle: the site is back .* -i normal' "$STUB/notify.log"
 health
 check "up again: nothing new" test "$(alerts)" -eq 2
+echo '503 x' >"$STUB/curl-local"
+health
+rm "$STUB/curl-local"
+check "one failure after a long outage: no alert (the window restarted)" test "$(alerts)" -eq 2
 
 section "healthcheck.sh: one blip does not alert"
 reset
@@ -279,6 +314,49 @@ check "the count restarted after the pass: still no alert" test "$(alerts)" -eq 
 health
 check "the public URL down twice: one alert naming it" grep -q 'local: ok; public: no answer (curl: (7) Failed to connect)' "$STUB/notify.log"
 
+section "healthcheck.sh: flapping"
+reset
+flap() { # <F|P>...: one run per letter, the site failing on F
+  local r
+  for r in "$@"; do
+    if [[ $r == F ]]; then echo '503 x' >"$STUB/curl-local"; else rm -f "$STUB/curl-local"; fi
+    health
+  done
+}
+flap F P F P
+check "F P F P: no alert (2 of 4)" test "$(alerts)" -eq 0
+flap F
+check "F P F P F: one alert (3 of the last 6)" test "$(alerts)" -eq 1
+check "the alert says it flaps" grep -q -- '-s Manufactory Idle: the site is down -d local: HTTP 503; public: ok (flapping: 3 of the last 5 checks failed) -i alert' "$STUB/notify.log"
+flap P F P F P F
+check "still flapping: no new alert, no recovery" test "$(alerts)" -eq 1
+flap P P
+check "two passes in a row: one recovery notice" test "$(alerts)" -eq 2
+flap P P P P
+check "steady: nothing new" test "$(alerts)" -eq 2
+
+section "healthcheck.sh: a lost notification is retried"
+reset
+echo down >"$STUB/curl-local"
+health
+touch "$STUB/notify-fail"
+health
+check "notify fails on the second failure: no .down marker" test ! -e "$T/state/site.down"
+rm "$STUB/notify-fail"
+health
+check "the next run sends the alert" test "$(alerts)" -eq 1
+check "and marks it down" test -e "$T/state/site.down"
+health
+check "then stays quiet" test "$(alerts)" -eq 1
+rm "$STUB/curl-local"
+touch "$STUB/notify-fail"
+health
+health
+check "recovery notice lost: still marked down" test -e "$T/state/site.down"
+rm "$STUB/notify-fail"
+health
+check "the next run sends the recovery" test "$(alerts)" -eq 2 -a ! -e "$T/state/site.down"
+
 section "healthcheck.sh: a container not running"
 reset
 echo exited >"$STUB/status-manufactory-supertokens"
@@ -291,7 +369,8 @@ health
 check "still stopped: no new alert" test "$(alerts)" -eq 1
 rm "$STUB/status-manufactory-supertokens"
 health
-check "running again: one recovery notice" test "$RC" -eq 0 -a "$(alerts)" -eq 2
+health
+check "running again twice: one recovery notice" test "$RC" -eq 0 -a "$(alerts)" -eq 2
 check "the state dir is mode 700" test "$(stat -c %a "$T/state")" = 700
 
 section "healthcheck.sh: -v and the public URL off"
@@ -355,9 +434,28 @@ check "removes both script dirs" test ! -e "$R$U/manufactory-backup" -a ! -e "$R
 check "removes both cron files" test ! -e "$R$C/manufactory-backup.cron" -a ! -e "$R$C/manufactory-healthcheck.cron"
 check "keeps the backups" test -s "$R/mnt/user/appdata/manufactory/backups/manufactory-20261101-033000.dump"
 check "runs update_cron" test "$(count_lines "$T/update_cron.log")" -eq 3
+inst
+echo "a User Scripts leftover" >"$R$U/manufactory-backup/log.txt"
+inst --uninstall
+check "uninstall with an extra file exits 0" test "$RC" -eq 0
+check "logs that it left the dir" grep -q "^==> left $R$U/manufactory-backup: other files" "$T/out"
+check "keeps the extra file" test -s "$R$U/manufactory-backup/log.txt"
+check "still removes the second job" test ! -e "$R$U/manufactory-healthcheck" -a ! -e "$R$C/manufactory-healthcheck.cron"
+check "still removes the first job's cron file" test ! -e "$R$C/manufactory-backup.cron"
+check "still runs update_cron" test "$(count_lines "$T/update_cron.log")" -eq 5
+rm -rf "$R$U/manufactory-backup"
 inst --uninstall
 check "second uninstall exits 0 and removes nothing" test "$RC" -eq 0 -a "$(grep -c '^==> removed' "$T/out")" -eq 0
 check "never touches private-net-fw.cron" cmp -s "$T/fw.before" "$R$C/private-net-fw.cron"
+
+# A cron path that cannot be replaced (a non-empty directory): the put fails mid-way.
+mkdir -p "$R$C/manufactory-backup.cron"
+touch "$R$C/manufactory-backup.cron/x"
+inst
+check "a failed write exits non-zero" test "$RC" -ne 0
+check "a failed write leaves no temp file" test -z "$(find "$R$C" -maxdepth 1 -name 'manufactory-backup.cron.*')"
+rm -rf "$R$C/manufactory-backup.cron"
+inst --uninstall
 
 inst --bogus
 check "an unknown flag exits 2" test "$RC" -eq 2

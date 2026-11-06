@@ -9,8 +9,10 @@
 #     must answer 200 with "ok":true in the body within its timeout.
 #   - the containers manufactory-api, manufactory-web and manufactory-supertokens are running.
 # A check alerts once after 2 failures in a row (a deploy recreates the containers, and one slow
-# answer is not an outage), then stays quiet until it passes again, which sends one recovery
-# notice. State lives in /mnt/user/appdata/manufactory/ops-state. Exits 1 while anything fails.
+# answer is not an outage), or when 3 of its last 6 results failed (flapping). It then stays quiet
+# until it passes 2 times in a row, which sends one recovery notice. A notification that could
+# not be sent is tried again on the next run. State lives in
+# /mnt/user/appdata/manufactory/ops-state. Exits 1 while anything fails.
 #
 # It runs on the same server, so it cannot report a whole-server outage: see the README.
 #
@@ -28,17 +30,21 @@ readonly PUBLIC_URL=${OPS_PUBLIC_URL-https://manufactory.neverendingcode.com/api
 readonly LOCAL_TIMEOUT=5
 readonly PUBLIC_TIMEOUT=10
 readonly CONTAINERS=(manufactory-api manufactory-web manufactory-supertokens)
-readonly STRIKES=2 # failures in a row before the down alert
+readonly STRIKES=2   # failures in a row before the down alert, and passes in a row before recovery
+readonly WINDOW=6    # results kept per check, for flapping
+readonly FLAP_FAILS=3 # failures within the window that alert
 
 VERBOSE=0
 UNHEALTHY=0
 
 log() { printf '%s health: %s\n' "$(date '+%F %T')" "$*"; }
 
-notify() { # <importance> <subject> <description>
+notify() { # <importance> <subject> <description>; non-zero when it was not sent
   log "$2: $3"
-  "$NOTIFY" -e "Manufactory Idle uptime" -s "$2" -d "$3" -i "$1" ||
-    printf 'health: %s failed\n' "$NOTIFY" >&2
+  if ! "$NOTIFY" -e "Manufactory Idle uptime" -s "$2" -d "$3" -i "$1"; then
+    log "$NOTIFY failed; trying again on the next run" >&2
+    return 1
+  fi
 }
 
 # probe <url> <timeout>: 0 when the URL answers 200 with "ok":true; otherwise prints why.
@@ -61,29 +67,41 @@ probe() {
   fi
 }
 
-# record <key> <label> <ok|fail> <detail>: counts failures in a row in <key>.fails and marks an
-# alerted outage with <key>.down, so each outage sends one alert and one recovery notice.
+# record <key> <label> <ok|fail> <detail>: keeps the last WINDOW results in <key>.window (P or F,
+# oldest first) and marks an alerted outage with <key>.down, so each outage sends one alert and
+# one recovery notice. The marker changes only once its notification went out.
 record() {
-  local key=$1 label=$2 result=$3 detail=$4 fails=0
-  local fails_file="$STATE_DIR/$key.fails" down_file="$STATE_DIR/$key.down"
+  local key=$1 label=$2 result=$3 detail=$4 window="" fails run
+  local window_file="$STATE_DIR/$key.window" down_file="$STATE_DIR/$key.down"
   if [[ $VERBOSE -eq 1 ]]; then log "$label: $result ($detail)"; fi
-  if [[ $result == ok ]]; then
-    if [[ -e $down_file ]]; then
-      notify normal "Manufactory Idle: $label is back" "$detail; down since $(<"$down_file")"
+  if [[ -f $window_file ]]; then window=$(<"$window_file"); fi
+  [[ $window =~ ^[FP]*$ ]] || window=""
+  if [[ $result == ok ]]; then window+=P; else window+=F; UNHEALTHY=1; fi
+  if ((${#window} > WINDOW)); then window=${window:${#window}-WINDOW}; fi
+  printf '%s\n' "$window" >"$window_file"
+  fails=${window//P/}
+  fails=${#fails}
+
+  if [[ -e $down_file ]]; then
+    run=${window##*F} # the passes in a row at the end
+    if ((${#run} >= STRIKES)) &&
+      notify normal "Manufactory Idle: $label is back" "$detail; down since $(<"$down_file")"; then
       rm -f -- "$down_file"
+      # A fresh window: the outage's own failures must not count as flapping afterwards.
+      printf '%s\n' "$run" >"$window_file"
     fi
-    rm -f -- "$fails_file"
     return 0
   fi
-  UNHEALTHY=1
-  if [[ -f $fails_file ]]; then fails=$(<"$fails_file"); fi
-  [[ $fails =~ ^[0-9]+$ ]] || fails=0
-  fails=$((fails + 1))
-  printf '%d\n' "$fails" >"$fails_file"
-  if ((fails >= STRIKES)) && [[ ! -e $down_file ]]; then
-    date '+%F %T' >"$down_file"
-    notify alert "Manufactory Idle: $label is down" "$detail ($fails checks in a row)"
+  run=${window##*P} # the failures in a row at the end
+  if ((${#run} >= STRIKES)); then
+    notify alert "Manufactory Idle: $label is down" "$detail (${#run} checks in a row)" &&
+      date '+%F %T' >"$down_file"
+  elif ((fails >= FLAP_FAILS)); then
+    notify alert "Manufactory Idle: $label is down" \
+      "$detail (flapping: $fails of the last ${#window} checks failed)" &&
+      date '+%F %T' >"$down_file"
   fi
+  return 0
 }
 
 check_site() {

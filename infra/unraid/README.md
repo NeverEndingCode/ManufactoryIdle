@@ -268,18 +268,23 @@ Two scripts in `infra/unraid/ops/`, run by cron on the server once installed:
 - **Backups** are written to a hidden temp file and renamed only after `pg_restore` has read them
   (the table of contents, then every data block), so a final name never holds a partial dump.
   Dumps older than 14 days are deleted, but never the newest of each database, and never a file
-  that does not match that exact name. Only those two databases are read: never `supertokens`
+  that does not match that exact name. When even the newest dump of a database is older than 14
+  days (backups failing for weeks, or a clock jump), that database is not pruned at all, with a
+  warning in the log. Its own temp files (`.<db>-*.partial`) left by a killed run are deleted
+  after a day or two. Only those two databases are read: never `supertokens`
   (the other app's), and never `/mnt/user/appdata/supertokens-db-backups/`. A failure sends an
   Unraid **alert** notification and exits non-zero; a success only logs a line. A run that finds
   the previous one still going (`flock`) sends a warning and stops.
 - **The uptime check** fails a check on no answer, a status other than 200, or a body without
-  `"ok":true`; and a container that is not running. It alerts after 2 failures in a row (so a
-  deploy's restart or one slow answer is not an outage), once, then sends one recovery notice when
-  the check passes again.
+  `"ok":true`; and a container that is not running. It alerts once after 2 failures in a row (so a
+  deploy's restart or one slow answer is not an outage), or when 3 of a check's last 6 results
+  failed (flapping), then sends one recovery notice after 2 passes in a row. A notification that
+  could not be sent is tried again on the next run.
 - Both log to `/mnt/user/appdata/manufactory/ops-state/{backup,healthcheck}.log`: a line per
   backup, and per change of health.
 
-**Install** (and again after a deploy that changed either script; it copies them):
+**Install** before the first backup (and again after a deploy that changed either script; it
+copies them). It creates `backups/` and `ops-state/` at mode 700:
 
     bash /mnt/user/appdata/manufactory/src/infra/unraid/ops/install.sh
 
@@ -297,7 +302,8 @@ there too would run them twice.
     ls -l /mnt/user/appdata/manufactory/backups/
     tail /mnt/user/appdata/manufactory/ops-state/*.log
 
-**Uninstall** (the backups and the state stay):
+**Uninstall** (the backups and the state stay; a script folder that User Scripts added files to is
+left in place, and the crontab is refreshed regardless):
 
     bash /mnt/user/appdata/manufactory/src/infra/unraid/ops/install.sh --uninstall
 

@@ -39,18 +39,23 @@ die() {
 }
 
 # put <path>: writes stdin to <path> only when it differs, through a temp file in the same
-# directory, and says which.
+# directory, and says which. A failed write removes the temp file: /boot is the flash drive.
 put() {
   local path=$1 tmp
   mkdir -p -- "${path%/*}"
   tmp=$(mktemp "$path.XXXXXX")
-  cat >"$tmp"
+  if ! cat >"$tmp"; then
+    rm -f -- "$tmp"
+    die "could not write $path"
+  fi
   if cmp -s -- "$tmp" "$path"; then
     rm -f -- "$tmp"
     log "unchanged $path"
-  else
-    mv -f -- "$tmp" "$path"
+  elif mv -fT -- "$tmp" "$path"; then # -T: never into <path> when it is a directory
     log "wrote $path"
+  else
+    rm -f -- "$tmp"
+    die "could not replace $path"
   fi
 }
 
@@ -101,9 +106,14 @@ uninstall_all() {
         log "removed $path"
       fi
     done
+    # User Scripts may have left files of its own (a log): keep them and carry on, so the other
+    # job is removed too and the crontab is always refreshed.
     if [[ -d $ROOT$SCRIPTS/$name ]]; then
-      rmdir -- "$ROOT$SCRIPTS/$name" || die "$ROOT$SCRIPTS/$name holds other files; left it"
-      log "removed $ROOT$SCRIPTS/$name/"
+      if rmdir -- "$ROOT$SCRIPTS/$name" 2>/dev/null; then
+        log "removed $ROOT$SCRIPTS/$name/"
+      else
+        log "left $ROOT$SCRIPTS/$name: other files"
+      fi
     fi
   done
   refresh_cron
