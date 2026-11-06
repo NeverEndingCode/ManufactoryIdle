@@ -255,3 +255,60 @@ Private): the templates there hold the database passwords and the SuperTokens ke
 
 Builds leave BuildKit cache behind. `docker builder prune` reclaims it; the next build is then
 slower.
+
+## Backups and uptime
+
+Two scripts in `infra/unraid/ops/`, run by cron on the server once installed:
+
+| What                                                                         | When            | Where                                                                       |
+| ---------------------------------------------------------------------------- | --------------- | --------------------------------------------------------------------------- |
+| `backup.sh`: `pg_dump -Fc` of `manufactory` and `manufactory_supertokens`    | 03:30 nightly   | `/mnt/user/appdata/manufactory/backups/<db>-YYYYMMDD-HHMMSS.dump` (700/600) |
+| `healthcheck.sh`: `/api/health` locally and through Cloudflare, 3 containers | every 5 minutes | state in `/mnt/user/appdata/manufactory/ops-state/`                         |
+
+- **Backups** are written to a hidden temp file and renamed only after `pg_restore` has read them
+  (the table of contents, then every data block), so a final name never holds a partial dump.
+  Dumps older than 14 days are deleted, but never the newest of each database, and never a file
+  that does not match that exact name. Only those two databases are read: never `supertokens`
+  (the other app's), and never `/mnt/user/appdata/supertokens-db-backups/`. A failure sends an
+  Unraid **alert** notification and exits non-zero; a success only logs a line. A run that finds
+  the previous one still going (`flock`) sends a warning and stops.
+- **The uptime check** fails a check on no answer, a status other than 200, or a body without
+  `"ok":true`; and a container that is not running. It alerts after 2 failures in a row (so a
+  deploy's restart or one slow answer is not an outage), once, then sends one recovery notice when
+  the check passes again.
+- Both log to `/mnt/user/appdata/manufactory/ops-state/{backup,healthcheck}.log`: a line per
+  backup, and per change of health.
+
+**Install** (and again after a deploy that changed either script; it copies them):
+
+    bash /mnt/user/appdata/manufactory/src/infra/unraid/ops/install.sh
+
+It copies both into User Scripts (`manufactory-backup`, `manufactory-healthcheck`, each with a
+description), writes `/boot/config/plugins/dynamix/manufactory-{backup,healthcheck}.cron` (the
+same shape as `private-net-fw.cron`) and runs `update_cron`. It prints every file it wrote. Leave
+both unscheduled on the User Scripts page: the `.cron` files are the schedule, and a schedule
+there too would run them twice.
+
+**Check:**
+
+    crontab -l | grep manufactory
+    bash /boot/config/plugins/user.scripts/scripts/manufactory-backup/script    # a backup now
+    bash /boot/config/plugins/user.scripts/scripts/manufactory-healthcheck/script -v
+    ls -l /mnt/user/appdata/manufactory/backups/
+    tail /mnt/user/appdata/manufactory/ops-state/*.log
+
+**Uninstall** (the backups and the state stay):
+
+    bash /mnt/user/appdata/manufactory/src/infra/unraid/ops/install.sh --uninstall
+
+**Restore:** [`ops/restore.md`](ops/restore.md), into a scratch database first, then for real.
+
+**Tests**, on a workstation: `bash infra/unraid/ops/test.sh` (stubs, no Docker) and
+`bash infra/unraid/ops/test-postgres.sh` (a throwaway `postgres:16` in podman: a real backup and
+restore).
+
+**What it cannot see.** The check runs on the same server, so a whole-server outage (power, the
+host down, the array stopped) sends nothing. Also, notifications go out only through the agents
+set up in Settings → Notifications; with none, they only show in the web UI. For an outside view,
+add a free external pinger on `https://manufactory.neverendingcode.com/api/health`, such as a
+Cloudflare health check or UptimeRobot (not set up here).
