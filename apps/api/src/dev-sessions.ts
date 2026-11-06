@@ -202,6 +202,8 @@ export function fakeSessions(opts: { clock?: () => number } = {}): FakeSessions 
     async handleError() {
       return false;
     },
+    // No fake provider yet: the fake ThirdParty (O-14) fills this.
+    providers: [],
   };
 
   return { accounts, verifySession };

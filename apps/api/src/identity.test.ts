@@ -404,6 +404,7 @@ describe("accounts wiring", () => {
           await reply.code(401).send({ message: "try refresh token" });
           return true;
         },
+        providers: [],
       },
     });
     try {

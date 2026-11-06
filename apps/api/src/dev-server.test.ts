@@ -26,7 +26,7 @@ describe("devServer", () => {
   it("reports accounts: false", async () => {
     const { app } = await open();
     const res = await app.inject({ method: "GET", url: "/api/health" });
-    expect(res.json()).toHaveProperty("accounts", false);
+    expect(res.json()).toMatchObject({ accounts: false, providers: [] });
   });
 
   it("allows far more than five guests per IP", async () => {

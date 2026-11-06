@@ -218,7 +218,11 @@ export async function makeRig(
       ? {
           auth: identityAuth({ db, content, clock: serverNow, verifySession }),
           verifySession,
-          accounts: { register() {}, handleError: async () => false },
+          accounts: {
+            register() {},
+            handleError: async () => false,
+            providers: ["discord", "github"],
+          },
         }
       : { auth: guestAuth(db) }),
     ...(opts.limits ? { limits: opts.limits } : {}),

@@ -34,9 +34,15 @@ async function open(fakeSessions = true) {
 describe("fake sessions", () => {
   it("health says accounts: true with the flag, false without", async () => {
     const on = await open();
-    expect((await on.app.inject({ method: "GET", url: "/api/health" })).json()).toHaveProperty("accounts", true);
+    expect((await on.app.inject({ method: "GET", url: "/api/health" })).json()).toMatchObject({
+      accounts: true,
+      providers: [],
+    });
     const off = await open(false);
-    expect((await off.app.inject({ method: "GET", url: "/api/health" })).json()).toHaveProperty("accounts", false);
+    expect((await off.app.inject({ method: "GET", url: "/api/health" })).json()).toMatchObject({
+      accounts: false,
+      providers: [],
+    });
   });
 
   it("sign-up gives OK, a session cookie and a front-token", async () => {
