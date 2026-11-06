@@ -145,5 +145,27 @@ describe.skipIf(!process.env.SUPERTOKENS_CONNECTION_URI)(
         message: "Sign-in isn't available from this address.",
       });
     });
+
+    // The deploy probe (O-16): loginmethods reads the tenant from the core and answers OK.
+    it("loginmethods answers status OK", async () => {
+      const res = await app.inject({ method: "GET", url: "/auth/loginmethods" });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('"status":"OK"');
+      expect(res.json()).toMatchObject({ status: "OK", thirdParty: { enabled: true } });
+    });
+
+    // O-4: provider tokens are never accepted directly, even by the real signinup.
+    it("signinup refuses oAuthTokens with GENERAL_ERROR", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/auth/signinup",
+        payload: { thirdPartyId: "discord", oAuthTokens: {} },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        status: "GENERAL_ERROR",
+        message: "Sign-in isn't available from this address.",
+      });
+    });
   },
 );

@@ -248,7 +248,7 @@ test("sign in with Discord and GitHub through the fake: the claim, the callback,
     await signInThroughSettings(page, "discord", alice);
     await expect.poll(() => storage(PARKED_KEY)).toBe(secondGuest);
     expect(await storage(TOKEN_KEY)).toBeNull();
-    expect(lastAnswer("/api/auth/claim")?.status).toBe(409);
+    await expect.poll(() => lastAnswer("/api/auth/claim")?.status).toBe(409);
     await expect(root).toHaveAttribute("data-state-version", "1");
     await expect(toast("account-has-factory")).toBeVisible();
   });

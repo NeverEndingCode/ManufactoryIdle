@@ -1115,6 +1115,9 @@ export class GameStore {
       this.#unpark();
       this.#setNotice({ kind: "session-ended", text: TEXT["session-ended"] }, false);
     }
+    // O-9: the label describes a session; without one it is stale, and must not name a later
+    // session's account. Before the callback, whose success writes a fresh one.
+    if (!session) this.#accountLabel.clear();
     // O-6 step 3. Consumed here, once: a stop() before this point leaves it for the next boot.
     const cb = this.#callback;
     this.#callback = null;

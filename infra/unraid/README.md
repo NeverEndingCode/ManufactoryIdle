@@ -113,10 +113,11 @@ so run from the old copy its smoke test 404s and it rolls back. Check the commit
 run its own script:
 
     git -C /mnt/user/appdata/manufactory/src fetch
-    git -C /mnt/user/appdata/manufactory/src checkout <sha>
+    git -C /mnt/user/appdata/manufactory/src checkout --force --detach <sha>
     bash /mnt/user/appdata/manufactory/src/infra/unraid/deploy.sh <sha>
 
-Later deploys are the usual one line.
+Later deploys are the usual one line. Tabs left open on the old bundle still show the old email
+forms until they reload; that is harmless, since there are no email/password users.
 
 ### Adding a variable (`ADMIN_TOKEN`, sign-in providers)
 

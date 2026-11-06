@@ -1481,6 +1481,26 @@ describe("GameStore OAuth redirect (O-5, O-6)", { timeout: 60_000 }, () => {
     expect(other.store.getView().account).toEqual({ provider: null, email: null });
   });
 
+  it("12b. a boot with no session clears a stale label, so it never names a later account", async () => {
+    const rig = await newRig();
+    rig.session.user = null;
+    const label = memoryTokenStorage();
+    label.set('{"provider":"github","email":"old@x"}');
+    const { store } = storeOn(rig, { accountLabel: label });
+    await store.start();
+    await store.idle();
+    expect(store.getView().identity).toBe("guest");
+    expect(label.get()).toBeNull();
+    store.stop();
+
+    // A session that appears later without a sign-in in this tab reads as unlabelled.
+    rig.session.user = "u:c";
+    const next = storeOn(rig, { accountLabel: label });
+    await next.store.start();
+    await next.store.idle();
+    expect(next.store.getView().account).toEqual({ provider: null, email: null });
+  });
+
   it("13. health's providers (O-3): only well-formed ids, and a missing field is []", async () => {
     for (const [providers, want] of [
       [

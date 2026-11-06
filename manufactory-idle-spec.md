@@ -963,6 +963,8 @@ Index `player_worlds(player_id)`, `players(leaderboard_score DESC)`,
 - Self-hosted SuperTokens core as its own container.
 - EmailPassword + at least one social provider (the existing Rackstack setup used
   Discord and GitHub; reuse those).
+  **Erratum (2026-11):** accounts are OAuth only, Discord + GitHub, with no
+  EmailPassword (O-1 in `docs/superpowers/plans/2026-11-05-oauth-accounts.md`).
 - Session verification middleware on every `/api` route.
 - `players.supertokens_user_id` is the join key. Create the player row lazily on first
   authenticated request.
