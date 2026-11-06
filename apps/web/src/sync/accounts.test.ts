@@ -70,7 +70,8 @@ interface StoreOpts {
   tokens?: TokenStorage;
   parked?: TokenStorage;
   accountLabel?: TokenStorage;
-  gate?: Promise<void>;
+  /** authorisationURL waits for it. */
+  startGate?: Promise<void>;
   signOutFails?: boolean;
   tab?: RigTab;
   finishGate?: Promise<void>;
@@ -89,7 +90,7 @@ function storeOn(rig: TestRig, opts: StoreOpts = {}): Made {
   const accountLabel = opts.accountLabel ?? browserTokenStorage(ls, ACCOUNT_LABEL_KEY);
   const log: string[] = [];
   const client = rigAccounts(rig, {
-    ...(opts.gate ? { gate: opts.gate } : {}),
+    ...(opts.startGate ? { startGate: opts.startGate } : {}),
     ...(opts.signOutFails ? { signOutFails: true } : {}),
     ...(opts.tab ? { tab: opts.tab } : {}),
     ...(opts.finishGate ? { finishGate: opts.finishGate } : {}),
@@ -134,10 +135,10 @@ function storeOn(rig: TestRig, opts: StoreOpts = {}): Made {
   };
 }
 
-/** A started guest store on a sessions rig, optionally with a gated rigAccounts. */
-async function guestStart(gate?: Promise<void>, opts: Omit<StoreOpts, "gate"> = {}) {
+/** A started guest store on a sessions rig. */
+async function guestStart(opts: StoreOpts = {}) {
   const rig = await newRig();
-  const made = storeOn(rig, { ...opts, ...(gate ? { gate } : {}) });
+  const made = storeOn(rig, opts);
   await made.store.start();
   await made.store.idle();
   expect(made.store.getView().identity).toBe("guest");
@@ -305,7 +306,7 @@ describe("GameStore accounts (W-14 to W-16)", { timeout: 60_000 }, () => {
     expect(view.snapshot!.state.seed).toEqual((await accountWorld(rig, "u:s@x"))!.seed);
   });
 
-  /** I-1 (final review): a sign-up cut short. The tab closed after signUp returned, so the
+  /** I-1 (final review): a sign-in cut short. The tab closed after the callback signed in, so the
    * session and the guest token both survive into the next boot, which claims (migration 003
    * makes a repeat claim idempotent). The claim's response is held: nothing may reach
    * /api/world, or the account's world would be made empty before the guest's is claimed. */
@@ -613,7 +614,7 @@ describe("GameStore accounts: never lose a guest token (fix round 1)", { timeout
     const ls = stubStorage(PARKED_GUEST_TOKEN_KEY);
     const tokens = browserTokenStorage(ls);
     const parked = browserTokenStorage(ls, PARKED_GUEST_TOKEN_KEY);
-    const made = await guestStart(undefined, { tokens, parked });
+    const made = await guestStart({ tokens, parked });
     const { rig } = made;
     rig.session.user = "u:a";
     expect((await rig.fetch("/api/world")).status).toBe(200);
@@ -686,31 +687,39 @@ describe("GameStore accounts: never lose a guest token (fix round 1)", { timeout
   });
 
   it("D. a keepalive response that lands after a reset is ignored (the epoch)", async () => {
-    const { rig, store } = await guestStart();
-    rig.session.user = "u:k@x";
-    expect((await rig.fetch("/api/world")).status).toBe(200);
-    rig.session.user = null;
-    const account = (await accountWorld(rig, "u:k@x"))!;
+    // Since O-1 a sign-in is a page load, so the reset here is the sign-out that follows a
+    // callback sign-in: the session's keepalive is in flight (sign-out's hold doesn't wait on
+    // keepalives), it commits to the account's world, and lands after the new guest's world.
+    const { rig, store, tokens } = await redirect(await guestStart(), "k");
+    expect(store.getView().identity).toBe("session");
     await rig.advance(60_000);
     store.pressTap();
     store.releaseTap();
+    const from = rig.fetch.calls.length;
     const release = rig.fetch.hold("POST", "/api/actions");
     store.flushTaps({ keepalive: true });
-    await until(() => rig.fetch.calls.some((c) => c.url === "/api/actions"));
+    await until(() => rig.fetch.calls.slice(from).some((c) => c.url === "/api/actions"));
     rig.clock.settleWith = null;
 
-    expect((await store.signIn("k@x", "hunter2hunter2")).ok).toBe(true);
-    await until(() => {
-      const seed = store.getView().snapshot?.state.seed;
-      return seed !== undefined && JSON.stringify(seed) === JSON.stringify(account.seed);
-    });
-    expect(store.getView().snapshot!.stateVersion).toBe(0);
+    expect(await store.signOut()).toBe(true);
+    await until(
+      () =>
+        store.getView().identity === "guest" &&
+        tokens.get() !== null &&
+        store.getView().snapshot !== null,
+    );
+    const guest = store.getView().snapshot!;
+    expect(guest.stateVersion).toBe(0);
     release();
+    for (let i = 0; i < 20; i++) await turn();
     await store.idle();
-    // The guest world's v1 (the tap) is not adopted over the account's v0.
-    expect(store.getView().snapshot!.state.seed).toEqual(account.seed);
+    // The account world's v1 (the tap committed) is not adopted over the new guest's v0.
+    const account = (await accountWorld(rig, "u:k"))!;
+    expect(account.seed).not.toEqual(guest.state.seed);
+    expect(store.getView().snapshot!.state.seed).toEqual(guest.state.seed);
     expect(store.getView().snapshot!.stateVersion).toBe(0);
-    expect(store.getView().identity).toBe("session");
+    expect(store.getView().identity).toBe("guest");
+    expect(kinds(store)).not.toContain("session-ended");
   });
 
   it("E. a dead parked token restored at sign-out quietly becomes a new guest", async () => {
@@ -1023,69 +1032,6 @@ describe("GameStore accounts: fix rounds 2 and 3", { timeout: 60_000 }, () => {
     expect(store.getView().snapshot!.stateVersion).toBe(0);
   });
 
-  it("3. a guest 401 that lands after the sign-in never ends the session", async () => {
-    // A guest keepalive sent before the sign-in, held, then answered with the API's 401 while
-    // the claim is out (the hold doesn't wait on keepalives). It is about the guest token.
-    let openKeepalive!: () => void;
-    const keepaliveGate = new Promise<void>((r) => (openKeepalive = r));
-    let openClaim!: () => void;
-    const claimGate = new Promise<void>((r) => (openClaim = r));
-    let claimSent = false;
-    let keepaliveSent = false;
-    let keepaliveAnswered = false;
-    const holder: { rig?: TestRig } = {};
-    const fetch: FetchLike = async (url, init) => {
-      if (url === "/api/actions" && init?.keepalive) {
-        keepaliveSent = true;
-        await keepaliveGate;
-        keepaliveAnswered = true;
-        return new Response('{"error":"unauthorized"}', {
-          status: 401,
-          headers: { "www-authenticate": "Guest" },
-        });
-      }
-      if (url === "/api/auth/claim") {
-        claimSent = true;
-        await claimGate;
-      }
-      return holder.rig!.fetch(url, init);
-    };
-    const rig = await newRig();
-    holder.rig = rig;
-    const { store, tokens, parked } = storeOn(rig, { fetch });
-    await store.start();
-    await store.idle();
-    const guestToken = tokens.get()!;
-    await rig.advance(60_000);
-    store.pressTap();
-    store.releaseTap();
-    store.flushTaps({ keepalive: true });
-    rig.clock.settleWith = null; // idle() would wait on the gated requests
-    await until(() => keepaliveSent);
-
-    expect((await store.signUp("w@x", "hunter2hunter2")).ok).toBe(true);
-    await until(() => claimSent);
-    openKeepalive();
-    await until(() => keepaliveAnswered);
-    for (let i = 0; i < 20; i++) await turn();
-    let view = store.getView();
-    expect(view.identity).toBe("session");
-    expect(view.account).toEqual({ provider: null, email: "w@x" });
-    expect(view.notices.some((n) => n.kind === "session-ended")).toBe(false);
-    expect(tokens.get()).toBe(guestToken);
-    expect(parked.get()).toBeNull();
-
-    openClaim();
-    await store.idle();
-    view = store.getView();
-    expect(view.identity).toBe("session");
-    expect(view.auth).toBe("idle");
-    expect(view.notices.some((n) => n.kind === "session-ended")).toBe(false);
-    expect(view.notices.some((n) => n.kind === "account-has-factory")).toBe(false);
-    expect(tokens.get()).toBeNull(); // the claim's 200, not the 401, moved it
-    expect(view.snapshot!.state.seed).toEqual((await accountWorld(rig, "u:w@x"))!.seed);
-  });
-
   it("3. a session POST that 401s still ends the session", async () => {
     const rig = await newRig();
     rig.session.user = "u:t@x";
@@ -1174,7 +1120,7 @@ describe("GameStore OAuth redirect (O-5, O-6)", { timeout: 60_000 }, () => {
   });
 
   it("3. a guest token only in memory: storage, and no authorisation URL", async () => {
-    const { store, client, navigated } = await guestStart(undefined, {
+    const { store, client, navigated } = await guestStart({
       tokens: memoryTokenStorage(),
     });
     expect(await store.beginSignIn("discord")).toEqual({ ok: false, kind: "storage" });
@@ -1201,7 +1147,7 @@ describe("GameStore OAuth redirect (O-5, O-6)", { timeout: 60_000 }, () => {
       kind: "unavailable",
     });
 
-    const refused = await guestStart(undefined, {
+    const refused = await guestStart({
       startFails: { ok: false, kind: "not-allowed", reason: "r" },
     });
     expect(await refused.store.beginSignIn("github")).toEqual({
@@ -1226,6 +1172,74 @@ describe("GameStore OAuth redirect (O-5, O-6)", { timeout: 60_000 }, () => {
     expect(store.getView().leaving).toBe("github");
     await rig.advance(1);
     expect(store.getView().leaving).toBeNull();
+  });
+
+  describe("5b. abandoned mid-drain: no navigate", () => {
+    it("stop() while the drain waits on the outbox", async () => {
+      const made = await guestStart();
+      const { rig, store } = made;
+      const release = rig.fetch.hold("POST", "/api/actions");
+      void store.send([reorder(store)], "reorder");
+      await until(() => rig.fetch.calls.some((c) => c.url === "/api/actions"));
+      rig.clock.settleWith = null;
+      const begun = store.beginSignIn("discord");
+      for (let i = 0; i < 5; i++) await turn();
+      store.stop();
+      release();
+      expect(await begun).toEqual({ ok: false, kind: "unavailable" });
+      expect(made.client.calls).not.toContain("authorisationURL discord");
+      expect(made.navigated).toEqual([]);
+      expect(store.getView().leaving).toBeNull();
+    });
+
+    it("stop() while the authorisation URL is being fetched", async () => {
+      const { gate, open } = gated();
+      const made = await guestStart({ startGate: gate });
+      const begun = made.store.beginSignIn("discord");
+      await until(() => made.client.calls.includes("authorisationURL discord"));
+      made.store.stop();
+      open();
+      expect(await begun).toEqual({ ok: false, kind: "unavailable" });
+      expect(made.navigated).toEqual([]);
+      expect(made.store.getView().leaving).toBeNull();
+    });
+
+    it("a bfcache return mid-URL, then another provider: only the second one leaves", async () => {
+      const { gate, open } = gated();
+      const made = await guestStart({ startGate: gate });
+      const first = made.store.beginSignIn("discord");
+      await until(() => made.client.calls.includes("authorisationURL discord"));
+      made.store.pageShown(true);
+      expect(made.store.getView().leaving).toBeNull();
+      const second = made.store.beginSignIn("github");
+      expect(made.store.getView().leaving).toBe("github");
+      await until(() => made.client.calls.includes("authorisationURL github"));
+      open();
+      expect(await first).toEqual({ ok: false, kind: "unavailable" });
+      // The first's refusal leaves the second's `leaving` alone.
+      expect(made.store.getView().leaving).toBe("github");
+      expect(await second).toEqual({ ok: true });
+      expect(made.navigated).toEqual(["/fake/authorize?provider=github&state=s2"]);
+    });
+
+    it("the guest token falls back to memory mid-URL: storage", async () => {
+      const { gate, open } = gated();
+      const inner = browserTokenStorage(stubStorage());
+      const tokens: TokenStorage = {
+        get: () => inner.get(),
+        set: (t) => inner.set(t),
+        clear: () => inner.clear(),
+        persistent: true,
+      };
+      const made = await guestStart({ startGate: gate, tokens });
+      const begun = made.store.beginSignIn("discord");
+      await until(() => made.client.calls.includes("authorisationURL discord"));
+      tokens.persistent = false;
+      open();
+      expect(await begun).toEqual({ ok: false, kind: "storage" });
+      expect(made.navigated).toEqual([]);
+      expect(made.store.getView().leaving).toBeNull();
+    });
   });
 
   it("6. the callback claims first: the guest's world comes along (O-6)", async () => {

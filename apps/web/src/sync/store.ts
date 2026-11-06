@@ -6,8 +6,6 @@ import {
   providerName,
   type Account,
   type AccountClient,
-  type AuthResult,
-  type ResetResult,
   type SignInFailure,
   type SignInResult,
   type StartResult,
@@ -80,7 +78,7 @@ export interface StoreView {
   accounts: "unknown" | "off" | "on";
   identity: Identity;
   /** Signed in (O-9): the provider and email this device saw at the callback, each null when
-   * unknown (an email/password sign-in, or no stored label). */
+   * unknown (no stored label, or one this build can't read). */
   account: { provider: string | null; email: string | null } | null;
   /** "held": a sign-in is in progress (S-4); "claiming": the claim is retrying (S-5). */
   auth: "idle" | "held" | "claiming";
@@ -619,18 +617,12 @@ export class GameStore {
 
   // ---- accounts (W-15, W-16, S-4 to S-7) ----
 
-  signUp(email: string, password: string): Promise<AuthResult> {
-    return this.#signIn((c) => c.signUp(email, password));
-  }
-
-  signIn(email: string, password: string): Promise<AuthResult> {
-    return this.#signIn((c) => c.signIn(email, password));
-  }
-
   /** O-5: leaves the page for the provider, only with an empty outbox. Guards, then the drain
    * (the tap hold ends, its taps join the outbox, idle()), then the URL, then navigate. Nothing
    * is held and the outbox keeps running: a batch still pending after the drain refuses the
-   * whole sign-in (`unsaved`), since the outbox is in memory and the page is about to unload. */
+   * whole sign-in (`unsaved`), since the outbox is in memory and the page is about to unload.
+   * After each wait it re-checks: a stop() or a pageshow that cleared `leaving` (or a newer
+   * beginSignIn that took it) means this attempt is over, and it never navigates. */
   async beginSignIn(provider: string): Promise<BeginResult> {
     const client = this.#client();
     if (
@@ -656,6 +648,7 @@ export class GameStore {
     if (tap !== null) void this.#outbox.enqueue([tap], TAP_LABEL);
     this.#emit();
     await this.idle();
+    if (this.#abandoned(provider)) return this.#gaveUp(provider);
     if (this.#unsaved()) return this.#stayed({ ok: false, kind: "unsaved" });
     let start: StartResult;
     try {
@@ -663,7 +656,11 @@ export class GameStore {
     } catch {
       start = UNAVAILABLE;
     }
+    if (this.#abandoned(provider)) return this.#gaveUp(provider);
     if (!start.ok) return this.#stayed(start);
+    if (this.#tokens.get() !== null && !this.#tokens.persistent) {
+      return this.#stayed({ ok: false, kind: "storage" });
+    }
     if (this.#unsaved()) return this.#stayed({ ok: false, kind: "unsaved" });
     this.#leaveTimer = this.#clock.setTimeout(() => {
       this.#leaveTimer = null;
@@ -676,6 +673,18 @@ export class GameStore {
   /** O-11, from pageshow: a bfcache restore (Back from the provider) is a page that stayed. */
   pageShown(persisted: boolean): void {
     if (persisted) this.#clearLeaving();
+  }
+
+  /** This beginSignIn no longer owns the page's leaving: stopped, or `leaving` was cleared
+   * (pageshow, the timer) or taken by a newer attempt. */
+  #abandoned(provider: string): boolean {
+    return this.#stopped || this.#leaving !== provider;
+  }
+
+  /** Refuses an abandoned attempt, clearing `leaving` only if it is still this attempt's. */
+  #gaveUp(provider: string): BeginResult {
+    if (this.#leaving === provider) this.#clearLeaving();
+    return UNAVAILABLE;
   }
 
   /** Something would be lost if the page unloaded now. */
@@ -718,44 +727,13 @@ export class GameStore {
     return true;
   }
 
-  sendReset(email: string): Promise<ResetResult> {
-    const client = this.#client();
-    return client === null ? Promise.resolve(UNAVAILABLE) : client.sendReset(email);
-  }
-
-  submitNewPassword(password: string): Promise<ResetResult> {
-    const client = this.#client();
-    return client === null ? Promise.resolve(UNAVAILABLE) : client.submitNewPassword(password);
-  }
-
   #client(): AccountClient | null {
     return this.#accountsState === "on" && this.#accounts ? this.#accounts : null;
   }
 
-  /** S-4: hold, sign in, then claim (S-5) or release. Resolves with the sign-in's result; the
-   * claim runs on (idle() waits for it). */
-  async #signIn(call: (c: AccountClient) => Promise<AuthResult>): Promise<AuthResult> {
-    const client = this.#client();
-    if (client === null || this.#identity !== "guest" || this.#auth !== "idle") return UNAVAILABLE;
-    const drained = this.#hold();
-    let result: AuthResult;
-    try {
-      result = await call(client);
-    } catch {
-      result = UNAVAILABLE;
-    }
-    await drained;
-    if (!result.ok) {
-      this.#release();
-      return result;
-    }
-    this.#enterSession({ provider: null, email: result.email });
-    return result;
-  }
-
   /** A sign-in succeeded (S-4, O-6): the session is ours, and the claim (S-5) decides the world.
    * Called under the hold, so nothing world-shaped has gone out since it began. */
-  #enterSession(account: { provider: string | null; email: string | null }): void {
+  #enterSession(account: Account): void {
     this.#identity = "session";
     this.#account = account;
     this.#claimPending = true;
@@ -1150,7 +1128,7 @@ export class GameStore {
     if (session) {
       this.#identity = "session";
       this.#account = parseLabel(this.#accountLabel.get());
-      // A session and a guest token: a sign-up or sign-in cut short (the tab closed before its
+      // A session and a guest token: a sign-in cut short (the tab closed before its
       // claim answered). Claim now, under the hold, exactly as a sign-in does (S-4, S-5): a
       // GET first would make the account an empty world and strand the guest's. The claim is
       // idempotent (migration 003): a repeat of a committed claim is 200 with the same world;

@@ -6,9 +6,9 @@
 // document), Close or the backdrop closes it. Tab wraps inside it, and focus never falls to
 // <body>: whatever unmounts the focused control, the title takes focus. App makes the
 // background inert and returns focus to the opener.
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import type { GameStore, StoreView } from "../sync/store.js";
-import { AccountSection, type AccountMode } from "./AccountForms.js";
+import { AccountSection } from "./AccountForms.js";
 import { NOTATION_LABELS, NOTATIONS, notationSample, useNotation } from "./notation.js";
 import styles from "./Settings.module.css";
 import { capabilities } from "./capabilities.js";
@@ -20,15 +20,14 @@ import { isLocked, THEMES, useTheme } from "./theme.js";
 export const LOCKED_LINE = "Unlocks in the prestige store";
 
 export interface SettingsProps {
-  store: Pick<GameStore, "signUp" | "signIn" | "signOut" | "sendReset">;
+  store: Pick<GameStore, "beginSignIn" | "signOut">;
   view: StoreView;
-  /** Open at the Account section (the chip, the reset page's Sign in). */
+  /** Open at the Account section (the chip). */
   section?: "account";
-  mode?: "sign-up" | "sign-in";
   onClose(): void;
 }
 
-export function Settings({ store, view, section, mode = "sign-up", onClose }: SettingsProps) {
+export function Settings({ store, view, section, onClose }: SettingsProps) {
   const titleId = useId();
   const accountId = useId();
   const aboutId = useId();
@@ -38,11 +37,10 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
   const [notation, setNotation] = useNotation();
   const theme = useTheme();
   const caps = capabilities(view);
-  const [accountMode, setAccountMode] = useState<AccountMode>(mode);
   const atAccount = section === "account";
 
   useEffect(() => {
-    // The account form focuses its own first field when opened there.
+    // The Account section focuses its first provider button when opened there.
     if (!atAccount) title.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -60,7 +58,7 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // Never on <body>: a sign-in that unmounts its form, "Send another", a mode change. Runs
+  // Never on <body>: a session that appears, or a sign-out, swaps the Account section. Runs
   // after the children's own focus effects, so it only catches what they left behind.
   useEffect(() => {
     const d = dialog.current;
@@ -173,13 +171,7 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
           <h3 id={accountId} className={styles.legend}>
             Account
           </h3>
-          <AccountSection
-            store={store}
-            view={view}
-            mode={accountMode}
-            onMode={setAccountMode}
-            focusFirst={atAccount}
-          />
+          <AccountSection store={store} view={view} focusFirst={atAccount} />
         </section>
 
         <section aria-labelledby={aboutId} className={styles.group} data-about>

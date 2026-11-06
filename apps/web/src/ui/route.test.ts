@@ -18,8 +18,12 @@ describe("parseRoute (S-10)", () => {
     ["/handbook/iron_plate/", { kind: "handbook", itemId: "iron_plate" }],
     ["/handbook/iron%5Fplate", { kind: "handbook", itemId: "iron_plate" }],
     ["/handbook/%E0%A4%A", { kind: "handbook", itemId: null }],
-    ["/account/reset-password", { kind: "reset-password" }],
-    ["/account/reset-password/", { kind: "reset-password" }],
+    ["/account/callback/discord", { kind: "callback", provider: "discord" }],
+    ["/account/callback/github/", { kind: "callback", provider: "github" }],
+    ["/account/callback/", { kind: "game" }],
+    ["/account/callback/Disc%20ord", { kind: "game" }],
+    ["/account/callback/a/b", { kind: "game" }],
+    ["/account/reset-password", { kind: "game" }],
     ["/nope", { kind: "game" }],
     ["/handbook/a/b", { kind: "game" }],
     ["/account", { kind: "game" }],
@@ -28,7 +32,7 @@ describe("parseRoute (S-10)", () => {
   });
 
   it("routePath round-trips the canonical paths", () => {
-    for (const p of ["/", "/handbook", "/handbook/iron_plate", "/account/reset-password"]) {
+    for (const p of ["/", "/handbook", "/handbook/iron_plate", "/account/callback/github"]) {
       expect(routePath(parseRoute(p))).toBe(p);
     }
     expect(routePath({ kind: "handbook", itemId: "a b" })).toBe("/handbook/a%20b");
@@ -47,10 +51,24 @@ describe("useRoute", () => {
     expect(location.pathname).toBe("/");
     cleanup();
 
-    history.replaceState(null, "", "/account/reset-password?token=t");
+    history.replaceState(null, "", "/handbook/screw?x=1");
     const r2 = renderHook(() => useRoute());
-    expect(r2.result.current[0]).toEqual({ kind: "reset-password" });
-    expect(location.pathname + location.search).toBe("/account/reset-password?token=t");
+    expect(r2.result.current[0]).toEqual({ kind: "handbook", itemId: "screw" });
+    expect(location.pathname + location.search).toBe("/handbook/screw?x=1");
+  });
+
+  it("O-8: keeps the callback's query for the SDK to read", () => {
+    history.replaceState(null, "", "/account/callback/github?code=c&state=s");
+    const { result } = renderHook(() => useRoute());
+    expect(result.current[0]).toEqual({ kind: "callback", provider: "github" });
+    expect(location.pathname + location.search).toBe("/account/callback/github?code=c&state=s");
+  });
+
+  it("O-1: an old reset link is an unknown path, replaced with /", () => {
+    history.replaceState(null, "", "/account/reset-password?token=t");
+    const { result } = renderHook(() => useRoute());
+    expect(result.current[0]).toEqual({ kind: "game" });
+    expect(location.pathname + location.search).toBe("/");
   });
 
   it("navigates with pushState and follows popstate", () => {

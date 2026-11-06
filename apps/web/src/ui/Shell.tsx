@@ -24,7 +24,7 @@ export type View = "factory" | "priority" | "handbook" | "power";
 export interface ShellProps {
   store: GameStore;
   view: StoreView;
-  /** null while loading and on the reset-password page: no game chrome then. */
+  /** null while loading and on the sign-in callback page: no game chrome then. */
   snapshot: Snapshot | null;
   mode: LayoutMode;
   shown: View;
@@ -47,10 +47,12 @@ export interface ShellProps {
   };
 }
 
-/** S-12: the save chip, from the first milestone on, for a guest only. */
+/** S-12: the save chip, from the first milestone on, for a guest only; O-13: only when there
+ * is a provider to sign in with. */
 function showsChip(view: StoreView): boolean {
   return (
     view.accounts === "on" &&
+    view.providers.length > 0 &&
     view.identity === "guest" &&
     view.snapshot !== null &&
     view.snapshot.state.tier >= 1

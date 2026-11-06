@@ -11,7 +11,7 @@ import {
   pgliteDb,
   type Db,
 } from "@manufactory/api/testing";
-import type { AccountClient, AuthResult, SignInResult, StartResult } from "../auth/accounts.js";
+import type { AccountClient, SignInResult, StartResult } from "../auth/accounts.js";
 import type { ClientClock } from "./snapshot.js";
 import type { FetchLike, GuestResponse, WorldResponse } from "./wire.js";
 
@@ -278,8 +278,8 @@ export interface RigTab {
 }
 
 export interface RigAccountsOpts {
-  /** signUp/signIn wait for it. */
-  gate?: Promise<void>;
+  /** authorisationURL waits for it (beginSignIn mid-drain). */
+  startGate?: Promise<void>;
   signOutFails?: boolean;
   /** Shared across stores: one per simulated tab. Default: a fresh one. */
   tab?: RigTab;
@@ -291,12 +291,11 @@ export interface RigAccountsOpts {
   log?: string[];
 }
 
-/** An AccountClient over the rig's simulated cookie. signUp/signIn await `gate`, then set
- * session.user = `u:${email}`; a "wrong" password is wrong-credentials. signOut clears it, or
- * with `signOutFails` (the server unreachable) keeps it and reports false.
+/** An AccountClient over the rig's simulated cookie. signOut clears it, or with
+ * `signOutFails` (the server unreachable) keeps it and reports false.
  *
- * The redirect (O-5 to O-7): authorisationURL stores `s<n>` as the tab's state for the
- * provider. finishSignIn applies O-7's checks to the tab (an `error` first, before the gate),
+ * The redirect (O-5 to O-7): authorisationURL awaits `startGate`, then stores `s<n>` as the
+ * tab's state for the provider. finishSignIn applies O-7's checks to the tab (an `error` first, before the gate),
  * spends the state, awaits `finishGate`, then: the code `no-email` is no-email, the code
  * `throw` throws (a network failure), and any other code `<user>` signs in as `u:<user>` with
  * the email `<user>@<provider>.test`. */
@@ -311,13 +310,6 @@ export function rigAccounts(
     calls.push(call);
     opts.log?.push(call);
   };
-  const sign = async (name: string, email: string, password: string): Promise<AuthResult> => {
-    record(`${name} ${email}`);
-    await opts.gate;
-    if (password === "wrong") return { ok: false, kind: "wrong-credentials" };
-    rig.session.user = `u:${email}`;
-    return { ok: true, email };
-  };
   return {
     calls,
     tab,
@@ -330,6 +322,7 @@ export function rigAccounts(
     },
     async authorisationURL(provider) {
       record(`authorisationURL ${provider}`);
+      await opts.startGate;
       if (opts.startFails) return opts.startFails;
       states += 1;
       const state = `s${states}`;
@@ -360,21 +353,11 @@ export function rigAccounts(
       rig.session.user = `u:${code}`;
       return { ok: true, account: { provider, email: `${code}@${provider}.test` } };
     },
-    signUp: (email, password) => sign("signUp", email, password),
-    signIn: (email, password) => sign("signIn", email, password),
     async signOut() {
       record("signOut");
       if (opts.signOutFails) return false;
       rig.session.user = null;
       return true;
-    },
-    async sendReset(email) {
-      record(`sendReset ${email}`);
-      return { ok: true };
-    },
-    async submitNewPassword() {
-      record("submitNewPassword");
-      return { ok: true };
     },
   };
 }

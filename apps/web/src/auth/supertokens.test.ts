@@ -12,10 +12,6 @@ const sdk = vi.hoisted(() => {
   return {
     STGeneralError,
     init: vi.fn(),
-    signIn: vi.fn(),
-    signUp: vi.fn(),
-    sendPasswordResetEmail: vi.fn(),
-    submitNewPassword: vi.fn(),
     doesSessionExist: vi.fn(),
     signOut: vi.fn(),
     getAuthorisationURLWithQueryParamsAndSetState: vi.fn(),
@@ -25,15 +21,6 @@ const sdk = vi.hoisted(() => {
 });
 
 vi.mock("supertokens-web-js", () => ({ default: { init: sdk.init } }));
-vi.mock("supertokens-web-js/recipe/emailpassword", () => ({
-  default: {
-    init: () => "emailpassword",
-    signIn: sdk.signIn,
-    signUp: sdk.signUp,
-    sendPasswordResetEmail: sdk.sendPasswordResetEmail,
-    submitNewPassword: sdk.submitNewPassword,
-  },
-}));
 vi.mock("supertokens-web-js/recipe/session", () => ({
   default: {
     init: (config: unknown) => ({ session: config }),
@@ -61,7 +48,7 @@ beforeEach(() => {
 });
 
 describe("superTokensClient (W-15)", () => {
-  it("initialises once, in cookie mode on /auth at the origin", () => {
+  it("1. initialises once, in cookie mode on /auth at the origin, with no EmailPassword (O-1)", () => {
     const client = superTokensClient("https://game.example");
     client.init();
     client.init();
@@ -72,88 +59,17 @@ describe("superTokensClient (W-15)", () => {
         apiDomain: "https://game.example",
         apiBasePath: "/auth",
       },
-      recipeList: [{ session: { tokenTransferMethod: "cookie" } }, "thirdparty", "emailpassword"],
+      recipeList: [{ session: { tokenTransferMethod: "cookie" } }, "thirdparty"],
     });
   });
 
-  it("sends the two form fields, and maps OK", async () => {
-    sdk.signUp.mockResolvedValue({ status: "OK" });
-    expect(await superTokensClient("o").signUp("a@x", "pw")).toEqual({ ok: true, email: "a@x" });
-    expect(sdk.signUp).toHaveBeenCalledWith({
-      formFields: [
-        { id: "email", value: "a@x" },
-        { id: "password", value: "pw" },
-      ],
-    });
-  });
-
-  it("maps wrong credentials and a FIELD_ERROR", async () => {
-    const client = superTokensClient("o");
-    sdk.signIn.mockResolvedValueOnce({ status: "WRONG_CREDENTIALS_ERROR" });
-    expect(await client.signIn("a@x", "pw")).toEqual({ ok: false, kind: "wrong-credentials" });
-    sdk.signIn.mockResolvedValueOnce({
-      status: "FIELD_ERROR",
-      formFields: [{ id: "password", error: "Password must contain at least 8 characters" }],
-    });
-    expect(await client.signIn("a@x", "pw")).toEqual({
-      ok: false,
-      kind: "field",
-      fields: [{ id: "password", error: "Password must contain at least 8 characters" }],
-    });
-  });
-
-  it("carries an STGeneralError's message through, in sign-in and in reset", async () => {
-    const client = superTokensClient("o");
-    sdk.signIn.mockRejectedValueOnce(new sdk.STGeneralError("Accounts are paused"));
-    expect(await client.signIn("a@x", "pw")).toEqual({
-      ok: false,
-      kind: "not-allowed",
-      reason: "Accounts are paused",
-    });
-    sdk.sendPasswordResetEmail.mockRejectedValueOnce(new sdk.STGeneralError("Accounts are paused"));
-    expect(await client.sendReset("a@x")).toEqual({
-      ok: false,
-      kind: "field",
-      fields: [{ id: "email", error: "Accounts are paused" }],
-    });
-    sdk.submitNewPassword.mockRejectedValueOnce(new sdk.STGeneralError("Accounts are paused"));
-    expect(await client.submitNewPassword("pw")).toEqual({
-      ok: false,
-      kind: "field",
-      fields: [{ id: "password", error: "Accounts are paused" }],
-    });
-  });
-
-  it("maps a network throw to unavailable, and a failed sign-out to false", async () => {
+  it("maps a failed sign-out to false, and a failed session check to no session", async () => {
     const client = superTokensClient("o");
     const network = new TypeError("Failed to fetch");
-    sdk.signUp.mockRejectedValueOnce(network);
-    expect(await client.signUp("a@x", "pw")).toEqual({ ok: false, kind: "unavailable" });
-    sdk.sendPasswordResetEmail.mockRejectedValueOnce(network);
-    expect(await client.sendReset("a@x")).toEqual({ ok: false, kind: "unavailable" });
-    sdk.submitNewPassword.mockRejectedValueOnce(network);
-    expect(await client.submitNewPassword("pw")).toEqual({ ok: false, kind: "unavailable" });
     sdk.signOut.mockRejectedValueOnce(network);
     expect(await client.signOut()).toBe(false);
     sdk.doesSessionExist.mockRejectedValueOnce(network);
     expect(await client.hasSession()).toBe(false);
-  });
-
-  it("maps the reset statuses", async () => {
-    const client = superTokensClient("o");
-    sdk.submitNewPassword.mockResolvedValueOnce({ status: "RESET_PASSWORD_INVALID_TOKEN_ERROR" });
-    expect(await client.submitNewPassword("pw")).toEqual({ ok: false, kind: "invalid-token" });
-    sdk.sendPasswordResetEmail.mockResolvedValueOnce({ status: "OK" });
-    expect(await client.sendReset("a@x")).toEqual({ ok: true });
-    sdk.sendPasswordResetEmail.mockResolvedValueOnce({
-      status: "PASSWORD_RESET_NOT_ALLOWED",
-      reason: "Not allowed",
-    });
-    expect(await client.sendReset("a@x")).toEqual({
-      ok: false,
-      kind: "field",
-      fields: [{ id: "email", error: "Not allowed" }],
-    });
   });
 });
 
@@ -284,6 +200,9 @@ describe("superTokensClient: the OAuth redirect (O-7)", () => {
     sdk.signInAndUp.mockRejectedValueOnce(new sdk.STGeneralError("paused"));
     expect(await finish()).toEqual({ ok: false, kind: "not-allowed", reason: "paused" });
     sdk.signInAndUp.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    expect(await finish()).toEqual({ ok: false, kind: "unavailable" });
+    // A status this build doesn't know (a newer SDK or server) is unavailable, never undefined.
+    sdk.signInAndUp.mockResolvedValueOnce({ status: "SOMETHING_NEW" });
     expect(await finish()).toEqual({ ok: false, kind: "unavailable" });
 
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
