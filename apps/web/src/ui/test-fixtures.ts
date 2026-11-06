@@ -135,6 +135,8 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     account: null,
     auth: "idle",
     parked: false,
+    providers: [],
+    leaving: null,
   };
   let clock = opts.now ?? CLIENT_T0;
   const listeners = new Set<() => void>();

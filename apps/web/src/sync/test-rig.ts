@@ -11,7 +11,7 @@ import {
   pgliteDb,
   type Db,
 } from "@manufactory/api/testing";
-import type { AccountClient, AuthResult } from "../auth/accounts.js";
+import type { AccountClient, AuthResult, SignInResult, StartResult } from "../auth/accounts.js";
 import type { ClientClock } from "./snapshot.js";
 import type { FetchLike, GuestResponse, WorldResponse } from "./wire.js";
 
@@ -270,16 +270,49 @@ export async function guestWorld(
   return { guestToken, world, checksum: world.contentChecksum };
 }
 
+/** The tab's sessionStorage, shared across "page loads" (the stores of one redirect): the SDK's
+ * stored state and O-7's consumed marker. */
+export interface RigTab {
+  state: { provider: string; state: string } | null;
+  consumed: string | null;
+}
+
+export interface RigAccountsOpts {
+  /** signUp/signIn wait for it. */
+  gate?: Promise<void>;
+  signOutFails?: boolean;
+  /** Shared across stores: one per simulated tab. Default: a fresh one. */
+  tab?: RigTab;
+  /** finishSignIn waits for it, after O-7's checks. */
+  finishGate?: Promise<void>;
+  /** authorisationURL answers this instead. */
+  startFails?: StartResult;
+  /** Every call is pushed here too, for an order across fetches and the client. */
+  log?: string[];
+}
+
 /** An AccountClient over the rig's simulated cookie. signUp/signIn await `gate`, then set
  * session.user = `u:${email}`; a "wrong" password is wrong-credentials. signOut clears it, or
- * with `signOutFails` (the server unreachable) keeps it and reports false. */
+ * with `signOutFails` (the server unreachable) keeps it and reports false.
+ *
+ * The redirect (O-5 to O-7): authorisationURL stores `s<n>` as the tab's state for the
+ * provider. finishSignIn applies O-7's checks to the tab (an `error` first, before the gate),
+ * spends the state, awaits `finishGate`, then: the code `no-email` is no-email, the code
+ * `throw` throws (a network failure), and any other code `<user>` signs in as `u:<user>` with
+ * the email `<user>@<provider>.test`. */
 export function rigAccounts(
   rig: TestRig,
-  opts: { gate?: Promise<void>; signOutFails?: boolean } = {},
-): AccountClient & { calls: string[] } {
+  opts: RigAccountsOpts = {},
+): AccountClient & { calls: string[]; tab: RigTab } {
   const calls: string[] = [];
+  const tab: RigTab = opts.tab ?? { state: null, consumed: null };
+  let states = 0;
+  const record = (call: string) => {
+    calls.push(call);
+    opts.log?.push(call);
+  };
   const sign = async (name: string, email: string, password: string): Promise<AuthResult> => {
-    calls.push(`${name} ${email}`);
+    record(`${name} ${email}`);
     await opts.gate;
     if (password === "wrong") return { ok: false, kind: "wrong-credentials" };
     rig.session.user = `u:${email}`;
@@ -287,27 +320,60 @@ export function rigAccounts(
   };
   return {
     calls,
+    tab,
     init() {
-      calls.push("init");
+      record("init");
     },
     async hasSession() {
-      calls.push("hasSession");
+      record("hasSession");
       return rig.session.user !== null;
+    },
+    async authorisationURL(provider) {
+      record(`authorisationURL ${provider}`);
+      if (opts.startFails) return opts.startFails;
+      states += 1;
+      const state = `s${states}`;
+      tab.state = { provider, state };
+      return { ok: true, url: `/fake/authorize?provider=${provider}&state=${state}` };
+    },
+    async finishSignIn(provider, search): Promise<SignInResult> {
+      record(`finishSignIn ${provider}`);
+      const query = new URLSearchParams(search);
+      const error = query.get("error");
+      if (error === "access_denied") return { ok: false, kind: "denied" };
+      if (error !== null) return { ok: false, kind: "provider-error", code: null };
+      const state = query.get("state");
+      const code = query.get("code");
+      if (
+        tab.state === null ||
+        tab.state.provider !== provider ||
+        state !== tab.state.state ||
+        !code ||
+        tab.consumed === state
+      ) {
+        return { ok: false, kind: "stale" };
+      }
+      tab.consumed = state;
+      await opts.finishGate;
+      if (code === "no-email") return { ok: false, kind: "no-email" };
+      if (code === "throw") throw new TypeError("network");
+      rig.session.user = `u:${code}`;
+      return { ok: true, account: { provider, email: `${code}@${provider}.test` } };
     },
     signUp: (email, password) => sign("signUp", email, password),
     signIn: (email, password) => sign("signIn", email, password),
     async signOut() {
-      calls.push("signOut");
+      record("signOut");
       if (opts.signOutFails) return false;
       rig.session.user = null;
       return true;
     },
     async sendReset(email) {
-      calls.push(`sendReset ${email}`);
+      record(`sendReset ${email}`);
       return { ok: true };
     },
     async submitNewPassword() {
-      calls.push("submitNewPassword");
+      record("submitNewPassword");
       return { ok: true };
     },
   };

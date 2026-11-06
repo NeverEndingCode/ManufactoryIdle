@@ -275,7 +275,11 @@ describe("Settings (S-11)", { timeout: 60_000 }, () => {
 
   it("6. signed in: the email, Sign out, and the parked-guest line", async () => {
     const store = fakeStore(fresh);
-    store.set({ accounts: "on", identity: "session", account: { email: "a@x.example" } });
+    store.set({
+      accounts: "on",
+      identity: "session",
+      account: { provider: null, email: "a@x.example" },
+    });
     mount(store);
     let dialog = openSettings();
     expect(within(dialog).getByText("Signed in as a@x.example")).toBeTruthy();
@@ -289,7 +293,7 @@ describe("Settings (S-11)", { timeout: 60_000 }, () => {
     // alone: here the park is only in memory (no notice, nothing in localStorage). A failed
     // sign-out says so.
     expect(localStorage.getItem("mi.parkedGuestToken")).toBeNull();
-    store.set({ account: { email: null }, notices: [], parked: true });
+    store.set({ account: { provider: null, email: null }, notices: [], parked: true });
     cleanup();
     mount(store);
     dialog = openSettings();
@@ -320,7 +324,7 @@ describe("Settings (S-11)", { timeout: 60_000 }, () => {
     at(fresh, { accounts: "on" });
     expect(fresh.state.tier).toBe(0);
     expect(chip()).toBeNull();
-    at(tier8, { accounts: "on", identity: "session", account: { email: null } });
+    at(tier8, { accounts: "on", identity: "session", account: { provider: null, email: null } });
     expect(chip()).toBeNull();
     at(tier8, { accounts: "off" });
     expect(chip()).toBeNull();
@@ -480,7 +484,7 @@ describe("Fix round 1", { timeout: 60_000 }, () => {
     store.set({ accounts: "on" });
     // As the real store: identity flips (and emits) before signIn's promise resolves.
     store.signIn.mockImplementationOnce((email: string) => {
-      store.set({ identity: "session", account: { email } });
+      store.set({ identity: "session", account: { provider: null, email } });
       return Promise.resolve<AuthResult>({ ok: true, email });
     });
     mount(store);
@@ -520,7 +524,7 @@ describe("Fix round 1", { timeout: 60_000 }, () => {
     expect(document.activeElement).toBe(within(reset).getByLabelText("Email"));
 
     // Signed in, then out: the Sign out button unmounts; the title takes focus.
-    store.set({ identity: "session", account: { email: null } });
+    store.set({ identity: "session", account: { provider: null, email: null } });
     const out = within(dialog).getByRole("button", { name: "Sign out" });
     out.focus();
     store.set({ identity: "guest", account: null });

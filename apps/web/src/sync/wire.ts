@@ -15,6 +15,8 @@ export interface HealthResponse {
   ok: true;
   contentChecksum: string;
   accounts: boolean;
+  /** O-3: the configured thirdPartyIds. Unchecked: the store keeps only well-formed ids. */
+  providers?: unknown;
 }
 
 export interface GuestResponse {
