@@ -19,13 +19,22 @@ export interface DevServerOptions {
   /** A fake SuperTokens front-end interface (dev-sessions.ts) for the web client's account
    * e2e. Never in production: throws when NODE_ENV is "production". */
   fakeSessions?: boolean;
+  /** The fake's sign-in providers; omitted: discord and github (O-14). */
+  fakeProviders?: string[];
 }
 
-export async function devServer(opts: DevServerOptions = {}): Promise<{ app: FastifyInstance; db: Db }> {
+export async function devServer(
+  opts: DevServerOptions = {},
+): Promise<{ app: FastifyInstance; db: Db }> {
   if (opts.fakeSessions && process.env.NODE_ENV === "production") {
     throw new Error("fakeSessions must never run with NODE_ENV=production");
   }
-  const fake = opts.fakeSessions ? fakeSessions({ clock: opts.clock ?? Date.now }) : null;
+  const fake = opts.fakeSessions
+    ? fakeSessions({
+        clock: opts.clock ?? Date.now,
+        ...(opts.fakeProviders ? { providers: opts.fakeProviders } : {}),
+      })
+    : null;
   const contentDir =
     opts.contentDir ??
     fileURLToPath(new URL("../../../packages/content/bundles/vertical-slice", import.meta.url));

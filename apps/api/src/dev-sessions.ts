@@ -1,7 +1,11 @@
 // A fake SuperTokens front-end driver interface (FDI) for the dev server and the web
 // client's account e2e, so no real SuperTokens core is needed. It is reachable only from
 // dev-server.ts with fakeSessions: true (dev.ts: DEV_FAKE_SESSIONS=1), never from main.ts.
-// Passwords are kept in plain memory: this is a test double, not authentication.
+// It speaks ThirdParty (O-14): /auth/authorisationurl, a fake provider at
+// /auth/dev/oauth/authorize that signs in whoever the dev-oauth-user cookie names, and
+// /auth/signinup. Like the real API it pins the redirect URI to /account/callback/<id>
+// (O-4, on the path: the dev origin varies), and it only ever redirects to a path, never
+// to another host. This is a test double, not authentication.
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ServerDeps } from "./server.js";
@@ -30,6 +34,34 @@ const COOKIE = "sAccessToken";
 const PREFIX = "dev.";
 const SESSION_MS = 3600_000;
 
+/** The cookie naming the fake provider's user (O-14); `player` when absent or malformed.
+ *  `deny`, `no-email` and `not-allowed` are the fake's failure cases. */
+export const FAKE_USER_COOKIE = "dev-oauth-user";
+const FAKE_USER = /^[a-z0-9-]{1,40}$/;
+const DEFAULT_PROVIDERS = ["discord", "github"] as const;
+
+/** O-4's answer, as guardThirdPartyApis gives it (not imported: that module loads the SDK). */
+const NOT_HERE = {
+  status: "GENERAL_ERROR",
+  message: "Sign-in isn't available from this address.",
+} as const;
+const NOT_ALLOWED_REASON =
+  "Cannot sign in / up due to security reasons. Please contact support. (ERR_CODE_DEV)";
+
+const callbackPath = (thirdPartyId: string): string => `/account/callback/${thirdPartyId}`;
+
+/** O-4 on the path: any origin, but exactly /account/callback/<id>, no query or fragment. */
+function pinned(thirdPartyId: string, uri: unknown): boolean {
+  if (typeof uri !== "string") return false;
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return false;
+  }
+  return url.pathname === callbackPath(thirdPartyId) && url.search === "" && url.hash === "";
+}
+
 function cookieValue(request: FastifyRequest, name: string): string | null {
   for (const part of (request.headers.cookie ?? "").split(";")) {
     const i = part.indexOf("=");
@@ -38,12 +70,16 @@ function cookieValue(request: FastifyRequest, name: string): string | null {
   return null;
 }
 
-export function fakeSessions(opts: { clock?: () => number } = {}): FakeSessions {
+export function fakeSessions(
+  opts: { clock?: () => number; providers?: readonly string[] } = {},
+): FakeSessions {
   const clock = opts.clock ?? Date.now;
-  const users = new Map<string, { userId: string; password: string; timeJoined: number }>();
+  const providers: readonly string[] = [...(opts.providers ?? DEFAULT_PROVIDERS)];
+  /** Keyed "<thirdPartyId>:<user>": the same user on two providers is two users (O-12). */
+  const users = new Map<string, { userId: string; timeJoined: number }>();
   const sessions = new Map<string, string>();
-  const resetTokens = new Map<string, string>(); // token -> email
-  const latestToken = new Map<string, string>(); // email -> token
+  /** Single-use codes from the fake provider, deleted on first use. */
+  const codes = new Map<string, { thirdPartyId: string; redirectPath: string; user: string }>();
 
   const sessionIdOf = (request: FastifyRequest): string | null => {
     const v = cookieValue(request, COOKIE);
@@ -66,40 +102,43 @@ export function fakeSessions(opts: { clock?: () => number } = {}): FakeSessions 
     reply.header("front-token", frontToken(userId));
   };
 
-  const userBody = (email: string, u: { userId: string; timeJoined: number }) => ({
-    id: u.userId,
-    emails: [email],
-    timeJoined: u.timeJoined,
-    tenantIds: ["public"],
-    isPrimaryUser: false,
-    phoneNumbers: [],
-    thirdParty: [],
-    loginMethods: [
-      {
-        recipeId: "emailpassword",
-        recipeUserId: u.userId,
-        tenantIds: ["public"],
-        email,
-        verified: true,
-        timeJoined: u.timeJoined,
-      },
-    ],
-  });
+  /** supertokens-node's User.toJson() for a ThirdParty user. */
+  const userBody = (
+    thirdPartyId: string,
+    user: string,
+    u: { userId: string; timeJoined: number },
+  ) => {
+    const email = `${user}@${thirdPartyId}.example`;
+    const thirdParty = { id: thirdPartyId, userId: user };
+    return {
+      id: u.userId,
+      emails: [email],
+      timeJoined: u.timeJoined,
+      tenantIds: ["public"],
+      isPrimaryUser: false,
+      phoneNumbers: [],
+      thirdParty: [thirdParty],
+      webauthn: { credentialIds: [] },
+      loginMethods: [
+        {
+          recipeId: "thirdparty",
+          recipeUserId: u.userId,
+          tenantIds: ["public"],
+          email,
+          thirdParty,
+          verified: true,
+          timeJoined: u.timeJoined,
+        },
+      ],
+    };
+  };
 
-  const field = (request: FastifyRequest, id: string): string => {
-    const fields = (request.body as { formFields?: Array<{ id: string; value: unknown }> } | null)
-      ?.formFields;
-    const v = fields?.find((f) => f.id === id)?.value;
-    return typeof v === "string" ? v : "";
-  };
-  // Mirrors supertokens-node's defaultPasswordValidator (emailpassword/utils.js); first failure wins.
-  const passwordError = (p: string): string | null => {
-    if (p.length < 8) return "Password must contain at least 8 characters, including a number";
-    if (p.length >= 100) return "Password's length must be lesser than 100 characters";
-    if (!/[A-Za-z]/.test(p)) return "Password must contain at least one alphabet";
-    if (!/[0-9]/.test(p)) return "Password must contain at least one number";
-    return null;
-  };
+  const unlisted = (reply: FastifyReply, thirdPartyId: unknown) =>
+    reply.code(400).send({
+      message: `the provider ${String(thirdPartyId)} could not be found in the configuration`,
+    });
+  const listed = (thirdPartyId: unknown): thirdPartyId is string =>
+    typeof thirdPartyId === "string" && providers.includes(thirdPartyId);
 
   const accounts: FakeSessions["accounts"] = {
     register(app: FastifyInstance) {
@@ -107,7 +146,9 @@ export function fakeSessions(opts: { clock?: () => number } = {}): FakeSessions 
         scope.addHook("preHandler", async (request, reply) => {
           const header = request.headers["fdi-version"];
           if (header === undefined) return;
-          const offered = String(header).split(",").map((v) => v.trim());
+          const offered = String(header)
+            .split(",")
+            .map((v) => v.trim());
           if (!offered.some((v) => NODE_FDI.includes(v))) {
             return reply.code(400).send({
               message: `fdi-version mismatch: the client sent ${String(header)}, this fake speaks ${NODE_FDI.join(", ")}`,
@@ -115,32 +156,84 @@ export function fakeSessions(opts: { clock?: () => number } = {}): FakeSessions 
           }
         });
 
-        scope.post("/auth/signup", async (request, reply) => {
-          const email = field(request, "email").trim().toLowerCase();
-          const password = field(request, "password");
-          const errors: Array<{ id: string; error: string }> = [];
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            errors.push({ id: "email", error: "Email is invalid" });
-          } else if (users.has(email)) {
-            errors.push({ id: "email", error: "This email already exists. Please sign in instead." });
-          }
-          const pe = passwordError(password);
-          if (pe) errors.push({ id: "password", error: pe });
-          if (errors.length > 0) return reply.send({ status: "FIELD_ERROR", formFields: errors });
-          const u = { userId: randomUUID(), password, timeJoined: clock() };
-          users.set(email, u);
-          startSession(reply, u.userId);
-          return reply.send({ status: "OK", user: userBody(email, u) });
+        scope.get<{
+          Querystring: { thirdPartyId?: string; redirectURIOnProviderDashboard?: string };
+        }>("/auth/authorisationurl", async (request, reply) => {
+          const { thirdPartyId, redirectURIOnProviderDashboard: uri } = request.query;
+          if (!listed(thirdPartyId)) return unlisted(reply, thirdPartyId);
+          if (!pinned(thirdPartyId, uri)) return reply.send(NOT_HERE);
+          const q = new URLSearchParams({ thirdPartyId, redirect_uri: uri as string });
+          // Path-only: the SDK appends &state= and the page stays on its own origin.
+          return reply.send({ status: "OK", urlWithQueryParams: `/auth/dev/oauth/authorize?${q}` });
         });
 
-        scope.post("/auth/signin", async (request, reply) => {
-          const email = field(request, "email").trim().toLowerCase();
-          const u = users.get(email);
-          if (!u || u.password !== field(request, "password")) {
-            return reply.send({ status: "WRONG_CREDENTIALS_ERROR" });
+        // The fake provider. Its Location is always a path built from a listed id: the host
+        // (and path) of redirect_uri are never used, so this is no open redirect even in dev.
+        scope.get<{ Querystring: { thirdPartyId?: string; state?: string } }>(
+          "/auth/dev/oauth/authorize",
+          async (request, reply) => {
+            const { thirdPartyId, state } = request.query;
+            if (!listed(thirdPartyId)) return unlisted(reply, thirdPartyId);
+            const raw = cookieValue(request, FAKE_USER_COOKIE);
+            const user = raw !== null && FAKE_USER.test(raw) ? raw : "player";
+            const redirectPath = callbackPath(thirdPartyId);
+            const q = new URLSearchParams();
+            if (user === "deny") {
+              q.set("error", "access_denied");
+            } else {
+              const code = randomBytes(16).toString("hex");
+              codes.set(code, { thirdPartyId, redirectPath, user });
+              q.set("code", code);
+            }
+            if (typeof state === "string") q.set("state", state);
+            return reply.redirect(`${redirectPath}?${q}`, 302);
+          },
+        );
+
+        scope.post("/auth/signinup", async (request, reply) => {
+          const body = (request.body ?? {}) as {
+            thirdPartyId?: unknown;
+            redirectURIInfo?: {
+              redirectURIOnProviderDashboard?: unknown;
+              redirectURIQueryParams?: Record<string, unknown>;
+            };
+          };
+          const { thirdPartyId, redirectURIInfo: info } = body;
+          if (!listed(thirdPartyId)) return unlisted(reply, thirdPartyId);
+          // O-4: no redirectURIInfo (the oAuthTokens variant) or a foreign URI.
+          if (typeof info !== "object" || info === null) return reply.send(NOT_HERE);
+          if (!pinned(thirdPartyId, info.redirectURIOnProviderDashboard))
+            return reply.send(NOT_HERE);
+          const code = info.redirectURIQueryParams?.code;
+          const grant = typeof code === "string" ? codes.get(code) : undefined;
+          if (grant !== undefined) codes.delete(code as string);
+          const path = new URL(info.redirectURIOnProviderDashboard as string).pathname;
+          if (
+            grant === undefined ||
+            grant.thirdPartyId !== thirdPartyId ||
+            grant.redirectPath !== path
+          ) {
+            // What the real API answers when the provider's token exchange throws.
+            return reply.code(500).send({ error: "internal error" });
+          }
+          if (grant.user === "no-email")
+            return reply.send({ status: "NO_EMAIL_GIVEN_BY_PROVIDER" });
+          if (grant.user === "not-allowed") {
+            return reply.send({ status: "SIGN_IN_UP_NOT_ALLOWED", reason: NOT_ALLOWED_REASON });
+          }
+          const key = `${thirdPartyId}:${grant.user}`;
+          let u = users.get(key);
+          const createdNewRecipeUser = u === undefined;
+          if (u === undefined) {
+            u = { userId: randomUUID(), timeJoined: clock() };
+            users.set(key, u);
           }
           startSession(reply, u.userId);
-          return reply.send({ status: "OK", user: userBody(email, u) });
+          return reply.send({
+            status: "OK",
+            createdNewRecipeUser,
+            user: userBody(thirdPartyId, grant.user, u),
+          });
         });
 
         scope.post("/auth/signout", async (request, reply) => {
@@ -163,47 +256,12 @@ export function fakeSessions(opts: { clock?: () => number } = {}): FakeSessions 
           reply.header("front-token", frontToken(userId));
           return reply.send({});
         });
-
-        scope.post("/auth/user/password/reset/token", async (request, reply) => {
-          const email = field(request, "email").trim().toLowerCase();
-          if (users.has(email)) {
-            const token = randomBytes(16).toString("hex");
-            resetTokens.set(token, email);
-            latestToken.set(email, token);
-          }
-          return reply.send({ status: "OK" });
-        });
-
-        scope.post("/auth/user/password/reset", async (request, reply) => {
-          const token = (request.body as { token?: unknown } | null)?.token;
-          const email = typeof token === "string" ? resetTokens.get(token) : undefined;
-          if (email === undefined) {
-            return reply.send({ status: "RESET_PASSWORD_INVALID_TOKEN_ERROR" });
-          }
-          const password = field(request, "password");
-          const pe = passwordError(password);
-          if (pe) {
-            return reply.send({ status: "FIELD_ERROR", formFields: [{ id: "password", error: pe }] });
-          }
-          users.get(email)!.password = password;
-          resetTokens.delete(token as string);
-          return reply.send({ status: "OK" });
-        });
-
-        scope.get<{ Querystring: { email?: string } }>("/auth/dev/reset-link", async (request, reply) => {
-          const token = latestToken.get((request.query.email ?? "").trim().toLowerCase());
-          if (token === undefined || !resetTokens.has(token)) {
-            return reply.code(404).send({ error: "no-reset-token" });
-          }
-          return reply.send({ link: `/account/reset-password?token=${token}&tenantId=public` });
-        });
       });
     },
     async handleError() {
       return false;
     },
-    // No fake provider yet: the fake ThirdParty (O-14) fills this.
-    providers: [],
+    providers,
   };
 
   return { accounts, verifySession };
