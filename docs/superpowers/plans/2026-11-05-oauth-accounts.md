@@ -178,7 +178,7 @@
     - `/auth/authorisationurl` with the pinned URI returns a `discord.com/oauth2/authorize` URL whose `scope` is `identify email`;
     - a foreign URI gets `GENERAL_ERROR`.
   - *Why:* the real path stays covered, and the scopes and the guard are checked against a real core.
-- **O-16. The deploy probe moves to `/auth/loginmethods`, and the first deploy needs one manual step.**
+- **O-16. The deploy probe moves to `/auth/loginmethods`, and the first deploy needs one manual step.** *Superseded at merge (2026-11-06): main's `deploy.sh` (PR #28) already checks the core with a recipe-agnostic `GET /users/count` from inside the API container, so the merge kept that check, kept only the `providers` log line, and dropped the one-time manual step.*
   - `deploy.sh`'s smoke asks `GET /auth/loginmethods` and requires `"status":"OK"`. It also logs `providers` from health, without requiring any: the user sets the env vars on their own schedule.
   - `deploy.sh` runs one version behind itself (`infra/unraid/README.md`, "Redeploy"). So **the first deploy of this branch must be run from the new checkout:** `git -C /mnt/user/appdata/manufactory/src fetch && git -C … checkout <sha>`, then `bash …/src/infra/unraid/deploy.sh <sha>`. Otherwise the old probe 404s and the script rolls back. Task 5 writes this into the runbook.
   - *Why:* the old probe's endpoint no longer exists.
