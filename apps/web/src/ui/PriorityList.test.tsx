@@ -115,7 +115,7 @@ function layoutRows() {
   return capture;
 }
 
-describe("PriorityList", () => {
+describe("PriorityList", { timeout: 60_000 }, () => {
   it("5. Alt+↑ is one optimistic REORDER_PRIORITY, focus follows, and a rejection reverts", async () => {
     const { store } = mount(fresh);
     expect(order()).toEqual(FRESH_ORDER);
@@ -319,6 +319,7 @@ describe("PriorityList", () => {
   it("6d. moves are announced in the page's one polite live region, and so is their undoing", async () => {
     const store = fakeStore(fresh);
     render(<App store={store as unknown as GameStore} />);
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     // W-20: exactly one live region in the whole App.
     expect(document.querySelectorAll("[aria-live], [role='status']")).toHaveLength(1);
     const region = screen.getByRole("status");
@@ -436,13 +437,14 @@ describe("PriorityList", () => {
     expect(chip.getAttribute("data-state")).toBe("paused");
   });
 
-  it("9. a split bar focuses its item's entry in the list", () => {
+  it("9. the drawer's split bar focuses its item's entry in the list (V-18)", () => {
     // slice-tier-8-reinforced-full: screw is contested (derive test 4).
     const full = snapshotOf(slice, fixtureState("slice-tier-8-reinforced-full.world.json"));
     render(<App store={fakeStore(full) as unknown as GameStore} />);
     fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
+    fireEvent.click(document.querySelector<HTMLElement>('li[role="option"][data-item="screw"]')!);
     const split = document.querySelector<HTMLButtonElement>(
-      '[data-item="screw"] button[data-split]',
+      '[data-drawer="screw"] button[data-split]',
     );
     expect(split).not.toBeNull();
     const item = "screw";

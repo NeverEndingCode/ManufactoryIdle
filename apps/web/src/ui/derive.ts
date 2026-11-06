@@ -4,6 +4,7 @@
 import {
   D,
   DECIMAL_ZERO,
+  installedAt,
   isLiveRecipe,
   itemStateTag,
   liquidCap,
@@ -20,7 +21,10 @@ import {
 } from "@manufactory/engine";
 import { isPlateaued, storageFraction } from "../sync/interpolate.js";
 import type { Snapshot } from "../sync/snapshot.js";
+import { machineLabel } from "./names.js";
 import { currentNotation, fmt } from "./notation.js";
+import type { ThemeDef } from "./theme.js";
+import type { LayoutMode } from "./use-layout-mode.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
 
@@ -47,7 +51,7 @@ export interface RowModel {
   netPerSecond: number;
   /** P-1. */
   satisfaction: number;
-  /** The display solve's production, items/s: the sweep's and the conveyor's speed (S-14). */
+  /** The display solve's production, items/s: a lane is idle when no row makes anything. */
   production: number;
   tag: ItemStateTag;
   /** True when the item's priority entry is paused. */
@@ -55,9 +59,9 @@ export interface RowModel {
   /** Neither produced nor consumed: the meter takes the neutral tone, not amber at 0%. */
   idle: boolean;
   capText: string;
-  /** null when zero: no QS chip. */
+  /** null when zero: no QS in the drawer's meta (U-3c). */
   quantum: Dec | null;
-  /** null when zero: no BOUND chip. */
+  /** null when zero: no BOUND in the drawer's meta. */
   bound: Dec | null;
   /** Two or more entries above 1% of the primary producer's allocations, else null. */
   split: { entryId: string; label: string; share: number }[] | null;
@@ -104,7 +108,8 @@ function primaryProducer(s: Snapshot, itemId: ItemId): RecipeId | undefined {
   return own(s.display.state.activeRecipe, itemId) ?? own(s.content.defaultActiveRecipe, itemId);
 }
 
-function splitOf(s: Snapshot, itemId: ItemId): RowModel["split"] {
+/** V-18: the drawer's split bar, and the MACHINES cell's " · split". */
+export function splitOf(s: Snapshot, itemId: ItemId): RowModel["split"] {
   const recipeId = primaryProducer(s, itemId);
   const alloc = recipeId === undefined ? undefined : s.display.solution.allocations.get(recipeId);
   if (!alloc) return null;
@@ -117,6 +122,14 @@ function splitOf(s: Snapshot, itemId: ItemId): RowModel["split"] {
   return parts.length >= 2 ? parts : null;
 }
 
+/** The lane's rows' items, in bundle order: its items at or under the tier. laneRows and the
+ *  App's selection (U-7d) both read this, so a row and a kept selection can't disagree. */
+export function laneItemIds(s: Snapshot, laneId: LaneId): ItemId[] {
+  return s.content.bundle.items
+    .filter((item) => item.lane === laneId && item.tier <= s.state.tier)
+    .map((item) => item.id);
+}
+
 export function laneRows(
   s: Snapshot,
   laneId: LaneId,
@@ -124,8 +137,9 @@ export function laneRows(
 ): RowModel[] {
   const { content, state } = s;
   const solution = s.display.solution;
+  const shown = new Set(laneItemIds(s, laneId));
   return content.bundle.items
-    .filter((item) => item.lane === laneId && item.tier <= state.tier)
+    .filter((item) => shown.has(item.id))
     .map((item) => ({
       itemId: item.id,
       name: item.name,
@@ -331,4 +345,123 @@ export function stateClass(
   if (row.paused) return "paused";
   if (row.idle) return "idle";
   return row.satisfaction >= 0.98 ? "fed" : "throttled";
+}
+
+/** U-3b's SAT cell: "" fed (≥ 98%), "72%" throttled, "paused", "—" idle; cls drives the state
+ *  class. */
+export function satText(row: Pick<RowModel, "satisfaction" | "paused" | "idle">): {
+  text: string;
+  cls: ReturnType<typeof stateClass>;
+} {
+  const cls = stateClass(row);
+  switch (cls) {
+    case "fed":
+      return { text: "", cls };
+    case "throttled":
+      return { text: `${Math.round(row.satisfaction * 100)}%`, cls };
+    case "paused":
+      return { text: "paused", cls };
+    case "idle":
+      return { text: "—", cls };
+  }
+}
+
+/** V-20: the active recipe's assigned machines, "CONSTRUCTOR_MK1 x20" for a pool of one mark,
+ *  "CONSTRUCTOR x20 (2 marks)" for several, "—" for none; " · split" on a contested item. */
+export function machinesText(s: Snapshot, itemId: ItemId, theme: ThemeDef): string {
+  const split = splitOf(s, itemId) === null ? "" : " · split";
+  const recipeId = primaryProducer(s, itemId);
+  const recipe = recipeId === undefined ? undefined : s.content.recipes.get(recipeId);
+  const count =
+    recipeId === undefined ? 0 : (s.display.solution.capacity.machinesByRecipe.get(recipeId) ?? 0);
+  const marks =
+    recipe === undefined
+      ? []
+      : (s.content.machineClasses.get(recipe.machineClass)?.marks ?? [])
+          .map((m) => m.mark)
+          .filter((m) => installedAt(s.display.state, recipe.lane, recipe.machineClass, m) > 0);
+  if (recipe === undefined || count <= 0 || marks.length === 0) return `—${split}`;
+  const label =
+    marks.length === 1
+      ? `${machineLabel(s, recipe.machineClass, marks[0]!, theme)} x${count}`
+      : `${machineLabel(s, recipe.machineClass, null, theme)} x${count} (${marks.length} marks)`;
+  return `${label}${split}`;
+}
+
+/** U-7d: the option's one phrase, "Rotor, plus 0.4 per second, 11 percent full, 41 percent
+ *  satisfied, bottleneck". Per snapshot: the fullness is at the schedule's atMs. */
+export function optionName(s: Snapshot, row: RowModel, bottleneck: boolean): string {
+  const net = row.netPerSecond;
+  const rate =
+    net === 0
+      ? "0 per second"
+      : `${net > 0 ? "plus" : "minus"} ${fmt(D(Math.abs(net)))} per second`;
+  const full = Math.round(storageFraction(s, row.itemId, s.schedule.atMs) * 100);
+  const cls = stateClass(row);
+  const sat =
+    cls === "paused" || cls === "idle"
+      ? cls
+      : `${Math.round(row.satisfaction * 100)} percent satisfied`;
+  return `${row.name}, ${rate}, ${full} percent full, ${sat}${bottleneck ? ", bottleneck" : ""}`;
+}
+
+/** U-3e: a lane tab's light, the first match. */
+export type LaneStatus = "bottleneck" | "throttled" | "idle" | "fed";
+
+export function laneStatus(
+  s: Snapshot,
+  laneId: LaneId,
+  bottleneck: BottleneckModel | null,
+): LaneStatus {
+  if (bottleneck !== null && bottleneck.laneId === laneId) return "bottleneck";
+  const rows = laneRows(s, laneId);
+  // A paused or idle row isn't starved: stateClass says so, as on the row's own meter.
+  if (rows.some((r) => stateClass(r) === "throttled")) return "throttled";
+  if (rows.every((r) => r.production <= 0)) return "idle";
+  return "fed";
+}
+
+/** V-16: the generators' lane, the lane of the first recipe that makes power; null without one. */
+export function powerLaneId(s: Snapshot): LaneId | null {
+  const recipeId = s.content.producersOf.get(POWER_ITEM)?.[0];
+  if (recipeId === undefined) return null;
+  return s.content.recipes.get(recipeId)?.lane ?? null;
+}
+
+export interface LaneTab {
+  id: LaneId;
+  /** The positional key: production lanes 1…n in content order, power n+1 (U-6a). */
+  key: number;
+  locked: boolean;
+  unlockTier: number;
+  /** null when locked. */
+  status: LaneStatus | null;
+  bottleneck: boolean;
+  power: boolean;
+}
+
+/** Production lanes in content order (locked ones too, U-3e), then power last on desktop and
+ *  tablet; no power on the phone, where it's a bottom tab (U-6a). */
+export function laneTabs(
+  s: Snapshot,
+  bottleneck: BottleneckModel | null,
+  mode: LayoutMode,
+): LaneTab[] {
+  const powerId = powerLaneId(s);
+  const lanes = [...s.content.bundle.lanes].sort((a, b) => a.order - b.order);
+  const production = lanes.filter((l) => l.id !== powerId);
+  const power = lanes.find((l) => l.id === powerId);
+  const ordered = mode === "phone" || power === undefined ? production : [...production, power];
+  return ordered.map((l, i) => {
+    const locked = l.unlockTier > s.state.tier;
+    return {
+      id: l.id,
+      key: i + 1,
+      locked,
+      unlockTier: l.unlockTier,
+      status: locked ? null : laneStatus(s, l.id, bottleneck),
+      bottleneck: bottleneck !== null && bottleneck.laneId === l.id,
+      power: l.id === powerId,
+    };
+  });
 }

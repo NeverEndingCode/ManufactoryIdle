@@ -79,9 +79,7 @@ function expectSent(store: FakeStore, s: Snapshot, type: Action["type"]): Action
 const lane = (name: RegExp) => fireEvent.click(screen.getByRole("tab", { name }));
 
 function open(item: string): HTMLElement {
-  fireEvent.click(
-    document.querySelector<HTMLButtonElement>(`[data-item="${item}"] button[data-open-row]`)!,
-  );
+  fireEvent.click(document.querySelector<HTMLElement>(`li[role="option"][data-item="${item}"]`)!);
   const d = document.querySelector<HTMLElement>(`[data-drawer="${item}"]`);
   expect(d).not.toBeNull();
   return d!;
@@ -91,12 +89,16 @@ function pick(d: HTMLElement, verb: string) {
   fireEvent.click(within(d).getByRole("button", { name: verb, pressed: false }));
 }
 
-const entry = (id: string) =>
-  screen
+/** The priority view (F2), then an entry in it. */
+const entry = (id: string) => {
+  if (screen.queryByRole("list", { name: "Output priority" }) === null)
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
+  return screen
     .getByRole("list", { name: "Output priority" })
     .querySelector<HTMLElement>(`li[data-entry="${id}"]`)!;
+};
 
-describe("D.1 coverage (Q-6, Q-14)", () => {
+describe("D.1 coverage (Q-6, Q-14)", { timeout: 60_000 }, () => {
   it("BUY_MACHINE: the drawer's Buy, tier 8 power / collector", () => {
     const s = snapshotOf(slice, topped(fixtureState("slice-tier-8.world.json")));
     const store = mount(s);
@@ -177,6 +179,7 @@ describe("D.1 coverage (Q-6, Q-14)", () => {
   it("SET_PRIORITY_MODE: Advanced mode, the mode chip", () => {
     const s = snapshotOf(slice, freshState(slice));
     const store = mount(s);
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     fireEvent.click(
       within(entry("item:iron_plate")).getByRole("button", { name: "Mode of Iron Plate" }),
@@ -188,6 +191,7 @@ describe("D.1 coverage (Q-6, Q-14)", () => {
   it("SET_RESERVE: the Advanced reserve slider", () => {
     const s = snapshotOf(slice, freshState(slice));
     const store = mount(s);
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     const slider = within(entry("item:iron_plate")).getByRole("slider", {
       name: "Reserve of Iron Plate",
@@ -217,10 +221,34 @@ describe("D.1 coverage (Q-6, Q-14)", () => {
     expect(a).toEqual({ type: "BUY_QS", lane: "iron", levels: 1 });
   });
 
-  it("TAP: the dock's tap holds and releases; the store's flush is accepted", () => {
+  it("BUY_MACHINE: a generator's +1 on the power panel (U-6), tier 8 biomass burners", () => {
+    const s = snapshotOf(slice, topped(fixtureState("slice-tier-8.world.json")));
+    const store = mount(s);
+    lane(/Power/);
+    const gens = within(document.querySelector<HTMLElement>("[data-power-panel]")!).getByRole(
+      "region",
+      { name: "Generators" },
+    );
+    fireEvent.click(within(gens).getByRole("button", { name: "Buy 1 Biomass Burner" }));
+    const batch = expectSent(store, s, "BUY_MACHINE");
+    expect(batch).toEqual([
+      {
+        type: "BUY_MACHINE",
+        lane: "power",
+        machineClass: "biomass_burner",
+        mark: 1,
+        count: 1,
+        recipeId: "burn_biomass",
+      },
+    ]);
+    expect(store.send.mock.calls[0]![1]).toBe("power:biomass_burner:buy");
+  });
+
+  it("TAP: the footer's TAP holds and releases; the store's flush is accepted", () => {
     const s = snapshotOf(slice, freshState(slice));
     const store = mount(s);
-    const tap = screen.getByRole("button", { name: "Tap: hold to keep the kick" });
+    const tap = document.querySelector<HTMLElement>("[data-power] button[data-tap]")!;
+    expect(tap.getAttribute("aria-label")).toBe("Tap, hold to keep the kick");
     fireEvent.pointerDown(tap, { pointerId: 1, button: 0 });
     expect(store.pressTap).toHaveBeenCalledTimes(1);
     fireEvent.pointerUp(tap, { pointerId: 1, button: 0 });

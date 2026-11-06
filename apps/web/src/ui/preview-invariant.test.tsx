@@ -51,7 +51,9 @@ describe("preview invariant", () => {
     const fresh = snapshotOf(slice, freshState(slice));
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     render(<App store={fakeStore(fresh) as unknown as GameStore} />);
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-item="iron_plate"] button[data-open-row]')!);
+    fireEvent.click(
+      document.querySelector<HTMLElement>('li[role="option"][data-item="iron_plate"]')!,
+    );
     const p = document.querySelector<HTMLElement>("[data-drawer] [data-preview]")!;
     expect(p.textContent).toContain(PREVIEW_UNAVAILABLE);
     expect(screen.getByRole("button", { name: /^Buy 1 Constructor$/ })).toBeTruthy();

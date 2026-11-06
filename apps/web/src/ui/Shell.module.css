@@ -1,0 +1,241 @@
+/* U-2b to U-2d: the viewport shell's blocks. The .app root (base.css) is the flex column and
+   carries data-layout; only the main box scrolls, so the header, the tabs, the command bar and
+   the footer never move. Every box has a 1px --line border. No horizontal scroll at any width
+   (W-19): every flex child can shrink (min-width: 0). */
+
+/* The header (U-2b): title, tier readout, spacer, save chip, Panels, cfg. */
+.header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+}
+
+.title {
+  flex: none;
+  margin: 0;
+  color: var(--t1);
+  font-family: var(--font-display);
+  font-size: var(--fs-title);
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* S-12's chip: 36 px, --t1 on an --accent border. */
+.chip {
+  flex: none;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t1);
+  font-family: var(--font-ui);
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+
+.panels {
+  flex: none;
+}
+
+.panelList {
+  display: flex;
+  gap: 4px;
+}
+
+/* F1 factory · F2 priority · F3 handbook: the active one --accent filled. */
+.panel,
+.cfg {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cfg {
+  flex: none;
+}
+
+.panel.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* The lane tabs (U-2b): 34 px, padding 0 14px; the active one --s-hi with an --accent border. */
+.lanes {
+  flex: none;
+  min-width: 0;
+}
+
+.laneRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lane {
+  display: inline-flex;
+  align-items: center;
+  gap: 1ch;
+  min-width: 0;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lane.on {
+  border-color: var(--accent);
+  background: var(--s-hi);
+  color: var(--t1);
+}
+
+.lane[aria-disabled="true"] {
+  cursor: default;
+}
+
+.laneName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The locked lane's tier tag, in place of the light (U-3e). */
+.lock {
+  font-size: var(--fs-small);
+}
+
+/* The bottleneck's ! (U-3e): advice, never a state colour. */
+.mark {
+  color: var(--advice);
+}
+
+/* V-11: the content row is the positioned wrapper; the main box scrolls inside it, and the
+   notices and the overlays are absolute siblings, so neither scrolls away nor moves a row. */
+.contentRow {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mainBox {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+}
+
+/* The phone (U-2d). */
+.phoneHeader {
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+}
+
+.phoneHeader .title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.menu {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.laneGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.laneGrid .lane {
+  justify-content: center;
+  height: 44px;
+  padding: 0 4px;
+}
+
+.phoneMain {
+  padding: 2px 10px;
+  /* The last row scrolls clear of the floating TAP (U-6c). */
+  scroll-padding-bottom: 96px;
+}
+
+/* The bottom tabs: full bleed, past the shell's 12 px padding, above the home indicator. */
+.bottomTabs {
+  flex: none;
+  margin: 0 -12px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-top: 1px solid var(--line);
+}
+
+.bottomList {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.bottomTab {
+  min-width: 0;
+  height: 52px;
+  padding: 0 4px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--t2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.bottomTab.on {
+  background: var(--s-hi);
+  color: var(--t1);
+}
+
+/* U-2d: the header's right side, the tier readout over PWR (the load on the power tab). */
+.readouts {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+}

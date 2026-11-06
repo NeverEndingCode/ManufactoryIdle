@@ -1,5 +1,5 @@
-// S-14 / W-18: motion by formula. The production sweep's period, the conveyor's density and
-// speed, and the number tween (W-7), all as named constants here, so retuning is one file.
+// S-14 / W-18: motion by formula: the number tween (W-7), as named constants here, so retuning is
+// one file. The production sweep and the conveyor are retired (U-8c).
 import { D, DECIMAL_ZERO, type Dec } from "@manufactory/engine";
 
 /** W-7 / W-18: a snapshot correction tweens over this long, in log space. */
@@ -7,42 +7,8 @@ export const TWEEN_MS = 300;
 /** A correction smaller than this fraction of the old value snaps instead. */
 export const TWEEN_MIN_CHANGE = 0.01;
 
-const SWEEP_MIN_S = 0.8;
-const SWEEP_MAX_S = 6;
-const SWEEP_PER_DECADE_S = 1.2;
-
-const CONVEYOR_MAX_BLOCKS = 12;
-const CONVEYOR_BLOCKS_PER_DECADE = 2;
-const CONVEYOR_MIN_S = 4;
-const CONVEYOR_MAX_S = 20;
-const CONVEYOR_PER_DECADE_S = 4;
-
 function clamp(lo: number, x: number, hi: number): number {
   return Math.min(hi, Math.max(lo, x));
-}
-
-function decades(perSecond: number): number {
-  return Math.log10(1 + Math.max(0, perSecond));
-}
-
-/** W-18: clamp(0.8, 6 − 1.2·log10(1 + p), 6) seconds; a fast line sweeps fast. */
-export function sweepPeriodS(productionPerSecond: number): number {
-  return clamp(
-    SWEEP_MIN_S,
-    SWEEP_MAX_S - SWEEP_PER_DECADE_S * decades(productionPerSecond),
-    SWEEP_MAX_S,
-  );
-}
-
-/** S-14: the lane strip's blocks (none for a still lane, at most 12) and its loop period. */
-export function conveyor(laneProductionPerSecond: number): { blocks: number; periodS: number } {
-  const d = decades(laneProductionPerSecond);
-  const blocks =
-    laneProductionPerSecond > 0
-      ? clamp(1, 1 + Math.floor(CONVEYOR_BLOCKS_PER_DECADE * d), CONVEYOR_MAX_BLOCKS)
-      : 0;
-  const periodS = clamp(CONVEYOR_MIN_S, CONVEYOR_MAX_S - CONVEYOR_PER_DECADE_S * d, CONVEYOR_MAX_S);
-  return { blocks, periodS };
 }
 
 /** The tween's ease-out: fast at first, settling into the new value. */

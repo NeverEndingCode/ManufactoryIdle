@@ -4,12 +4,20 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { actionPosts, startGuest } from "./helpers.js";
 
-const list = (page: Page) => page.locator('#pane-priority ol[aria-label="Output priority"]');
+const list = (page: Page) => page.locator('#view-priority ol[aria-label="Output priority"]');
 const entry = (page: Page, id: string) => list(page).locator(`li[data-entry="${id}"]`);
 const order = (page: Page) =>
   list(page)
     .locator("li[data-entry]")
     .evaluateAll((els) => els.map((el) => el.getAttribute("data-entry")));
+
+/** The priority list is a Panels tab (U-2b); a reload starts on the factory. */
+function openPriority(page: Page) {
+  return page
+    .getByRole("tablist", { name: "Panels" })
+    .getByRole("tab", { name: /priority/ })
+    .click();
+}
 
 async function boxOf(l: Locator) {
   const box = await l.boundingBox();
@@ -29,6 +37,7 @@ async function dragTo(page: Page, id: string, toY: number) {
 test("the priority list reorders by drag and by Alt+↓, and guards power", async ({ page }) => {
   const posts = actionPosts(page);
   const { root } = await startGuest(page);
+  await openPriority(page);
   await expect(list(page)).toBeVisible();
   const before = await order(page);
   expect(before.indexOf("item:iron_plate")).toBeLessThan(before.indexOf("item:iron_rod"));
@@ -51,6 +60,7 @@ test("the priority list reorders by drag and by Alt+↓, and guards power", asyn
     await page.reload();
     await expect(root).toHaveAttribute("data-sync", "ready");
     await expect(root).toHaveAttribute("data-state-version", "1");
+    await openPriority(page);
     await expect(list(page)).toBeVisible();
     expect(await order(page)).toEqual(dragged);
   });

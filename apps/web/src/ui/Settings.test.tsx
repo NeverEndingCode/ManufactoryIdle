@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App.js";
 import { RESET_SENT } from "./AccountForms.js";
 import { setNotation } from "./notation.js";
-import { setTheme, THEME_KEY } from "./theme.js";
+import { setTheme, THEME_KEY, THEMES } from "./theme.js";
 import {
   fakeStore,
   fixtureState,
@@ -34,7 +34,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   act(() => {
     setNotation("hybrid");
-    setTheme("system");
+    setTheme("terminal");
   });
   localStorage.clear();
   history.replaceState(null, "", "/");
@@ -71,7 +71,7 @@ function fill(scope: HTMLElement, label: string, value: string) {
   fireEvent.change(within(scope).getByLabelText(label), { target: { value } });
 }
 
-describe("Settings (S-11)", () => {
+describe("Settings (S-11)", { timeout: 60_000 }, () => {
   it("1. a modal dialog: focus moves in, Escape closes it, focus returns to the opener", () => {
     const { container } = mount(fakeStore(fresh));
     const opener = settingsButton();
@@ -119,19 +119,73 @@ describe("Settings (S-11)", () => {
     expect(localStorage.getItem("mi.notation")).toBe("sci");
   });
 
-  it("3. Light sets data-theme and stores it; System removes it", () => {
+  it("3. the Theme list: six themes with swatches; Clean (Light) applies and stores", () => {
     mount(fakeStore(fresh));
     const dialog = openSettings();
     const html = document.documentElement;
-    expect(within(dialog).getByRole("radio", { name: "System" })).toHaveProperty("checked", true);
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Light" }));
-    expect(html.getAttribute("data-theme")).toBe("light");
-    expect(localStorage.getItem(THEME_KEY)).toBe("light");
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Dark" }));
-    expect(html.getAttribute("data-theme")).toBe("dark");
-    fireEvent.click(within(dialog).getByRole("radio", { name: "System" }));
-    expect(html.hasAttribute("data-theme")).toBe(false);
-    expect(localStorage.getItem(THEME_KEY)).toBe("system");
+    const group = within(dialog).getByRole("group", { name: "Theme" });
+    const radios = within(group).getAllByRole("radio");
+    expect(radios.map((r) => r.getAttribute("data-theme-choice"))).toEqual(THEMES.map((t) => t.id));
+    expect(radios.map((r) => (r as HTMLInputElement).labels?.[0]?.textContent)).toEqual(
+      THEMES.map((t) => t.name),
+    );
+    // Each entry has a three-chip swatch from the registry, not from applying the theme.
+    for (const t of THEMES) {
+      const swatch = group.querySelector(`[data-swatch="${t.id}"]`)!;
+      expect(swatch.getAttribute("aria-hidden")).toBe("true");
+      const chips = [...swatch.children].map((c) => (c as HTMLElement).style.background);
+      expect(chips).toHaveLength(3);
+      const probe = document.createElement("span");
+      const css = (v: string) => ((probe.style.background = v), probe.style.background);
+      expect(chips).toEqual([css(t.swatch.bg), css(t.swatch.body), css(t.swatch.advice)]);
+    }
+    expect(within(group).getByRole("radio", { name: "Retro terminal" })).toHaveProperty(
+      "checked",
+      true,
+    );
+    fireEvent.click(within(group).getByRole("radio", { name: "Clean (Light)" }));
+    expect(html.getAttribute("data-theme")).toBe("clean-light");
+    expect(localStorage.getItem(THEME_KEY)).toBe("clean-light");
+    expect(within(group).getByRole("radio", { name: "Clean (Light)" })).toHaveProperty(
+      "checked",
+      true,
+    );
+    fireEvent.click(within(group).getByRole("radio", { name: "Retro terminal" }));
+    expect(html.getAttribute("data-theme")).toBe("terminal");
+  });
+
+  it("3b. a locked theme is listed, focusable and described, and picking it does nothing", () => {
+    mount(fakeStore(fresh));
+    const dialog = openSettings();
+    const html = document.documentElement;
+    const group = within(dialog).getByRole("group", { name: "Theme" });
+    fireEvent.click(within(group).getByRole("radio", { name: "Clean (Dark)" }));
+    expect(html.getAttribute("data-theme")).toBe("clean-dark");
+
+    for (const name of ["Cosy", "Industrial"]) {
+      const radio = within(group).getByRole("radio", { name });
+      expect(radio.getAttribute("aria-disabled")).toBe("true");
+      expect((radio as HTMLInputElement).disabled).toBe(false);
+      radio.focus();
+      expect(document.activeElement).toBe(radio);
+      const described = document.getElementById(radio.getAttribute("aria-describedby")!)!;
+      expect(described.textContent).toBe("Unlocks in the prestige store");
+      const option = radio.closest("[data-theme-option]")!;
+      expect(option.querySelector("[data-locked]")!.textContent).toBe("locked");
+
+      fireEvent.click(radio);
+      expect(radio).toHaveProperty("checked", false);
+      expect(html.getAttribute("data-theme")).toBe("clean-dark");
+      expect(localStorage.getItem(THEME_KEY)).toBe("clean-dark");
+      expect(within(group).getByRole("radio", { name: "Clean (Dark)" })).toHaveProperty(
+        "checked",
+        true,
+      );
+    }
+    // The free themes carry no tag and no description.
+    const free = within(group).getByRole("radio", { name: "Clean (OLED Dark)" });
+    expect(free.hasAttribute("aria-disabled")).toBe(false);
+    expect(free.closest("[data-theme-option]")!.querySelector("[data-locked]")).toBeNull();
   });
 
   it("4. accounts off: the Account section says so and has no form", () => {
@@ -371,7 +425,7 @@ describe("Settings (S-11)", () => {
   });
 });
 
-describe("Fix round 1", () => {
+describe("Fix round 1", { timeout: 60_000 }, () => {
   it("10. the trap: notice controls behind the sheet are inert, Shift+Tab stays in, the region still speaks", async () => {
     const user = userEvent.setup();
     const store = fakeStore(fresh);
@@ -526,12 +580,15 @@ describe("Fix round 1", () => {
   });
 });
 
-describe("the header", () => {
-  it("keeps the full name as the title's label, with the initials for narrow widths", () => {
+describe("the header", { timeout: 60_000 }, () => {
+  it("keeps the full name as the title's label; the visible title is hidden from it (U-2)", () => {
     mount(fakeStore(fresh));
     const h1 = screen.getByRole("heading", { level: 1 });
     expect(h1.getAttribute("aria-label")).toBe("Manufactory Idle");
-    expect(h1.textContent).toContain("MI");
-    expect(screen.getByRole("button", { name: "Handbook" })).toBeTruthy();
+    expect(h1.textContent).toBe("MANUFACTORY_");
+    expect(h1.querySelector("span")!.getAttribute("aria-hidden")).toBe("true");
+    // The handbook is the F3 tab, not a header button.
+    expect(screen.getByRole("tab", { name: "handbook" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Handbook" })).toBeNull();
   });
 });

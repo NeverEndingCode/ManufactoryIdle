@@ -5,6 +5,9 @@ import { fixtureState, freshState, loadSlice, snapshotOf, type Slice } from "./t
 import {
   bottleneckRow,
   laneRows,
+  laneStatus,
+  laneTabs,
+  powerLaneId,
   satisfaction,
   stateClass,
   unlockedLanes,
@@ -156,7 +159,12 @@ describe("bottleneckRow (P-2, P-3)", () => {
       },
     } as Solution;
     const b = bottleneckRow({ ...tier8, display: { ...tier8.display, solution } })!;
-    expect(b.action).toMatchObject({ type: "BUY_MACHINE", machineClass: "constructor", mark: 2, recipeId: "make_iron_plate" });
+    expect(b.action).toMatchObject({
+      type: "BUY_MACHINE",
+      machineClass: "constructor",
+      mark: 2,
+      recipeId: "make_iron_plate",
+    });
   });
 
   it("5c. a storage bottleneck frames its item, with storage +1", () => {
@@ -195,7 +203,11 @@ describe("bottleneckRow, the power kind (P-2)", () => {
       }),
     )!;
     expect([b.laneId, b.itemId]).toEqual(["power", "biomass"]);
-    expect(b.action).toMatchObject({ count: 3, machineClass: "biomass_burner", recipeId: "burn_biomass" });
+    expect(b.action).toMatchObject({
+      count: 3,
+      machineClass: "biomass_burner",
+      recipeId: "burn_biomass",
+    });
     expect(b.text).toMatch(/^Power is limited by burn biomass\. 3 more \S.* clear it\.$/);
     expect(JSON.stringify(b)).not.toContain("__power__");
   });
@@ -351,5 +363,59 @@ describe("bottleneckRow, the frame's other actions (Q-5)", () => {
     expect(water.action).toMatchObject({ type: "BUY_MACHINE", machineClass: "coal_generator" });
     const coal = bottleneckRow(short("coal", "water"))!;
     expect([coal.laneId, coal.itemId]).toEqual(["coal", "coal"]);
+  });
+});
+
+describe("lane lights and tabs (U-3e, U-6a, V-16)", () => {
+  it("1. laneStatus: bottleneck, throttled, idle, else fed", () => {
+    // A fresh world: the framed iron plate is in iron.
+    expect(laneStatus(fresh, "iron", bottleneckRow(fresh))).toBe("bottleneck");
+    // Tier 8: the bottleneck is in power, and iron has rows below 98% (picked by scanning
+    // satisfaction < 0.98; no fixture starves a biomass row).
+    const b8 = bottleneckRow(tier8);
+    expect(b8?.laneId).toBe("power");
+    expect(laneRows(tier8, "iron").some((r) => stateClass(r) === "throttled")).toBe(true);
+    expect(laneStatus(tier8, "iron", b8)).toBe("throttled");
+    expect(laneStatus(tier8, "power", b8)).toBe("bottleneck");
+    // Copper forced open at tier 2 with no machines: nothing is produced.
+    const t2 = snapshotOf(slice, { ...freshState(slice), tier: 2 });
+    expect(laneRows(t2, "copper").length).toBeGreaterThan(0);
+    // (Its own bottleneck lands in copper, so the light is read without one.)
+    expect(laneStatus(t2, "copper", null)).toBe("idle");
+    // Otherwise fed: a lane with production and every live row at 98% or more.
+    const bf = bottleneckRow(full);
+    expect(laneStatus(full, "iron", bf)).toBe("fed");
+    expect(laneStatus(full, "oil", bf)).toBe("fed");
+    expect(laneStatus(full, "copper", bf)).toBe("idle");
+    // No bottleneck at all: the iron lane of a fresh world reads by its rows.
+    expect(laneStatus(fresh, "iron", null)).not.toBe("bottleneck");
+  });
+
+  it("2. laneTabs: production lanes in order, locked ones too, power last but not on the phone", () => {
+    expect(powerLaneId(fresh)).toBe("power");
+    const desk = laneTabs(fresh, bottleneckRow(fresh), "desktop");
+    expect(desk.map((t) => t.id)).toEqual(["iron", "copper", "coal", "oil", "power"]);
+    expect(desk.map((t) => t.key)).toEqual([1, 2, 3, 4, 5]);
+    const by = Object.fromEntries(desk.map((t) => [t.id, t]));
+    expect([by.copper!.locked, by.coal!.locked, by.oil!.locked]).toEqual([true, true, true]);
+    expect([by.copper!.unlockTier, by.coal!.unlockTier, by.oil!.unlockTier]).toEqual([2, 3, 6]);
+    expect(by.oil!.status).toBeNull();
+    expect(by.iron!.locked).toBe(false);
+    expect(by.iron!.status).toBe("bottleneck");
+    expect(by.iron!.bottleneck).toBe(true);
+    expect(by.power!.power).toBe(true);
+    expect(by.power!.locked).toBe(false);
+    expect(desk.filter((t) => t.power)).toHaveLength(1);
+    expect(laneTabs(fresh, null, "tablet").map((t) => t.id)).toEqual(desk.map((t) => t.id));
+    expect(laneTabs(fresh, bottleneckRow(fresh), "phone").map((t) => t.id)).toEqual([
+      "iron",
+      "copper",
+      "coal",
+      "oil",
+    ]);
+    // Tier 8: nothing is locked, and the bottleneck's lane is power.
+    const t8 = laneTabs(tier8, bottleneckRow(tier8), "desktop");
+    expect(t8.every((t) => !t.locked)).toBe(true);
+    expect(t8.filter((t) => t.bottleneck).map((t) => t.id)).toEqual(["power"]);
   });
 });

@@ -1,28 +1,8 @@
 import { D } from "@manufactory/engine";
 import { describe, expect, it } from "vitest";
-import { conveyor, shouldTween, sweepPeriodS, tweenDec } from "./motion.js";
+import { shouldTween, tweenDec } from "./motion.js";
 
 describe("motion (S-14)", () => {
-  it("1. the sweep period: 6 s still, 4.8 s at 9/s, 0.8 s at the clamp", () => {
-    expect(sweepPeriodS(0)).toBe(6);
-    expect(sweepPeriodS(9)).toBeCloseTo(4.8, 10);
-    expect(sweepPeriodS(1e9)).toBe(0.8);
-  });
-
-  it("2. the conveyor: no blocks when still, at most 12, never slower as the lane speeds up", () => {
-    expect(conveyor(0).blocks).toBe(0);
-    expect(conveyor(1e12).blocks).toBe(12);
-    expect(conveyor(0).periodS).toBe(20);
-    expect(conveyor(1e12).periodS).toBe(4);
-    let last = Infinity;
-    for (const sum of [0, 0.1, 1, 3, 10, 50, 100, 1e3, 1e4, 1e6, 1e9, 1e12, 1e15]) {
-      const { periodS, blocks } = conveyor(sum);
-      expect(periodS).toBeLessThanOrEqual(last);
-      expect(blocks).toBeLessThanOrEqual(12);
-      last = periodS;
-    }
-  });
-
   it("3. tweenDec runs in log space and is exact at both ends", () => {
     const from = D(1e12);
     const to = D(1e14);

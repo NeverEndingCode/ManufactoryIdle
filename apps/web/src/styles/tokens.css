@@ -1,76 +1,354 @@
-/* W-17: §13.0 as tokens, seeded from the MVP's :root. Dark is the default. The four state
-   colours are for state and frame rules only (tokens.test.ts checks it). */
+/* U-1b: one semantic token set, one block per theme. :root is the retro terminal, the default
+   whatever the OS prefers (U-1a); each other theme is :root[data-theme="<id>"], which outranks
+   :root, so every block defines every semantic token (tokens.test.ts 8d) and nothing leaks.
+   Values: U-1c to U-1e and V-2/V-3; contrast.test.ts measures them (U-1f). The four state
+   colours are for state classes only (8a), so no other token refers to them. Each face is a
+   family fonts.css self-hosts (U-1g), then system fallbacks (8f). */
 :root {
   color-scheme: dark;
-  --bg: #14181d;
-  --s1: #1a1f26;
-  --s2: #212832;
-  --s3: #2a323d;
-  --line: #2c343f;
-  --line2: #3a444f;
-  --t1: #e4e9ef;
-  --t2: #98a3b0;
-  --t3: #69737f;
-  --accent: #f59042;
-  --on-accent: #14181d;
-  --state-fed: #57b96a;
-  --state-throttled: #dda12e;
-  --state-bottleneck: #e0594a;
-  --state-paused: #69737f;
-  --fs-1: 15px;
-  --fs-2: 13px;
-  --fs-3: 12px;
-  --fw-regular: 400;
-  --fw-strong: 600;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --hairline: 0.5px;
+  --bg: #050a06;
+  --s1: #071009;
+  --s2: #0b1208;
+  --s-hi: #0b1a0e;
+  --line: #1f6b30;
+  --line-soft: #123d1c;
+  --rule: dashed;
+  --t1: #7dff9a;
+  --t-body: #4ee06c;
+  --t2: #3fb85a;
+  /* Barred from --s-hi and --s2 (4.22, 4.46): those surfaces use --t2 (U-1f). */
+  --t3: #2a8c42;
+  --accent: #4ee06c;
+  --on-accent: #050a06;
+  --advice: #ffb000;
+  --advice-dim: #c98c00;
+  --advice-hi: #ffd166;
+  --advice-line: #5a4206;
+  --advice-fill: #ffb000;
+  --on-advice-fill: #050a06;
+  --link: #7dff9a;
+  --link-hover: #c8ffd4;
+  --rate-up: #4ee06c;
+  --rate-down: #ff6b5a;
+  --state-fed: #4ee06c;
+  --state-throttled: #d9c34a;
+  --state-bottleneck: #ffb000;
+  /* V-2: not --t3, so "paused" reads on the selected row (5.00 on --s-hi). */
+  --state-paused: #2f9a4a;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --font-ui: "IBM Plex Mono", ui-monospace, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "VT323", ui-monospace, monospace;
+  --fw-name: 400;
+  --radius: 0;
+  --radius-pill: 0;
+  /* U-3d / V-3: a segmented bar of 1ch cells, bracketed. */
+  --bar-h: 1em;
+  --bar-seg: 1ch;
+  --bar-open: "[";
+  --bar-close: "]";
+  --bar-track: transparent;
+  /* The track's --bar-paint layer, standing in for ░: the terminal only, since elsewhere it would
+     wash the track in the fill's own colour (contrast.test 3b). */
+  --bar-wash: 0.25;
+  --bar-paint: repeating-linear-gradient(
+    90deg,
+    currentColor 0 calc(var(--bar-seg) - 2px),
+    transparent 0 var(--bar-seg)
+  );
+  /* U-9c: referenced from UI-3 (V-8). */
+  --glow-text: 0 0 5px rgba(78, 224, 108, 0.35);
+  --glow-title: 0 0 8px rgba(125, 255, 154, 0.6);
+  --glow-advice: 0 0 6px rgba(255, 176, 0, 0.45);
+  --glow-banner: 0 0 8px rgba(255, 209, 102, 0.6);
+  --glow-tap: 0 0 0 1px #4ee06c, 0 0 12px rgba(78, 224, 108, 0.45);
+  --scanlines: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px);
+
+  /* Shared by every theme: the sizes and the row, per useLayoutMode's breakpoints (W-19). */
+  --fs-body: 14px;
+  --fs-small: 12px;
+  --fs-label: 13px;
+  --fs-title: 34px;
+  --fs-bar: 20px;
+  --row-h: 44px;
   /* W-18: the bottleneck pulse, one named constant. */
   --pulse-cycle: 2.6s;
 }
 
-/* The light set: by preference until 4c's settings toggle can set data-theme. */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    color-scheme: light;
-    --bg: #f6f7f9;
-    --s1: #ffffff;
-    --s2: #eef1f4;
-    --s3: #dfe4ea;
-    --line: #d5dbe2;
-    --line2: #c2cad3;
-    --t1: #1a1f26;
-    --t2: #4d5865;
-    --t3: #6b7480;
-    --accent: #b85a12;
-    --on-accent: #ffffff;
-    --state-fed: #2e7d3e;
-    --state-throttled: #9a6a00;
-    --state-bottleneck: #c0392b;
-    --state-paused: #6b7480;
+@media (max-width: 1000px) {
+  :root {
+    --fs-title: 28px;
   }
 }
 
-:root[data-theme="light"] {
+/* The phone. The theme blocks outrank :root, so the terminal's smaller glow stays terminal's. */
+@media (max-width: 599px) {
+  :root {
+    --fs-body: 13px;
+    --fs-small: 11px;
+    --fs-label: 12px;
+    --fs-title: 28px;
+    --fs-bar: 17px;
+    --row-h: 54px;
+    --glow-title: 0 0 6px rgba(78, 224, 108, 0.45);
+  }
+}
+
+/* U-1d: Clean, from Minimal. Bold values in the spec are the AA adjustments. */
+:root[data-theme="clean-dark"] {
+  color-scheme: dark;
+  --bg: #18181b;
+  --s1: #1f1f23;
+  --s2: #27272a;
+  --s-hi: #27272a;
+  --line: #3f3f46;
+  --line-soft: #27272a;
+  --rule: solid;
+  --t1: #fafafa;
+  --t-body: #e4e4e7;
+  --t2: #d4d4d8;
+  --t3: #a1a1aa;
+  --accent: #fafafa;
+  --on-accent: #18181b;
+  --advice: #fb923c;
+  --advice-dim: #f97316;
+  --advice-hi: #fed7aa;
+  --advice-line: var(--advice);
+  --advice-fill: #60a5fa;
+  --on-advice-fill: #18181b;
+  --link: var(--t1);
+  --link-hover: var(--advice-hi);
+  --rate-up: #4ade80;
+  --rate-down: #f87171;
+  --state-fed: #4ade80;
+  --state-throttled: #facc15;
+  --state-bottleneck: #fb923c;
+  --state-paused: #a1a1aa;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Inter", system-ui, sans-serif;
+  --fw-name: 400;
+  --radius: 8px;
+  --radius-pill: 999px;
+  --bar-h: 3px;
+  --bar-open: "";
+  --bar-close: "";
+  --bar-track: var(--line);
+  --bar-wash: 0;
+  --bar-paint: currentColor;
+  --glow-text: none;
+  --glow-title: none;
+  --glow-advice: none;
+  --glow-banner: none;
+  --glow-tap: none;
+  --scanlines: none;
+}
+
+:root[data-theme="clean-oled"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --s1: #0a0a0a;
+  --s2: #141416;
+  --s-hi: #141416;
+  --line: #27272a;
+  --line-soft: #141416;
+  --rule: solid;
+  --t1: #fafafa;
+  --t-body: #e4e4e7;
+  --t2: #d4d4d8;
+  --t3: #a1a1aa;
+  --accent: #fafafa;
+  --on-accent: #18181b;
+  --advice: #fb923c;
+  --advice-dim: #f97316;
+  --advice-hi: #fed7aa;
+  --advice-line: var(--advice);
+  --advice-fill: #60a5fa;
+  --on-advice-fill: #18181b;
+  --link: var(--t1);
+  --link-hover: var(--advice-hi);
+  --rate-up: #4ade80;
+  --rate-down: #f87171;
+  --state-fed: #4ade80;
+  --state-throttled: #facc15;
+  --state-bottleneck: #fb923c;
+  --state-paused: #a1a1aa;
+  --scrim: rgba(0, 0, 0, 0.7);
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Inter", system-ui, sans-serif;
+  --fw-name: 400;
+  --radius: 8px;
+  --radius-pill: 999px;
+  --bar-h: 3px;
+  --bar-open: "";
+  --bar-close: "";
+  --bar-track: var(--line);
+  --bar-wash: 0;
+  --bar-paint: currentColor;
+  --glow-text: none;
+  --glow-title: none;
+  --glow-advice: none;
+  --glow-banner: none;
+  --glow-tap: none;
+  --scanlines: none;
+}
+
+:root[data-theme="clean-light"] {
   color-scheme: light;
-  --bg: #f6f7f9;
+  --bg: #ffffff;
   --s1: #ffffff;
-  --s2: #eef1f4;
-  --s3: #dfe4ea;
-  --line: #d5dbe2;
-  --line2: #c2cad3;
-  --t1: #1a1f26;
-  --t2: #4d5865;
-  --t3: #6b7480;
-  --accent: #b85a12;
+  --s2: #f4f4f5;
+  --s-hi: #f4f4f5;
+  --line: #e4e4e7;
+  --line-soft: #f4f4f5;
+  --rule: solid;
+  --t1: #18181b;
+  --t-body: var(--t1);
+  --t2: #52525b;
+  /* Minimal's #71717a is 4.40 on --s2. */
+  --t3: #68686f;
+  --accent: #18181b;
   --on-accent: #ffffff;
-  --state-fed: #2e7d3e;
-  --state-throttled: #9a6a00;
-  --state-bottleneck: #c0392b;
-  --state-paused: #6b7480;
+  --advice: #c2410c;
+  --advice-dim: #9a3412;
+  --advice-hi: #9a3412;
+  --advice-line: var(--advice);
+  --advice-fill: #1d4ed8;
+  --on-advice-fill: #ffffff;
+  --link: var(--t1);
+  --link-hover: var(--advice);
+  --rate-up: #15803d;
+  --rate-down: #b91c1c;
+  --state-fed: #15803d;
+  --state-throttled: #975f05;
+  --state-bottleneck: #c2410c;
+  --state-paused: #68686f;
+  --scrim: rgba(24, 24, 27, 0.4);
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Inter", system-ui, sans-serif;
+  --fw-name: 400;
+  --radius: 8px;
+  --radius-pill: 999px;
+  --bar-h: 3px;
+  --bar-open: "";
+  --bar-close: "";
+  --bar-track: var(--line);
+  --bar-wash: 0;
+  --bar-paint: currentColor;
+  --glow-text: none;
+  --glow-title: none;
+  --glow-advice: none;
+  --glow-banner: none;
+  --glow-tap: none;
+  --scanlines: none;
+}
+
+/* U-1e: the two prestige themes, registered and locked (theme.ts). */
+:root[data-theme="cosy"] {
+  color-scheme: light;
+  --bg: #f5ede1;
+  --s1: #fffaf2;
+  --s2: #f1e3cf;
+  --s-hi: #fff3ea;
+  --line: #ead9c2;
+  --line-soft: #ead9c2;
+  --rule: solid;
+  --t1: #3b2f26;
+  --t-body: var(--t1);
+  --t2: #6b5848;
+  --t3: #72604d;
+  /* A fill only (4.17 on --bg): contrast.test.ts bars color: var(--accent) (V-2). */
+  --accent: #5b7a4f;
+  --on-accent: #fffaf2;
+  --advice: #9c4226;
+  --advice-dim: #8a3b22;
+  --advice-hi: #7a3319;
+  --advice-line: #e8a585;
+  --advice-fill: #a8482a;
+  --on-advice-fill: #fffaf2;
+  --link: var(--t1);
+  --link-hover: var(--advice);
+  --rate-up: #4e6b43;
+  --rate-down: #9c4226;
+  --state-fed: #4e6b43;
+  --state-throttled: #7e560e;
+  --state-bottleneck: #9c4226;
+  --state-paused: #72604d;
+  --scrim: rgba(59, 47, 38, 0.4);
+  --font-ui: "Nunito", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Fraunces", Georgia, serif;
+  --fw-name: 400;
+  --radius: 18px;
+  --radius-pill: 999px;
+  --bar-h: 10px;
+  --bar-open: "";
+  --bar-close: "";
+  --bar-track: var(--line);
+  --bar-wash: 0;
+  --bar-paint: currentColor;
+  --glow-text: none;
+  --glow-title: none;
+  --glow-advice: none;
+  --glow-banner: none;
+  --glow-tap: none;
+  --scanlines: none;
+}
+
+:root[data-theme="industrial"] {
+  color-scheme: dark;
+  --bg: #17191b;
+  --s1: #1f2225;
+  --s2: #23272a;
+  --s-hi: #241b18;
+  --line: #2b2e31;
+  --line-soft: #2b2e31;
+  --rule: solid;
+  --t1: #f2f0ea;
+  --t-body: #d6d3cc;
+  --t2: #d6d3cc;
+  --t3: #9a968d;
+  --accent: #f2a900;
+  --on-accent: #17191b;
+  --advice: #ef6a4c;
+  --advice-dim: #d9826b;
+  --advice-hi: #f59a80;
+  --advice-line: var(--advice);
+  --advice-fill: #f2a900;
+  --on-advice-fill: #17191b;
+  --link: var(--t1);
+  --link-hover: var(--accent);
+  --rate-up: #8fc27a;
+  --rate-down: #ef6a4c;
+  --state-fed: #8fc27a;
+  --state-throttled: #f2a900;
+  --state-bottleneck: #ef6a4c;
+  --state-paused: #969288;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --font-ui: "IBM Plex Mono", ui-monospace, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "Oswald", "Arial Narrow", sans-serif;
+  --fw-name: 600;
+  --radius: 0;
+  --radius-pill: 0;
+  --bar-h: 10px;
+  --bar-open: "";
+  --bar-close: "";
+  --bar-track: #0f1112;
+  --bar-wash: 0;
+  --bar-paint: currentColor;
+  --glow-text: none;
+  --glow-title: none;
+  --glow-advice: none;
+  --glow-banner: none;
+  --glow-tap: none;
+  --scanlines: none;
 }
 
 .num {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }

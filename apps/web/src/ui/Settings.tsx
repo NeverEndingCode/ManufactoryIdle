@@ -1,4 +1,7 @@
-// S-11: the settings sheet, a modal dialog with three sections: notation, theme and account.
+// S-11: the settings sheet, a modal dialog with four sections: notation, theme, account and
+// About (U-2e: the GPL notice, W-25, moved out of the footer).
+// U-1i: the Theme fieldset lists the six themes with a registry swatch; a locked one stays
+// listed and focusable, aria-disabled, and picking it does nothing.
 // A bottom sheet below 600 px and a centred panel above. Escape (anywhere: it listens on the
 // document), Close or the backdrop closes it. Tab wraps inside it, and focus never falls to
 // <body>: whatever unmounts the focused control, the title takes focus. App makes the
@@ -8,24 +11,13 @@ import type { GameStore, StoreView } from "../sync/store.js";
 import { AccountSection, type AccountMode } from "./AccountForms.js";
 import { NOTATION_LABELS, NOTATIONS, notationSample, useNotation } from "./notation.js";
 import styles from "./Settings.module.css";
-import { useTheme, type ThemeChoice } from "./theme.js";
+import { capabilities } from "./capabilities.js";
+import { trapTab } from "./dialog.js";
+import { currentBuildInfo, sourceLinks } from "./source-link.js";
+import { isLocked, THEMES, useTheme } from "./theme.js";
 
-const THEMES: readonly { id: ThemeChoice; name: string }[] = [
-  { id: "system", name: "System" },
-  { id: "dark", name: "Dark" },
-  { id: "light", name: "Light" },
-];
-
-const TABBABLE = "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])";
-
-function tabbables(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) => {
-    if (el.tabIndex < 0 || el.closest("[inert]") !== null) return false;
-    // A radio group is one stop: only its checked radio is in the Tab order.
-    if (el instanceof HTMLInputElement && el.type === "radio" && !el.checked) return false;
-    return true;
-  });
-}
+/** U-1i: the locked themes' line, and their radio's accessible description. */
+export const LOCKED_LINE = "Unlocks in the prestige store";
 
 export interface SettingsProps {
   store: Pick<GameStore, "signUp" | "signIn" | "signOut" | "sendReset">;
@@ -39,10 +31,13 @@ export interface SettingsProps {
 export function Settings({ store, view, section, mode = "sign-up", onClose }: SettingsProps) {
   const titleId = useId();
   const accountId = useId();
+  const aboutId = useId();
+  const links = sourceLinks(currentBuildInfo());
   const title = useRef<HTMLHeadingElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const [notation, setNotation] = useNotation();
-  const [theme, setTheme] = useTheme();
+  const theme = useTheme();
+  const caps = capabilities(view);
   const [accountMode, setAccountMode] = useState<AccountMode>(mode);
   const atAccount = section === "account";
 
@@ -72,19 +67,9 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
     if (d !== null && !d.contains(document.activeElement)) title.current?.focus();
   });
 
-  /** The Tab wrap: past the last control to the first, before the first to the last. */
+  /** The Tab wrap (V-12's trapTab). */
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== "Tab" || dialog.current === null) return;
-    const all = tabbables(dialog.current);
-    if (all.length === 0) return;
-    const at = all.indexOf(document.activeElement as HTMLElement);
-    if (e.shiftKey && at <= 0) {
-      e.preventDefault();
-      all[all.length - 1]!.focus();
-    } else if (!e.shiftKey && (at === -1 || at === all.length - 1)) {
-      e.preventDefault();
-      all[0]!.focus();
-    }
+    if (dialog.current !== null) trapTab(e.nativeEvent, dialog.current);
   };
 
   return (
@@ -138,20 +123,50 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
 
         <fieldset className={styles.group}>
           <legend>Theme</legend>
-          {THEMES.map((t) => (
-            <div key={t.id} className={styles.option}>
-              <input
-                type="radio"
-                id={`${titleId}-t-${t.id}`}
-                name="theme"
-                value={t.id}
-                checked={theme === t.id}
-                onChange={() => setTheme(t.id)}
-                data-theme-choice={t.id}
-              />
-              <label htmlFor={`${titleId}-t-${t.id}`}>{t.name}</label>
-            </div>
-          ))}
+          {THEMES.map((t) => {
+            const locked = isLocked(t, caps);
+            const radioId = `${titleId}-t-${t.id}`;
+            const lineId = `${titleId}-tl-${t.id}`;
+            return (
+              <div
+                key={t.id}
+                className={styles.option}
+                data-theme-option={t.id}
+                data-locked-theme={locked ? "" : undefined}
+              >
+                <input
+                  type="radio"
+                  id={radioId}
+                  name="theme"
+                  value={t.id}
+                  checked={theme.applied.id === t.id}
+                  aria-disabled={locked ? "true" : undefined}
+                  aria-describedby={locked ? lineId : undefined}
+                  onChange={() => {
+                    if (locked) return;
+                    theme.set(t.id);
+                  }}
+                  data-theme-choice={t.id}
+                />
+                <span className={styles.swatch} aria-hidden="true" data-swatch={t.id}>
+                  <span style={{ background: t.swatch.bg }} />
+                  <span style={{ background: t.swatch.body }} />
+                  <span style={{ background: t.swatch.advice }} />
+                </span>
+                <label htmlFor={radioId}>{t.name}</label>
+                {locked && (
+                  <>
+                    <span className={styles.tag} data-locked>
+                      locked
+                    </span>
+                    <span id={lineId} className={styles.lockLine}>
+                      {LOCKED_LINE}
+                    </span>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </fieldset>
 
         <section aria-labelledby={accountId} className={styles.group} data-account>
@@ -165,6 +180,23 @@ export function Settings({ store, view, section, mode = "sign-up", onClose }: Se
             onMode={setAccountMode}
             focusFirst={atAccount}
           />
+        </section>
+
+        <section aria-labelledby={aboutId} className={styles.group} data-about>
+          <h3 id={aboutId} className={styles.legend}>
+            About
+          </h3>
+          <p className={styles.about}>
+            <span>Free software under the GPL-3.0</span>
+            <span aria-hidden="true"> · </span>
+            <a href={links.source.href} data-source-link>
+              {links.source.text}
+            </a>
+            <span aria-hidden="true"> · </span>
+            <a href={links.license.href} data-license-link>
+              License
+            </a>
+          </p>
         </section>
       </div>
     </div>

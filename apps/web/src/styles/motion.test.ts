@@ -97,15 +97,18 @@ describe("motion in the CSS (S-14)", () => {
     ]);
     const names = files.map((f) => relative(SRC, f));
     expect(names).toEqual(
-      expect.arrayContaining([
-        "ui/ItemRow.module.css",
-        "ui/LaneView.module.css",
-        "ui/BottleneckFrame.module.css",
-      ]),
+      expect.arrayContaining(["ui/Row.module.css", "ui/Bar.module.css", "ui/Drawer.module.css"]),
     );
-    // The motion this phase adds is here to be checked.
-    expect(decls.some((x) => x.blocks.includes("@keyframes sweep"))).toBe(true);
-    expect(decls.some((x) => x.blocks.includes("@keyframes conveyor"))).toBe(true);
+    // The motion there is, here to be checked: the bottleneck's pulse and the drawer's rise.
+    const keyframes = new Set(
+      decls.flatMap((x) => x.blocks.filter((b) => b.startsWith("@keyframes "))),
+    );
+    expect(keyframes).toContain("@keyframes pulse");
+    expect(keyframes).toContain("@keyframes rise");
+    // U-8c: the sweep and the conveyor are retired.
+    expect(keyframes).not.toContain("@keyframes sweep");
+    expect(keyframes).not.toContain("@keyframes conveyor");
+    expect(decls.filter((x) => /--(sweep|conveyor)-period/.test(x.value)).map(show)).toEqual([]);
   });
 
   it("1b. every animation and transition declaration is inside prefers-reduced-motion: no-preference", () => {

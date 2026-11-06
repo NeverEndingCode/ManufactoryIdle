@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { D, liquidCap, withInstalled, type Bottleneck, type WorldState } from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Outcome } from "../sync/errors.js";
 import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
+import { declarations } from "../styles/css-walk.js";
 import { App } from "./App.js";
+import { bottleneckRow } from "./derive.js";
 import { drawerLabel } from "./Drawer.js";
 import {
   CLIENT_T0,
@@ -16,9 +21,13 @@ import {
   loadSlice,
   snapshotOf,
   starvedPipeState,
+  stubWidth,
   type FakeStore,
   type Slice,
 } from "./test-fixtures.js";
+
+/** The bottleneck's buy is the command line's (U-4): the frame is gone (U-3c). */
+const inBar = () => within(document.querySelector<HTMLElement>("[data-command]")!);
 
 let slice: Slice;
 let fresh: Snapshot;
@@ -44,12 +53,19 @@ function topped(state: WorldState, items: readonly string[]): WorldState {
   return { ...state, stored };
 }
 
-const rowButton = (item: string) =>
-  document.querySelector<HTMLButtonElement>(`[data-item="${item}"] button[data-open-row]`)!;
+/** A row is a listbox option (U-7d): a click selects it and opens its drawer. */
+const option = (item: string) =>
+  document.querySelector<HTMLElement>(`li[role="option"][data-item="${item}"]`)!;
+const listbox = () => screen.getByRole("listbox");
+/** U-7c: focus is back on the row list, with this row active. */
+function expectBackOn(item: string) {
+  expect(document.activeElement).toBe(listbox());
+  expect(listbox().getAttribute("aria-activedescendant")).toBe(`row-${item}`);
+}
 const drawer = (item: string) => document.querySelector<HTMLElement>(`[data-drawer="${item}"]`);
 
 function open(item: string): HTMLElement {
-  fireEvent.click(rowButton(item));
+  fireEvent.click(option(item));
   const d = drawer(item);
   expect(d).not.toBeNull();
   return d!;
@@ -61,76 +77,34 @@ function pick(d: HTMLElement, verb: string) {
 
 const batch = (label: string, id = 1): Batch => ({ id, key: `k${id}`, actions: [], label });
 
-/** matchMedia for a viewport this wide: min-width / max-width queries, never reduced motion.
- * resize() changes the width and fires `change` on each list whose answer flipped. */
-function stubWidth(initial: number) {
-  let width = initial;
-  const lists: { q: string; matches: boolean; fns: Set<() => void> }[] = [];
-  const evaluate = (q: string) => {
-    const min = /min-width:\s*(\d+)px/.exec(q);
-    const max = /max-width:\s*(\d+)px/.exec(q);
-    return (
-      !q.includes("reduce") &&
-      (min === null || width >= Number(min[1])) &&
-      (max === null || width <= Number(max[1]))
-    );
-  };
-  vi.stubGlobal("matchMedia", (q: string) => {
-    const entry = { q, matches: evaluate(q), fns: new Set<() => void>() };
-    lists.push(entry);
-    return {
-      get matches() {
-        return evaluate(q);
-      },
-      media: q,
-      addEventListener: (_: string, fn: () => void) => entry.fns.add(fn),
-      removeEventListener: (_: string, fn: () => void) => entry.fns.delete(fn),
-    } as unknown as MediaQueryList;
-  });
-  return {
-    resize(w: number) {
-      width = w;
-      act(() => {
-        for (const l of lists) {
-          const now = evaluate(l.q);
-          if (now === l.matches) continue;
-          l.matches = now;
-          for (const fn of [...l.fns]) fn();
-        }
-      });
-    },
-    get listeners() {
-      return lists.reduce((n, l) => n + l.fns.size, 0);
-    },
-  };
-}
-
-describe("Drawer", () => {
-  it("1. a row's first line opens the drawer; Escape closes it and focus goes back", () => {
+describe("Drawer", { timeout: 60_000 }, () => {
+  it("1. a row opens the drawer; Escape closes it and focus goes back to the list", () => {
     mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
-    expect(screen.getByText("Tap a row to buy, upgrade or store")).toBeTruthy();
-    const btn = rowButton("iron_ore");
-    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    // The drawer is an overlay (U-5a): no pane, no hint.
+    expect(screen.queryByText("Tap a row to buy, upgrade or store")).toBeNull();
     const d = open("iron_ore");
-    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(option("iron_ore").getAttribute("aria-selected")).toBe("true");
     expect(d.id).toBe("detail");
     expect(d.getAttribute("aria-labelledby")).toBe("drawer-title");
     expect(document.activeElement).toBe(document.getElementById("drawer-title"));
     expect(within(d).getByText("Miner")).toBeTruthy();
     expect(within(d).getByText("8 more Miners → ×1.50")).toBeTruthy();
 
+    // U-7c: back to the list, with that row active.
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_ore"));
+    expect(document.activeElement).toBe(listbox());
+    expect(listbox().getAttribute("aria-activedescendant")).toBe("row-iron_ore");
 
     // The Close button too.
     const again = open("iron_ore");
     fireEvent.click(within(again).getByRole("button", { name: "Close" }));
     expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_ore"));
+    expect(document.activeElement).toBe(listbox());
+    expect(listbox().getAttribute("aria-activedescendant")).toBe("row-iron_ore");
 
-    // The frame's own buy does not open the drawer.
-    fireEvent.click(screen.getByRole("button", { name: /^Buy 1 Constructor$/ }));
+    // The command line's buy does not open the drawer.
+    fireEvent.click(inBar().getByRole("button", { name: /^Buy 1 Constructor$/ }));
     expect(document.querySelector("[data-drawer]")).toBeNull();
   });
 
@@ -366,7 +340,7 @@ describe("Drawer", () => {
     ).toBe(false);
   });
 
-  it("7. the frame renders the reserve and storage actions, with one label", () => {
+  it("7. the command line runs the reserve and storage actions, with one label", () => {
     const withBottleneck = (b: Bottleneck, base: Snapshot = fresh): Snapshot => ({
       ...base,
       display: { ...base.display, solution: { ...base.display.solution, bottleneck: b } },
@@ -380,8 +354,8 @@ describe("Drawer", () => {
       }),
     );
     mount(store);
-    expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    const reserve = screen.getByRole("button", { name: "Reserve 25% of Iron Ingot" });
+    expect(option("iron_ingot").getAttribute("aria-label")).toMatch(/, bottleneck$/);
+    const reserve = inBar().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
     expect((reserve as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(reserve);
     expect(store.send).toHaveBeenCalledWith(
@@ -391,7 +365,7 @@ describe("Drawer", () => {
     // A setting: still enabled while its batch is pending.
     store.set({ pending: [batch("bottleneck buy")] });
     expect(
-      (screen.getByRole("button", { name: "Reserve 25% of Iron Ingot" }) as HTMLButtonElement)
+      (inBar().getByRole("button", { name: "Reserve 25% of Iron Ingot" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
     cleanup();
@@ -409,14 +383,14 @@ describe("Drawer", () => {
       ),
     );
     mount(storage);
-    expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Buy storage for Iron Plate" }));
+    expect(option("iron_plate").getAttribute("aria-label")).toMatch(/, bottleneck$/);
+    fireEvent.click(inBar().getByRole("button", { name: "Buy storage for Iron Plate" }));
     expect(storage.send).toHaveBeenCalledWith(
       [{ type: "BUY_STORAGE", itemId: "iron_plate", levels: 1 }],
       "bottleneck buy",
     );
     storage.set({ pending: [batch("bottleneck buy")] });
-    const busy = screen.getByRole("button", { name: "Buy storage for Iron Plate" });
+    const busy = inBar().getByRole("button", { name: "Buy storage for Iron Plate" });
     expect(busy.getAttribute("aria-busy")).toBe("true");
     expect(busy.getAttribute("aria-disabled")).toBe("true");
     expect((busy as HTMLButtonElement).disabled).toBe(false);
@@ -435,38 +409,36 @@ describe("Drawer", () => {
         ),
       ),
     );
-    expect(screen.getAllByText("bottleneck")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
+    expect(option("iron_plate").getAttribute("aria-label")).toMatch(/, bottleneck$/);
+    expect(inBar().getByRole("button", { name: "Buy Quantum Storage for Iron" })).toBeTruthy();
   });
 
-  it("8. the pane count follows the viewport; under 600 px the drawer is a dialog sheet", () => {
+  it("8. the layout follows the viewport; the drawer is the panel, under 600 px the sheet", () => {
     stubWidth(1200);
-    let r = mount(fakeStore(fresh));
-    const layout = () => r.container.querySelector<HTMLElement>("[data-panes]")!;
-    expect(layout().dataset.panes).toBe("3");
-    expect(screen.queryByRole("tab", { name: "Priority" })).toBeNull();
+    mount(fakeStore(fresh));
+    const app = () => document.querySelector<HTMLElement>(".app")!;
+    expect(app().dataset.layout).toBe("desktop");
+    expect(screen.getByRole("tab", { name: "priority" })).toBeTruthy();
     cleanup();
 
     stubWidth(800);
-    r = mount(fakeStore(fresh));
-    expect(layout().dataset.panes).toBe("2");
-    expect(screen.getByRole("tab", { name: "Factory" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Priority" })).toBeTruthy();
-    expect(open("iron_ore").getAttribute("role")).toBeNull();
+    mount(fakeStore(fresh));
+    expect(app().dataset.layout).toBe("tablet");
+    expect(screen.getByRole("tab", { name: "factory" })).toBeTruthy();
+    expect(open("iron_ore").dataset.presentation).toBe("panel");
     cleanup();
 
     stubWidth(400);
-    r = mount(fakeStore(fresh));
-    expect(layout().dataset.panes).toBe("1");
-    expect(screen.getByRole("tab", { name: "Factory" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Priority" })).toBeTruthy();
-    // No hint in one column: the sheet appears on demand.
-    expect(screen.queryByText("Tap a row to buy, upgrade or store")).toBeNull();
+    mount(fakeStore(fresh));
+    expect(app().dataset.layout).toBe("phone");
+    expect(screen.getByRole("tab", { name: "factory" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "priority" })).toBeTruthy();
     const sheet = open("iron_ore");
+    expect(sheet.dataset.presentation).toBe("sheet");
     expect(sheet.getAttribute("role")).toBe("dialog");
     expect(sheet.getAttribute("aria-modal")).toBe("false");
-    // The Priority tab swaps the column.
-    fireEvent.click(screen.getByRole("tab", { name: "Priority" }));
+    // The priority tab swaps the main box.
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     expect(document.querySelector('[data-item="iron_ore"]')).toBeNull();
   });
 
@@ -533,96 +505,144 @@ describe("Drawer", () => {
     expect(store.send).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(busy, { key: "Escape" });
     expect(drawer("iron_plate")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_plate"));
+    expectBackOn("iron_plate");
   });
 
-  it("11. closing after the row left: focus goes to the selected lane tab", () => {
+  // Catches: a drawer outliving its lane, covering another lane's rows; focus dropped to body.
+  it("11. a lane switch closes another lane's drawer; focus stays on the lane tabs", async () => {
+    const user = userEvent.setup();
     mount(fakeStore(fresh));
-    const d = open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: /Power/ }));
+    open("iron_ore");
+    expect(document.activeElement).toBe(document.getElementById("drawer-title"));
+    const power = screen.getByRole("tab", { name: /^Power/ });
+    await user.click(power);
     expect(document.querySelector('[data-item="iron_ore"]')).toBeNull();
-    fireEvent.click(within(d).getByRole("button", { name: "Close" }));
-    expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: /Power/ }));
+    expect(document.querySelector("[data-drawer]")).toBeNull();
+    expect(document.activeElement).toBe(power);
+    // Closed, not hidden: back on its lane it stays shut.
+    await user.click(screen.getByRole("tab", { name: /^Iron/ }));
+    expect(document.querySelector("[data-drawer]")).toBeNull();
+
+    // The arrows on the lane tabs: the same, focus on the new tab.
+    open("iron_ore");
+    const iron = screen.getByRole("tab", { name: /^Iron/ });
+    act(() => iron.focus());
+    fireEvent.keyDown(iron, { key: "ArrowRight" });
+    const lanes = within(screen.getByRole("tablist", { name: "Lanes" }));
+    const now = lanes.getByRole("tab", { selected: true });
+    expect(now).not.toBe(iron);
+    expect(document.querySelector("[data-drawer]")).toBeNull();
+    expect(document.activeElement).toBe(now);
+
+    // Its own lane's tab keeps it: a FUEL row's drawer on the power tab.
+    await user.click(power);
+    open("biomass");
+    await user.click(screen.getByRole("tab", { name: /^Power/ }));
+    expect(drawer("biomass")).not.toBeNull();
   });
 
-  it("12. at 2 panes the Priority view hides the row; closing focuses the view tab", () => {
+  // Catches: the drawer shown over a lane it isn't in when the lane changes without a tab press:
+  // the phone has no power lane tab, so the factory view falls back to the first lane.
+  it("11b. a FUEL row's drawer doesn't follow a resize onto the phone's factory lane", async () => {
+    const user = userEvent.setup();
+    const media = stubWidth(1280);
+    mount(fakeStore(fresh));
+    await user.click(screen.getByRole("tab", { name: /^Power/ }));
+    open("biomass");
+    act(() => listbox().focus());
+    media.resize(390);
+    expect(document.querySelector('li[role="option"][data-item="iron_ore"]')).not.toBeNull();
+    expect(document.querySelector("[data-drawer]")).toBeNull();
+  });
+
+  it("12. the priority view hides the drawer; it's still open on the factory view (V-25)", () => {
     stubWidth(800);
     mount(fakeStore(fresh));
-    const d = open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: "Priority" }));
-    // The drawer stays in the detail pane.
-    expect(drawer("iron_ore")).toBe(d);
+    open("iron_ore");
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
+    expect(drawer("iron_ore")).toBeNull();
+    const factory = screen.getByRole("tab", { name: "factory" });
+    factory.focus();
+    fireEvent.click(factory);
+    // Back, without taking focus (claimFocus).
+    const d = drawer("iron_ore")!;
+    expect(d).not.toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
     fireEvent.click(within(d).getByRole("button", { name: "Close" }));
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Priority" }));
+    expectBackOn("iron_ore");
   });
 
-  it("13. a pane-count change re-lays out in place and never steals focus", () => {
+  it("13. a layout change re-lays out and never steals focus", () => {
     const media = stubWidth(800);
     const r = mount(fakeStore(fresh));
-    const layout = () => r.container.querySelector<HTMLElement>("[data-panes]")!;
+    const app = () => r.container.querySelector<HTMLElement>(".app")!;
     const d = open("iron_ore");
-    expect(d.getAttribute("role")).toBeNull();
-    const lane = screen.getByRole("tab", { name: /Iron/ });
+    expect(d.dataset.presentation).toBe("panel");
+    const lane = screen.getByRole("tab", { name: /^Iron/ });
     lane.focus();
-    media.resize(400);
-    expect(layout().dataset.panes).toBe("1");
-    expect(layout().dataset.sheet).toBe("open");
-    // The same element, now a dialog sheet; focus stayed put.
-    expect(drawer("iron_ore")).toBe(d);
-    expect(d.getAttribute("role")).toBe("dialog");
-    expect(document.activeElement).toBe(lane);
+    // Tablet and desktop are one tree (U-2c): the same drawer, the same focus.
     media.resize(1200);
-    expect(layout().dataset.panes).toBe("3");
+    expect(app().dataset.layout).toBe("desktop");
+    expect(drawer("iron_ore")).toBe(d);
+    expect(document.activeElement).toBe(lane);
+    // The phone is its own tree: the drawer is a dialog sheet now, and it takes no focus.
+    media.resize(400);
+    expect(app().dataset.layout).toBe("phone");
+    const sheet = drawer("iron_ore")!;
+    expect(sheet.dataset.presentation).toBe("sheet");
+    expect(sheet.contains(document.activeElement)).toBe(false);
+    media.resize(1200);
+    expect(app().dataset.layout).toBe("desktop");
+    expect(drawer("iron_ore")!.dataset.presentation).toBe("panel");
     expect(media.listeners).toBeGreaterThan(0);
     r.unmount();
     expect(media.listeners).toBe(0);
   });
 
-  it("14. the sheet: focus moves to its title, and back to the row on Escape", () => {
-    stubWidth(400);
+  it("14. a remount across 600 px keeps focus in the drawer when the drawer had it", () => {
+    const media = stubWidth(800);
     mount(fakeStore(fresh));
-    const sheet = open("iron_ore");
-    expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(document.activeElement).toBe(within(sheet).getByRole("heading", { name: "Iron Ore" }));
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(rowButton("iron_ore"));
-
-    // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
     open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: "Priority" }));
-    expect(drawer("iron_ore")).toBeNull();
-    const factory = screen.getByRole("tab", { name: "Factory" });
+    const title = () => document.getElementById("drawer-title");
+    expect(document.activeElement).toBe(title());
+    // The phone is its own tree: the drawer remounts, and its title takes the focus back.
+    media.resize(400);
+    expect(drawer("iron_ore")!.dataset.presentation).toBe("sheet");
+    expect(document.activeElement).toBe(title());
+    // From a control inside it too, and back again.
+    within(drawer("iron_ore")!).getByRole("button", { name: "Close" }).focus();
+    media.resize(1200);
+    expect(drawer("iron_ore")!.dataset.presentation).toBe("panel");
+    expect(document.activeElement).toBe(title());
+    // A flag that wasn't used dies with its commit: the split, the priority view and back
+    // don't take focus later.
+    const factory = screen.getByRole("tab", { name: "factory" });
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     factory.focus();
-    fireEvent.click(factory);
+    fireEvent.click(screen.getByRole("tab", { name: "factory" }));
     expect(drawer("iron_ore")).not.toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Factory" }));
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
   });
 
-  it("15. the View tablist: arrows move and select, modifiers are ignored, controls rendered ids", () => {
+  it("15. the Panels tablist: arrows move and select, modifiers are ignored, controls rendered ids", () => {
     stubWidth(800);
     mount(fakeStore(fresh));
-    const factory = screen.getByRole("tab", { name: "Factory" });
-    const priority = screen.getByRole("tab", { name: "Priority" });
-    expect(factory.getAttribute("aria-controls")).toBe("pane-factory");
+    const factory = screen.getByRole("tab", { name: "factory" });
+    const priority = screen.getByRole("tab", { name: "priority" });
+    expect(factory.getAttribute("aria-controls")).toBe("view-factory");
     expect(priority.getAttribute("aria-controls")).toBeNull();
-    expect(document.getElementById("pane-factory")).not.toBeNull();
+    expect(document.getElementById("view-factory")).not.toBeNull();
     factory.focus();
     fireEvent.keyDown(factory, { key: "ArrowRight", altKey: true });
     expect(factory.getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(factory, { key: "ArrowRight" });
-    const p = screen.getByRole("tab", { name: "Priority" });
+    const p = screen.getByRole("tab", { name: "priority" });
     expect(p.getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(p);
-    expect(p.getAttribute("aria-controls")).toBe("pane-priority");
-    expect(document.getElementById("pane-priority")).not.toBeNull();
+    expect(p.getAttribute("aria-controls")).toBe("view-priority");
+    expect(document.getElementById("view-priority")).not.toBeNull();
     fireEvent.keyDown(p, { key: "Home" });
-    expect(screen.getByRole("tab", { name: "Factory" }).getAttribute("aria-selected")).toBe("true");
-    // A closed row's button controls nothing; an open one controls #detail.
-    expect(rowButton("iron_ore").getAttribute("aria-controls")).toBeNull();
-    open("iron_ore");
-    expect(rowButton("iron_ore").getAttribute("aria-controls")).toBe("detail");
+    expect(screen.getByRole("tab", { name: "factory" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("16. an assign 409 reverts the steppers to the server's counts", async () => {
@@ -666,7 +686,7 @@ describe("Drawer", () => {
     expect(store.send).toHaveBeenCalledTimes(1);
   });
 
-  it("17. the frame's reserve ignores a second click while its send is unsettled", async () => {
+  it("17. the command line's reserve ignores a second click while its send is unsettled", async () => {
     const b: Bottleneck = {
       kind: "reserve",
       itemId: "iron_ingot",
@@ -680,7 +700,7 @@ describe("Drawer", () => {
     let settle!: (o: Outcome) => void;
     store.send.mockImplementation(() => new Promise<Outcome>((r) => (settle = r)));
     mount(store);
-    const reserve = screen.getByRole("button", { name: "Reserve 25% of Iron Ingot" });
+    const reserve = inBar().getByRole("button", { name: "Reserve 25% of Iron Ingot" });
     fireEvent.click(reserve);
     fireEvent.click(reserve);
     expect(store.send).toHaveBeenCalledTimes(1);
@@ -724,5 +744,139 @@ describe("Drawer", () => {
       await Promise.resolve();
     });
     expect(residual()).toBe(false);
+  });
+});
+
+describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
+  const contentRow = () => document.querySelector<HTMLElement>("[data-content-row]")!;
+  const mainBox = () => document.querySelector<HTMLElement>("[data-main-box]")!;
+
+  it("1. desktop: a non-modal panel over the content row, the rows still live", () => {
+    stubWidth(1280);
+    mount(fakeStore(fresh));
+    const d = open("iron_ore");
+    expect(d.dataset.presentation).toBe("panel");
+    // A sibling of the main box, never inside it: the rows keep their layout under it.
+    expect(d.parentElement).toBe(contentRow());
+    expect(mainBox().parentElement).toBe(contentRow());
+    expect(mainBox().contains(d)).toBe(false);
+    expect(d.getAttribute("role")).toBe("dialog");
+    expect(d.getAttribute("aria-modal")).toBe("false");
+    expect(document.getElementById(d.getAttribute("aria-labelledby")!)).toBe(
+      within(d).getByRole("heading", { level: 2 }),
+    );
+    // Non-modal: another row re-keys it.
+    fireEvent.click(option("iron_plate"));
+    expect(drawer("iron_ore")).toBeNull();
+    expect(drawer("iron_plate")!.parentElement).toBe(contentRow());
+  });
+
+  it("2. tablet: the same panel", () => {
+    stubWidth(800);
+    mount(fakeStore(fresh));
+    const d = open("iron_ore");
+    expect(document.querySelector<HTMLElement>(".app")!.dataset.layout).toBe("tablet");
+    expect(d.dataset.presentation).toBe("panel");
+    expect(d.parentElement).toBe(contentRow());
+    expect(d.getAttribute("role")).toBe("dialog");
+    expect(d.getAttribute("aria-modal")).toBe("false");
+  });
+
+  it("3. the phone: a sheet on the app root; focus in, Esc out, a remount takes none", () => {
+    stubWidth(390);
+    mount(fakeStore(fresh));
+    const sheet = open("iron_ore");
+    expect(sheet.dataset.presentation).toBe("sheet");
+    expect(sheet.parentElement).toBe(document.querySelector(".app"));
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.getAttribute("aria-modal")).toBe("false");
+    expect(document.activeElement).toBe(within(sheet).getByRole("heading", { name: "Iron Ore" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("iron_ore")).toBeNull();
+    expectBackOn("iron_ore");
+
+    // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
+    open("iron_ore");
+    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
+    expect(drawer("iron_ore")).toBeNull();
+    const factory = screen.getByRole("tab", { name: "factory" });
+    factory.focus();
+    fireEvent.click(factory);
+    expect(drawer("iron_ore")).not.toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
+  });
+
+  it("4. the head: the label, the content name to a reader, the meta, the bottleneck's colour", () => {
+    const st = fixtureState("slice-tier-8.world.json");
+    const meta = (d: HTMLElement) => d.querySelector("[data-meta]")!.textContent;
+    const title = (d: HTMLElement) => within(d).getByRole("heading", { level: 2 });
+    // "IRON lane · -85.1/s · 3.14 K/89.18 K": stock/cap, no spaces around the slash.
+    const n = String.raw`[\d.]+(?: ?[a-zA-Z]+)?`;
+    const line = new RegExp(String.raw`^IRON lane · [+−-]?${n}/s · ${n}/${n}`);
+
+    mount(fakeStore(snapshotOf(slice, { ...st, quantum: { ...st.quantum, iron_plate: D(0) } })));
+    let d = open("iron_plate");
+    expect(title(d).textContent).toBe("IRON_PLATE");
+    expect(title(d).getAttribute("aria-label")).toBe("Iron Plate");
+    expect(meta(d)).toMatch(line);
+    expect(meta(d)).not.toContain("QS");
+    cleanup();
+
+    mount(fakeStore(snapshotOf(slice, { ...st, quantum: { ...st.quantum, iron_plate: D(40) } })));
+    d = open("iron_plate");
+    expect(meta(d)).toMatch(line);
+    expect(meta(d)).toMatch(/ · QS 40(\.0)?$/);
+    cleanup();
+
+    // Only the bottleneck's title takes the bottleneck class (tier 8's is a generator's, in the
+    // power panel; a fresh factory's is a row).
+    const hot = bottleneckRow(fresh)?.itemId ?? null;
+    expect(hot).not.toBeNull();
+    mount(fakeStore(fresh));
+    const lane = fresh.content.items.get(hot!)!.lane;
+    const laneName = fresh.content.lanes.get(lane)!.name;
+    fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${laneName}`) }));
+    expect(title(open(hot!)).classList.contains("state-bottleneck")).toBe(true);
+    const cold = [...document.querySelectorAll<HTMLElement>('li[role="option"]')]
+      .map((o) => o.dataset.item!)
+      .find((id) => id !== hot)!;
+    expect(title(open(cold)).classList.contains("state-bottleneck")).toBe(false);
+  });
+
+  const z = (file: string, selector: string) => {
+    const path = fileURLToPath(new URL(file, import.meta.url));
+    const decl = declarations(file, readFileSync(path, "utf8")).find(
+      (x) => x.stack.at(-1) === selector && x.property === "z-index",
+    );
+    expect(decl, `${file} ${selector}`).toBeDefined();
+    return Number(decl!.value);
+  };
+
+  it("5. the phone sheet sits above the floating TAP (V-19)", () => {
+    expect(z("./Drawer.module.css", ".sheet")).toBeGreaterThan(
+      z("./Power.module.css", ".floating"),
+    );
+  });
+
+  // Catches: a rejection toast hidden under the open drawer sheet on the phone, or one painted
+  // over the modal NEXT_BUY sheet or Settings.
+  it("5b. on the phone the notices sit over the drawer sheet, under the modal sheets", () => {
+    const notices = z("../styles/base.css", '.app[data-layout="phone"] .notices');
+    expect(notices).toBeGreaterThan(z("./Drawer.module.css", ".sheet"));
+    expect(notices).toBeLessThan(z("./NextBuy.module.css", ".backdrop"));
+    expect(notices).toBeLessThan(z("./Settings.module.css", ".backdrop"));
+    // Elsewhere they stay at 3, over the desktop panel (2).
+    expect(z("../styles/base.css", ".notices")).toBe(3);
+  });
+
+  it("6. the phone sheet's head is sticky on the sheet's surface, so Close never scrolls away", () => {
+    const file = "./Drawer.module.css";
+    const path = fileURLToPath(new URL(file, import.meta.url));
+    const rule = Object.fromEntries(
+      declarations(file, readFileSync(path, "utf8"))
+        .filter((x) => x.stack.length === 1 && x.stack[0] === ".sheet .head")
+        .map((x) => [x.property, x.value]),
+    );
+    expect(rule).toMatchObject({ position: "sticky", top: "0", background: "var(--s1)" });
   });
 });

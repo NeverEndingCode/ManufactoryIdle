@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
-// S-13 / W-19: the handbook's place in the panes, its routes, and the context-aware entry.
+// S-13 / V-25: the handbook is a view and its route; the context-aware entry (§13.4).
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { App } from "./App.js";
 import { GLOSSARY } from "./glossary.js";
-import { fakeStore, fixtureState, loadSlice, snapshotOf, type FakeStore } from "./test-fixtures.js";
+import {
+  fakeStore,
+  fixtureState,
+  loadSlice,
+  snapshotOf,
+  stubWidth,
+  type FakeStore,
+} from "./test-fixtures.js";
 
 let tier8: Snapshot;
 beforeAll(() => {
@@ -18,19 +25,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   history.replaceState(null, "", "/");
 });
-
-/** matchMedia for a fixed viewport width (min-width queries only, as use-panes asks). */
-function stubWidth(width: number) {
-  vi.stubGlobal("matchMedia", (q: string) => {
-    const min = /min-width:\s*(\d+)px/.exec(q);
-    return {
-      matches: min === null || width >= Number(min[1]),
-      media: q,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    } as unknown as MediaQueryList;
-  });
-}
 
 function mount(store: FakeStore) {
   const push = vi.spyOn(history, "pushState");
@@ -49,16 +43,17 @@ function back(path: string) {
 const entryTitle = () =>
   document.querySelector<HTMLElement>("article[data-handbook-entry] h2")?.textContent ?? null;
 
-describe("Handbook (S-13, W-19)", () => {
-  it("1. one pane: Handbook is the third tab; selecting it pushes /handbook; search filters", () => {
-    stubWidth(400);
+describe("Handbook (S-13, V-25)", { timeout: 60_000 }, () => {
+  it("1. the phone: handbook is the last bottom tab; selecting it pushes /handbook; search filters", () => {
+    stubWidth(390);
     const { pushed } = mount(fakeStore(tier8));
-    const tabs = within(screen.getByRole("tablist", { name: "View" })).getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Factory", "Priority", "Handbook"]);
-    fireEvent.click(tabs[2]!);
+    const tabs = () => within(screen.getByRole("tablist", { name: "Panels" })).getAllByRole("tab");
+    expect(tabs().map((t) => t.dataset.view)).toEqual(["factory", "power", "priority", "handbook"]);
+    fireEvent.click(tabs()[3]!);
     expect(pushed()).toContain("/handbook");
     expect(location.pathname).toBe("/handbook");
-    expect(tabs[2]!.getAttribute("aria-selected")).toBe("true");
+    expect(tabs()[3]!.getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector("h1")!.textContent).toBe("HANDBOOK");
 
     const items = () =>
       Array.from(document.querySelectorAll("[data-handbook-item]")).map((b) =>
@@ -74,7 +69,7 @@ describe("Handbook (S-13, W-19)", () => {
     expect(items()).not.toContain("screw");
 
     // Factory goes back to the game.
-    fireEvent.click(tabs[0]!);
+    fireEvent.click(tabs()[0]!);
     expect(location.pathname).toBe("/");
     expect(document.querySelector("[data-handbook]")).toBeNull();
   });
@@ -103,44 +98,46 @@ describe("Handbook (S-13, W-19)", () => {
     expect(location.pathname).toBe("/handbook");
     const search = screen.getByRole("searchbox", { name: "Search the handbook" });
     // Focus goes to the index's title, never the search: that would open a phone's keyboard.
-    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Handbook" }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 2, name: "Handbook" }),
+    );
     expect(document.activeElement).not.toBe(search);
   });
 
-  it("3. three panes: with the iron plate drawer open, Handbook opens its entry in the detail pane", () => {
+  it("3. F3 handbook with the iron plate drawer open opens its entry in the main box", () => {
     stubWidth(1200);
     const { container, pushed } = mount(fakeStore(tier8));
-    fireEvent.click(container.querySelector('[data-item="iron_plate"] [data-open-row]')!);
+    fireEvent.click(container.querySelector('li[role="option"][data-item="iron_plate"]')!);
     expect(container.querySelector('[data-drawer="iron_plate"]')).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Handbook" }));
+    const f3 = () => screen.getByRole("tab", { name: "handbook" });
+    fireEvent.click(f3());
     expect(pushed()).toContain("/handbook/iron_plate");
-    // In place of the drawer, with the lanes still beside it.
+    expect(f3().getAttribute("aria-selected")).toBe("true");
+    // The handbook is the view: in the main box, in place of the lane and its drawer.
     expect(container.querySelector("[data-drawer]")).toBeNull();
-    const detail = container.querySelector("[data-handbook]")!;
-    expect(
-      detail.parentElement!.querySelector("article")!.getAttribute("data-handbook-entry"),
-    ).toBe("iron_plate");
-    expect(container.querySelector("#pane-factory")).not.toBeNull();
+    const view = document.getElementById("view-handbook")!;
+    expect(view.querySelector("article")!.getAttribute("data-handbook-entry")).toBe("iron_plate");
+    expect(screen.queryByRole("tablist", { name: "Lanes" })).toBeNull();
 
-    // Opening a row goes back to the game, with that drawer.
-    fireEvent.click(container.querySelector('[data-item="iron_rod"] [data-open-row]')!);
+    // F1 factory goes back to the game, with the drawer still open (V-25).
+    fireEvent.click(screen.getByRole("tab", { name: "factory" }));
     expect(location.pathname).toBe("/");
-    expect(container.querySelector('[data-drawer="iron_rod"]')).not.toBeNull();
+    expect(container.querySelector('[data-drawer="iron_plate"]')).not.toBeNull();
 
-    // Without a drawer, the header button opens the index.
+    // Without a drawer, F3 opens the index.
     fireEvent.click(
-      within(container.querySelector('[data-drawer="iron_rod"]')!).getByRole("button", {
+      within(container.querySelector('[data-drawer="iron_plate"]')!).getByRole("button", {
         name: "Close",
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Handbook" }));
+    fireEvent.click(f3());
     expect(location.pathname).toBe("/handbook");
   });
 
   it("3b. the drawer's Handbook entry goes to its item", () => {
     stubWidth(800);
     const { container } = mount(fakeStore(tier8));
-    fireEvent.click(container.querySelector('[data-item="screw"] [data-open-row]')!);
+    fireEvent.click(container.querySelector('li[role="option"][data-item="screw"]')!);
     const drawer = container.querySelector<HTMLElement>('[data-drawer="screw"]')!;
     fireEvent.click(within(drawer).getByRole("link", { name: "Handbook entry" }));
     expect(location.pathname).toBe("/handbook/screw");

@@ -1,6 +1,6 @@
-// 4c (W-18, W-20, S-14): under prefers-reduced-motion nothing runs, and nothing is lost: the
-// bottleneck still says so in words, and the conveyor is there but still. Without the
-// preference the motion does run, the frame's pulse among it.
+// 4c (W-18, W-20, S-14), on Layout C: under prefers-reduced-motion nothing runs, and nothing is
+// lost: the bottleneck row keeps its "!" gutter and says so in its name. Without the preference
+// the motion does run, the gutter's pulse among it (U-3e).
 import { expect, test, type Page } from "@playwright/test";
 import { startGuest } from "./helpers.js";
 
@@ -15,29 +15,39 @@ function running(page: Page): Promise<string[]> {
   );
 }
 
-const isPulse = (name: string) => /(^|_)pulse(_|$)/.test(name);
+/** The bottleneck's option (its name ends ", bottleneck") and its gutter (a hashed class). */
+function bottleneck(page: Page) {
+  const option = page.locator('[role="option"][aria-label$=", bottleneck"]');
+  return { option, gutter: option.locator('[class*="_gutter_"]') };
+}
 
 test("reduced motion runs no animation and keeps the bottleneck in words", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await startGuest(page);
-  const frame = page.locator("li[data-item] [data-frame]");
-  await expect(frame.getByText("bottleneck", { exact: true })).toBeVisible();
-  const conveyor = page.locator("[data-conveyor]");
-  await expect(conveyor).toHaveCount(1);
+  const { option, gutter } = bottleneck(page);
+  await expect(option).toHaveCount(1);
+  await expect(option).toHaveAccessibleName(/, bottleneck$/);
+  await expect(gutter).toBeVisible();
+  await expect(gutter).toHaveText("!");
   expect(await running(page)).toEqual([]);
-  const onConveyor = await conveyor.evaluate(
-    (el) => el.getAnimations({ subtree: true }).filter((a) => a.playState === "running").length,
-  );
-  expect(onConveyor).toBe(0);
 });
 
 // A fresh test is a new page in a new context, with no emulation.
-test("without the preference the motion runs, the pulse among it", async ({ page }) => {
+test("without the preference the motion runs, the pulse on the gutter", async ({ page }) => {
   expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(
     false,
   );
   await startGuest(page);
-  await expect(page.locator("[data-conveyor]")).toHaveCount(1);
-  await expect.poll(() => running(page).then((names) => names.length)).toBeGreaterThan(0);
-  await expect.poll(() => running(page).then((names) => names.some(isPulse))).toBe(true);
+  const { gutter } = bottleneck(page);
+  await expect(gutter).toBeVisible();
+  await expect
+    .poll(() =>
+      gutter.evaluate((el) =>
+        el
+          .getAnimations()
+          .filter((a) => a.playState === "running")
+          .map((a) => (a instanceof CSSAnimation ? a.animationName : "")),
+      ),
+    )
+    .toContainEqual(expect.stringMatching(/(^|_)pulse(_|$)/));
 });

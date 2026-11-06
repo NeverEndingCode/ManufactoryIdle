@@ -1,27 +1,16 @@
-// 4c (W-19, W-20, W-23, S-16): every view at 320 px. No sideways scroll, every control and
-// number inside the viewport, every target 44 px. Then W-25: the footer links the source at
-// the built commit, and the production source maps are served.
-import { expect, test, type Page, type Route } from "@playwright/test";
+// 4c (W-19, W-20, W-23, S-16), on Layout C: every view at 320 px. No sideways scroll, every
+// control and number inside the viewport, every target 44 px. Then W-25: About in Settings links
+// the source at the built commit, and the production source maps are served.
+import { expect, test, type Locator, type Route } from "@playwright/test";
 import type { ActionsRequest } from "../src/sync/wire.js";
 import { expectNoOverflow, startGuest } from "./helpers.js";
 
 test.use({ viewport: { width: 320, height: 640 } });
 
-/** Moves every running animation to `fraction` of its cycle. The conveyor's belt and the
- * sweep start where they fit and reach their widest at the end of a cycle (translateX up to
- * 0 or 100%), so a missing clip shows only late in a 4 to 20 s loop. */
-function seekMotion(page: Page, fraction: number): Promise<number> {
-  return page.evaluate((f) => {
-    let n = 0;
-    for (const a of document.getAnimations()) {
-      if (a.playState !== "running") continue;
-      const d = a.effect?.getComputedTiming().duration;
-      if (typeof d !== "number" || !Number.isFinite(d)) continue;
-      a.currentTime = d * f;
-      n += 1;
-    }
-    return n;
-  }, fraction);
+async function boxOf(l: Locator) {
+  const box = await l.boundingBox();
+  if (box === null) throw new Error("no layout box");
+  return box;
 }
 
 /** The longest item name in the slice (probe4c-handbook.mts). */
@@ -29,27 +18,44 @@ const LONGEST = "encased_industrial_beam";
 
 test("every view fits 320 px", async ({ page }) => {
   const { root } = await startGuest(page);
-  const view = (name: string) =>
-    page.getByRole("tablist", { name: "View" }).getByRole("tab", { name });
+  const panels = page.getByRole("tablist", { name: "Panels" });
+  const view = (name: string) => panels.getByRole("tab", { name: new RegExp(`^${name}`) });
 
-  await test.step("Factory, on each unlocked lane", async () => {
+  await test.step("the bottom tabs and the lanes", async () => {
+    await expect(panels.getByRole("tab")).toHaveText([
+      "factory",
+      "~ power",
+      "priority",
+      "handbook",
+    ]);
     const tabs = page.getByRole("tablist", { name: "Lanes" }).getByRole("tab");
     const lanes = await tabs.evaluateAll((els) => els.map((el) => el.getAttribute("data-lane")));
-    expect(lanes).toEqual(["iron", "power"]);
-    for (const lane of lanes) {
-      const tab = page.locator(`[role="tab"][data-lane="${lane}"]`);
-      await tab.click();
-      await expect(tab).toHaveAttribute("aria-selected", "true");
-      await expect(page.locator("#lane-panel [data-conveyor]")).toHaveCount(1);
-      await expectNoOverflow(page, `factory, ${lane} lane`);
-      expect(await seekMotion(page, 0.999)).toBeGreaterThan(0);
-      await expectNoOverflow(page, `factory, ${lane} lane, motion at the end of its cycle`);
-    }
-    await page.locator('[role="tab"][data-lane="iron"]').click();
+    expect(lanes).toEqual(["iron", "copper", "coal", "oil"]);
+    for (const lane of ["copper", "coal", "oil"])
+      await expect(page.locator(`[role="tab"][data-lane="${lane}"]`)).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+  });
+
+  await test.step("Factory", async () => {
+    await expect(page.locator('#view-factory [role="option"]').first()).toBeVisible();
+    await expectNoOverflow(page, "factory");
+  });
+
+  await test.step("the floating TAP clears the command bar", async () => {
+    const tap = await boxOf(page.locator("[data-power][data-with-command]"));
+    const command = await boxOf(page.locator("[data-command]"));
+    const overlap =
+      tap.x < command.x + command.width &&
+      command.x < tap.x + tap.width &&
+      tap.y < command.y + command.height &&
+      command.y < tap.y + tap.height;
+    expect(overlap, `TAP ${JSON.stringify(tap)} vs command ${JSON.stringify(command)}`).toBe(false);
   });
 
   await test.step("the iron plate drawer sheet", async () => {
-    await page.locator('[data-item="iron_plate"] [data-open-row]').click();
+    await page.locator('[role="option"][data-item="iron_plate"]').click();
     const drawer = page.locator('[data-drawer="iron_plate"]');
     await expect(drawer).toBeVisible();
     await expect(drawer.locator("[data-ladder]")).toBeVisible();
@@ -58,9 +64,24 @@ test("every view fits 320 px", async ({ page }) => {
     await expect(drawer).toHaveCount(0);
   });
 
+  await test.step("the NEXT_BUY sheet", async () => {
+    await page.locator("[data-why]").click();
+    const next = page.locator("[data-next-buy]");
+    await expect(next).toBeVisible();
+    await expectNoOverflow(page, "the NEXT_BUY sheet");
+    await page.keyboard.press("Escape");
+    await expect(next).toHaveCount(0);
+  });
+
+  await test.step("the power tab", async () => {
+    await view("power").click();
+    await expect(page.locator("[data-power-panel]")).toBeVisible();
+    await expectNoOverflow(page, "the power tab");
+  });
+
   await test.step("Priority, in Simple and in Advanced", async () => {
-    await view("Priority").click();
-    await expect(page.locator("#pane-priority")).toBeVisible();
+    await view("priority").click();
+    await expect(page.locator("#view-priority")).toBeVisible();
     await expect(page.getByRole("button", { name: "Simple", pressed: true })).toBeVisible();
     await expectNoOverflow(page, "priority, Simple");
     await page.getByRole("button", { name: "Advanced" }).click();
@@ -70,7 +91,7 @@ test("every view fits 320 px", async ({ page }) => {
   });
 
   await test.step("the handbook index, and the longest entry", async () => {
-    await view("Handbook").click();
+    await view("handbook").click();
     await expect(page.locator('[data-handbook="index"]')).toBeVisible();
     await expect(page.locator("dl[data-glossary]")).toBeVisible();
     await expectNoOverflow(page, "the handbook index");
@@ -78,7 +99,7 @@ test("every view fits 320 px", async ({ page }) => {
     await expect(page.locator(`article[data-handbook-entry="${LONGEST}"]`)).toBeVisible();
     await expect(page.locator("[data-traces]")).toBeVisible();
     await expectNoOverflow(page, "the Encased Industrial Beam entry");
-    await view("Factory").click();
+    await view("factory").click();
   });
 
   const sheet = page.getByRole("dialog", { name: "Settings" });
@@ -130,8 +151,8 @@ test("every view fits 320 px", async ({ page }) => {
       },
       { times: 1 },
     );
-    await view("Priority").click();
-    const ore = page.locator('#pane-priority li[data-entry="item:iron_ore"]');
+    await view("priority").click();
+    const ore = page.locator('#view-priority li[data-entry="item:iron_ore"]');
     await ore.focus();
     await ore.press("Alt+ArrowDown");
     const toast = page.locator('[data-notice="rejected"]');
@@ -140,19 +161,23 @@ test("every view fits 320 px", async ({ page }) => {
   });
 });
 
-test("the footer links the source at the built commit, and the source maps are served", async ({
+test("About in Settings links the source at the built commit, and the source maps are served", async ({
   page,
   request,
 }) => {
   await startGuest(page);
-  const source = page.locator("footer a[data-source-link]");
+  await page.locator("[data-open-settings]").click();
+  const about = page
+    .getByRole("dialog", { name: "Settings" })
+    .getByRole("region", { name: "About" });
+  const source = about.locator("a[data-source-link]");
   await expect(source).toBeVisible();
   expect(await source.getAttribute("href")).toMatch(/\/tree\/[0-9a-f]{40}$/);
-  await expect(page.locator("footer a[data-license-link]")).toHaveAttribute(
+  await expect(about.locator("a[data-license-link]")).toHaveAttribute(
     "href",
     /\/blob\/[0-9a-f]{40}\/LICENSE$/,
   );
-  await expectNoOverflow(page, "the footer");
+  await expectNoOverflow(page, "About");
 
   const src = await page.locator('script[type="module"][src]').first().getAttribute("src");
   expect(src).toMatch(/\.js$/);

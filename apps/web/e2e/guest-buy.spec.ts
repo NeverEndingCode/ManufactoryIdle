@@ -1,5 +1,6 @@
-// The 4a end-to-end path (W-23): a guest starts, the lane renders with its bottleneck frame,
-// the bottleneck buy lands, and a reload keeps the same world. Every wait is on a store or
+// The 4a end-to-end path (W-23), on Layout C: a guest starts, the lane renders as listbox rows
+// with the command line naming the bottleneck buy, the run lands it, and a reload keeps the
+// same world. Every wait is on a store or
 // DOM attribute (P-9); the one long wait is real time for the first buy to become
 // affordable (P-10).
 import { expect, test } from "@playwright/test";
@@ -25,19 +26,20 @@ test("a guest starts, buys the bottleneck machine, and keeps the world across a 
     expect(await token()).toMatch(GUEST_TOKEN);
   });
 
-  const plate = page.locator('li[data-item="iron_plate"]');
+  const plate = page.locator('[role="option"][data-item="iron_plate"]');
 
-  await test.step("the lane renders", async () => {
+  await test.step("the lane renders, with the command line", async () => {
     await expect(page.locator('[role="tab"][data-lane="iron"]')).toHaveAttribute(
       "aria-selected",
       "true",
     );
     await expect(plate).toBeVisible();
-    await expect(plate.getByText("Iron Plate", { exact: true })).toBeVisible();
-    await expect(page.getByText("bottleneck", { exact: true })).toHaveCount(1);
-    await expect(
-      plate.locator("[data-frame]").getByText("bottleneck", { exact: true }),
-    ).toHaveCount(1);
+    await expect(plate.locator('[class*="_name_"]')).toHaveText("IRON_PLATE");
+    await expect(plate).toHaveAccessibleName(/^Iron Plate/);
+    await expect(page.locator("[data-command]")).toContainText(
+      "buy 1 constructor_mk1 --lane iron --for iron_plate",
+    );
+    await expect(page.locator("[data-frame]")).toHaveCount(0);
     const overflow = await page.evaluate(() => {
       const d = document.documentElement;
       return { scroll: d.scrollWidth, client: d.clientWidth };
@@ -45,10 +47,10 @@ test("a guest starts, buys the bottleneck machine, and keeps the world across a 
     expect(overflow.scroll).toBeLessThanOrEqual(overflow.client);
   });
 
-  await test.step("the bottleneck buy succeeds", async () => {
-    const buy = page.getByRole("button", { name: /^Buy 1 / });
-    await expect(buy).toBeEnabled({ timeout: 120_000 });
-    await buy.click();
+  await test.step("the run buys the bottleneck machine", async () => {
+    const run = page.locator("[data-command] [data-run]");
+    await expect(run).toHaveAttribute("aria-disabled", "false", { timeout: 120_000 });
+    await run.click();
     await expect(root).toHaveAttribute("data-state-version", "1");
     await expect(page.locator('[data-notice="rejected"]')).toHaveCount(0);
   });

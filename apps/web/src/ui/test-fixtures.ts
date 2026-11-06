@@ -174,3 +174,83 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     },
   };
 }
+
+/** matchMedia for a viewport this wide: min-width / max-width queries, plus
+ * `prefers-reduced-motion: reduce` when `reducedMotion`. resize() changes the width and fires
+ * `change` on each list whose answer flipped. Undo with vi.unstubAllGlobals(). */
+export function stubWidth(initial: number, opts: { reducedMotion?: boolean } = {}) {
+  let width = initial;
+  const lists: { q: string; matches: boolean; fns: Set<() => void> }[] = [];
+  const evaluate = (q: string) => {
+    if (q.includes("prefers-reduced-motion"))
+      return /:\s*reduce\)/.test(q) === !!opts.reducedMotion;
+    const min = /min-width:\s*(\d+)px/.exec(q);
+    const max = /max-width:\s*(\d+)px/.exec(q);
+    return (min === null || width >= Number(min[1])) && (max === null || width <= Number(max[1]));
+  };
+  vi.stubGlobal("matchMedia", (q: string) => {
+    const entry = { q, matches: evaluate(q), fns: new Set<() => void>() };
+    lists.push(entry);
+    return {
+      get matches() {
+        return evaluate(q);
+      },
+      media: q,
+      addEventListener: (_: string, fn: () => void) => entry.fns.add(fn),
+      removeEventListener: (_: string, fn: () => void) => entry.fns.delete(fn),
+    } as unknown as MediaQueryList;
+  });
+  return {
+    resize(w: number) {
+      width = w;
+      act(() => {
+        for (const l of lists) {
+          const now = evaluate(l.q);
+          if (now === l.matches) continue;
+          l.matches = now;
+          for (const fn of [...l.fns]) fn();
+        }
+      });
+    },
+    get listeners() {
+      return lists.reduce((n, l) => n + l.fns.size, 0);
+    },
+  };
+}
+
+/** U-1h: what looks like an id (IRON_ORE, CONSTRUCTOR_MK1, NEXT_BUY). */
+export const ID_LIKE = /[A-Z]+_[A-Z]/;
+
+/** Where a label replaces the contents: a reader says the label, never the text inside. */
+const LABELLED = [
+  "button[aria-label]",
+  '[role="button"][aria-label]',
+  '[role="option"][aria-label]',
+  '[role="tab"][aria-label]',
+  "h1[aria-label]",
+  "h2[aria-label]",
+  "h3[aria-label]",
+].join(", ");
+
+/**
+ * U-1h: everything under `root` a screen reader could say that looks like an id: each
+ * aria-label and title, and each text node, outside aria-hidden and outside a labelled control.
+ */
+export function spokenIds(root: Element): string[] {
+  const hits: string[] = [];
+  const hidden = (el: Element) => el.closest('[aria-hidden="true"]') !== null;
+  for (const el of [root, ...root.querySelectorAll("*")]) {
+    if (hidden(el)) continue;
+    for (const attr of ["aria-label", "title"]) {
+      const v = el.getAttribute(attr);
+      if (v !== null && ID_LIKE.test(v)) hits.push(`${attr}: ${v}`);
+    }
+  }
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+    const el = n.parentElement;
+    if (el === null || hidden(el) || el.closest(LABELLED) !== null) continue;
+    if (ID_LIKE.test(n.textContent ?? "")) hits.push(`text: ${n.textContent}`);
+  }
+  return hits;
+}

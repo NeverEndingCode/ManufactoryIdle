@@ -2,10 +2,19 @@
 // storage and its lane's Quantum Storage, over one pure model (drawerModel). Spends are
 // pessimistic (W-13): a button is busy while its own batch is pending, and the numbers move
 // only with snapshots. Settings (recipe, assignment) are optimistic in the control (Q-10).
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import {
   D,
   DECIMAL_ZERO,
+  liquidCap,
   type Action,
   type Dec,
   type ItemId,
@@ -17,7 +26,13 @@ import type { Outcome } from "../sync/errors.js";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
-import { className as classLabel } from "./derive.js";
+import {
+  bottleneckRow,
+  className as classLabel,
+  rateText,
+  splitOf,
+  type RowModel,
+} from "./derive.js";
 import styles from "./Drawer.module.css";
 import {
   buyAction,
@@ -30,10 +45,13 @@ import {
   type MachineSection,
 } from "./machines.js";
 import { Guarded } from "./Guarded.js";
+import { laneLabel, useNames } from "./names.js";
 import { fmt, useNotation } from "./notation.js";
 import { Projection } from "./Projection.js";
 import { navigate, routePath } from "./route.js";
 import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
+import { LiveStock } from "./Row.js";
+import { useTheme } from "./theme.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
 import { useTick } from "./use-tick.js";
 
@@ -48,11 +66,17 @@ export interface DrawerProps {
   itemId: ItemId;
   pending: readonly Batch[];
   onClose(): void;
-  /** Under 600 px: a bottom sheet, role="dialog" (Q-7). */
-  sheet?: boolean;
+  /** V-18 / §13.1: the split bar's tap, to the item's entry in the priority list. */
+  onSplit(itemId: ItemId): void;
+  /** U-5a: the desktop and tablet panel over the content row; V-19: the phone's fixed sheet.
+   * Both are non-modal: role="dialog", aria-modal="false". */
+  presentation: "panel" | "sheet";
   /** Called on mount: true when the player just opened this drawer, so the title takes focus.
    * A remount for any other reason (a view switch) must not steal focus. Default: always. */
   claimFocus?: () => boolean;
+  /** Called when the drawer unmounts while it holds focus (a remount across 600 px drops it to
+   * the body): App hands the next mount's claimFocus a true, once. */
+  onLeaveFocused?: () => void;
 }
 
 type Tab = "buy" | "upgrade" | "dismantle" | "recipe" | "storage" | "assign";
@@ -98,8 +122,10 @@ export function Drawer({
   itemId,
   pending,
   onClose,
-  sheet = false,
+  onSplit,
+  presentation,
   claimFocus,
+  onLeaveFocused,
 }: DrawerProps) {
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
   const [notation] = useNotation();
@@ -108,12 +134,24 @@ export function Drawer({
   const [picked, setPicked] = useState<Tab>(tabs[0]!);
   const tab = tabs.includes(picked) ? picked : tabs[0]!;
   const title = useRef<HTMLHeadingElement>(null);
+  const box = useRef<HTMLElement>(null);
+  const names = useNames(snapshot);
+  const hot = useMemo(() => bottleneckRow(snapshot)?.itemId === itemId, [snapshot, itemId]);
 
   const claim = useRef(claimFocus);
   claim.current = claimFocus;
   useEffect(() => {
     if (claim.current === undefined || claim.current()) title.current?.focus();
   }, [itemId]);
+  // A layout cleanup runs while the DOM is still attached, so focus is still where it was.
+  const left = useRef(onLeaveFocused);
+  left.current = onLeaveFocused;
+  useLayoutEffect(() => {
+    const el = box.current;
+    return () => {
+      if (el !== null && el.contains(document.activeElement)) left.current?.();
+    };
+  }, []);
 
   const ctx: Ctx = {
     snapshot,
@@ -131,19 +169,30 @@ export function Drawer({
   };
 
   const sec = model.machines;
+  const split = splitOf(snapshot, itemId);
+  const sheet = presentation === "sheet";
   return (
     <section
+      ref={box}
       id="detail"
+      role="dialog"
+      aria-modal="false"
       aria-labelledby="drawer-title"
       data-drawer={itemId}
-      className={sheet ? `${styles.drawer} ${styles.sheet}` : styles.drawer}
-      role={sheet ? "dialog" : undefined}
-      aria-modal={sheet ? "false" : undefined}
+      data-presentation={presentation}
+      className={`${styles.drawer} ${sheet ? styles.sheet : styles.panel}`}
       onKeyDown={onKeyDown}
     >
       <div className={styles.head}>
-        <h2 id="drawer-title" ref={title} tabIndex={-1} className={styles.title}>
-          {model.name}
+        {/* U-1h: the theme's label shown; a reader gets the content name. */}
+        <h2
+          id="drawer-title"
+          ref={title}
+          tabIndex={-1}
+          aria-label={model.name}
+          className={hot ? `${styles.title} state-bottleneck` : styles.title}
+        >
+          {names.item(itemId)}
         </h2>
         {sec !== null && (
           <span data-class className={styles.muted}>
@@ -167,6 +216,13 @@ export function Drawer({
         <button type="button" className="btn secondary" onClick={onClose}>
           Close
         </button>
+        <Meta snapshot={snapshot} itemId={itemId} now={ctx.now} />
+        {/* U-5a's hint, fine pointer only (U-7e); hidden until UI-2 (V-9). No ↑/↓ on the phone. */}
+        {!sheet && (
+          <span className={`key-hint ${styles.hint}`} aria-hidden="true">
+            {"[↑↓] row  [ESC] close"}
+          </span>
+        )}
       </div>
       <div role="group" aria-label="Action" className={styles.seg}>
         {tabs.map((t) => (
@@ -181,6 +237,17 @@ export function Drawer({
           </button>
         ))}
       </div>
+      {split !== null && (
+        <button
+          type="button"
+          className={styles.splitButton}
+          aria-label={`${model.name} split: show in the priority list`}
+          data-split
+          onClick={() => onSplit(itemId)}
+        >
+          <SplitBar split={split} />
+        </button>
+      )}
       {tab === "buy" && sec !== null && <BuySection ctx={ctx} sec={sec} />}
       {tab === "upgrade" && sec !== null && <UpgradeSection ctx={ctx} sec={sec} />}
       {tab === "dismantle" && sec !== null && <DismantleSection ctx={ctx} sec={sec} />}
@@ -192,6 +259,64 @@ export function Drawer({
 }
 
 // ---- shared pieces ---------------------------------------------------------------------------
+
+/** U-3c / V-18: "IRON lane · +0.4/s · 214/2.0k · QS 40.0k · BOUND 12", QS and BOUND only when
+ * non-zero; what left the row. The stock is live at the 4 Hz tick, as in the row. */
+function Meta({
+  snapshot,
+  itemId,
+  now,
+}: {
+  snapshot: Snapshot;
+  itemId: ItemId;
+  now: () => number;
+}) {
+  const theme = useTheme().applied;
+  const [notation] = useNotation();
+  const item = snapshot.content.items.get(itemId);
+  const own = <T,>(r: Readonly<Record<string, T>>) =>
+    Object.hasOwn(r, itemId) ? r[itemId] : undefined;
+  const qs = own(snapshot.state.quantum);
+  const bound = own(snapshot.state.bound);
+  const net = snapshot.schedule.items[itemId]?.netPerSecond ?? 0;
+  return (
+    <p className={`${styles.meta} num`} data-meta>
+      {item === undefined ? "" : `${laneLabel(snapshot, item.lane, theme)} lane · `}
+      {`${rateText(net)} · `}
+      <LiveStock snapshot={snapshot} itemId={itemId} now={now} />
+      {`/${fmt(liquidCap(snapshot.content, snapshot.state, itemId), notation)}`}
+      {qs !== undefined && !qs.eq(DECIMAL_ZERO) && ` · QS ${fmt(qs, notation)}`}
+      {bound !== undefined && !bound.eq(DECIMAL_ZERO) && ` · BOUND ${fmt(bound, notation)}`}
+    </p>
+  );
+}
+
+const SPLIT_TONES = ["toneA", "toneB", "toneC"] as const;
+
+/** §13.1: the producer's allocations, moved from the row (V-18); UI-2 re-skins it as SPLIT. */
+function SplitBar({ split }: { split: NonNullable<RowModel["split"]> }) {
+  return (
+    <div className={styles.splitWrap}>
+      <div className={styles.split} aria-hidden="true">
+        {split.map((part, i) => (
+          <div
+            key={part.entryId}
+            className={styles[SPLIT_TONES[i % SPLIT_TONES.length]!]}
+            style={{ flexGrow: part.share }}
+          />
+        ))}
+      </div>
+      <div className={styles.splitLabels}>
+        {split.map((part) => (
+          <span
+            key={part.entryId}
+            className="num"
+          >{`${Math.round(part.share * 100)}% ${part.label}`}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function itemName(s: Snapshot, itemId: ItemId): string {
   return s.content.items.get(itemId)?.name ?? itemId;

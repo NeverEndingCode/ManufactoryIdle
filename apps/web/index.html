@@ -3,7 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#050a06" />
     <title>Manufactory Idle</title>
+    <!-- U-1g: the default theme's faces, so the first paint isn't a fallback flash. Vite hashes
+         the href, the same asset fonts.css's url() resolves to. -->
+    <link
+      rel="preload"
+      href="/src/styles/fonts/vt323-latin-400.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/src/styles/fonts/ibm-plex-mono-latin-400.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <!-- V-6: the stored theme before first paint, migrated as theme.ts's migrateTheme does
+         (theme.test.ts runs this against its table). Locks aren't known yet: a locked theme
+         paints as terminal, and main.tsx applies the capability-aware result. -->
+    <script>
+      (function () {
+        var t = null;
+        try {
+          t = localStorage.getItem("mi.theme");
+        } catch (e) {}
+        if (t === "dark") t = "clean-dark";
+        else if (t === "light") t = "clean-light";
+        var free = ["terminal", "clean-dark", "clean-oled", "clean-light"];
+        if (free.indexOf(t) < 0) t = "terminal";
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
