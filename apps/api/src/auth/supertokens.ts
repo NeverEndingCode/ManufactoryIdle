@@ -67,7 +67,10 @@ const NOT_HERE = {
 /** O-4: ThirdParty's `override.apis`. Both APIs answer GENERAL_ERROR unless the redirect URI
  * is exactly callbackURL(websiteDomain, provider.id) (no prefix match: GitHub accepts
  * sub-paths of a registered URI), and signInUpPOST refuses `oAuthTokens` outright, since a
- * token minted for some other app would sign in as its owner. A disabled API stays disabled. */
+ * token minted for some other app would sign in as its owner. A disabled API stays disabled.
+ *
+ * `original` is the SDK's override proxy (supertokens-js-override): its methods forward
+ * through `this._call`, so they must be called as methods of `original`, never detached. */
 export function guardThirdPartyApis(
   websiteDomain: string,
 ): (original: APIInterface) => APIInterface {
@@ -81,7 +84,7 @@ export function guardThirdPartyApis(
         authorisationUrlGET &&
         (async (input) =>
           pinned(input.provider.id, input.redirectURIOnProviderDashboard)
-            ? authorisationUrlGET(input)
+            ? authorisationUrlGET.call(original, input)
             : NOT_HERE),
       signInUpPOST:
         signInUpPOST &&
@@ -89,7 +92,7 @@ export function guardThirdPartyApis(
           "redirectURIInfo" in input &&
           input.redirectURIInfo !== undefined &&
           pinned(input.provider.id, input.redirectURIInfo.redirectURIOnProviderDashboard)
-            ? signInUpPOST(input)
+            ? signInUpPOST.call(original, input)
             : NOT_HERE),
     };
   };
@@ -139,6 +142,16 @@ export function superTokensFromEnv(
     );
   }
 
+  // A provider with only one of its two variables set is skipped; say which (names only,
+  // never the values: one of them is a secret).
+  for (const [thirdPartyId, prefix] of PROVIDER_TABLE) {
+    const id = `${prefix}_CLIENT_ID`;
+    const secret = `${prefix}_CLIENT_SECRET`;
+    if (set(env[id]) !== set(env[secret])) {
+      const [has, lacks] = set(env[id]) ? [id, secret] : [secret, id];
+      log.warn(`${has} is set but ${lacks} is not: ${thirdPartyId} sign-in is off`);
+    }
+  }
   const providers = providersFromEnv(env);
   if (providers.length === 0) log.warn(NO_PROVIDER);
 

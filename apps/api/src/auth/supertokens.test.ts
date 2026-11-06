@@ -126,14 +126,18 @@ describe("guardThirdPartyApis (O-4)", () => {
   };
   const provider = (id: string) => ({ id }) as never;
 
+  // Like the SDK's override proxy (supertokens-js-override's getProxyObject), whose methods
+  // forward through `this._call`: a method called detached from `original` throws.
   function fakeOriginal() {
     const calls = { authorisationUrlGET: 0, signInUpPOST: 0 };
     const original = {
-      authorisationUrlGET: async () => {
+      async authorisationUrlGET(this: unknown) {
+        if (this !== original) throw new TypeError("called without the proxy as this");
         calls.authorisationUrlGET++;
         return { status: "OK" as const, urlWithQueryParams: "u" };
       },
-      signInUpPOST: async () => {
+      async signInUpPOST(this: unknown) {
+        if (this !== original) throw new TypeError("called without the proxy as this");
         calls.signInUpPOST++;
         return { status: "SIGN_IN_UP_NOT_ALLOWED" as const, reason: "original" };
       },
@@ -261,6 +265,32 @@ describe("superTokensFromEnv providers (O-3)", () => {
     expect(warn.mock.calls[0]![0]).toContain("not https");
   });
 
+  it("warns, by name only, about each provider with exactly one of its two variables set", () => {
+    const warn = vi.fn();
+    const accounts = superTokensFromEnv(
+      {
+        ...ON,
+        DISCORD_CLIENT_ID: "public-discord-id",
+        GITHUB_CLIENT_ID: "",
+        GITHUB_CLIENT_SECRET: "top-secret-github",
+      },
+      { info: () => {}, warn },
+    )!;
+    expect(accounts.providers).toEqual([]);
+    expect(warn.mock.calls).toEqual([
+      ["DISCORD_CLIENT_ID is set but DISCORD_CLIENT_SECRET is not: discord sign-in is off"],
+      ["GITHUB_CLIENT_SECRET is set but GITHUB_CLIENT_ID is not: github sign-in is off"],
+      [NO_PROVIDER],
+    ]);
+    for (const [line] of warn.mock.calls) {
+      expect(line).not.toContain("public-discord-id");
+      expect(line).not.toContain("top-secret-github");
+    }
+    const quietWarn = vi.fn();
+    superTokensFromEnv({ ...ON, ...BOTH }, { info: () => {}, warn: quietWarn });
+    expect(quietWarn).not.toHaveBeenCalled();
+  });
+
   it("has no email/password recipe and no SMTP (O-1)", () => {
     const source = readFileSync(new URL("./supertokens.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/emailpassword/i);
@@ -269,6 +299,7 @@ describe("superTokensFromEnv providers (O-3)", () => {
 });
 
 describe("handleError (SDK initialized, no core contacted)", () => {
+  // init is process-global: this runs on the SDK config the first describe to init set.
   it("renders SuperTokens' own errors, and leaves the rest to the API's handler", async () => {
     const warn = vi.fn();
     const accounts = superTokensFromEnv(
