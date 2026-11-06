@@ -29,8 +29,8 @@ import { themeDef, type ThemeDef, type Voice } from "./theme.js";
 export type FrameSpend = Exclude<FrameAction, { type: "SET_RESERVE" }>;
 export type RunKind = "bar" | "split" | "card" | "sheet";
 
-/** The plain voice names things by their content names (V-16). */
-const PLAIN: ThemeDef = themeDef("clean-dark");
+/** The plain voice names things by their content names (V-16); what a reader hears (U-1h). */
+export const PLAIN: ThemeDef = themeDef("clean-dark");
 
 function own<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
   return Object.hasOwn(record, key) ? record[key] : undefined;

@@ -141,7 +141,10 @@
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* JetBrains Mono */
+/* JetBrains Mono: 400 and 500 only, no 600 file. No theme sets it at 600: its themes (Clean
+   and Cosy) have --fw-name 400, Industrial's 600 names are IBM Plex Mono (tokens.css), and the
+   600 rules (titles, legends, .btn) are in --font-ui or --font-display. A 600 on mono text in
+   a JetBrains theme would be synthesised: map it to 500 there, or add the file. */
 @font-face {
   font-family: "JetBrains Mono";
   font-style: normal;

@@ -2,7 +2,7 @@
 // frame's SpendButton and ReserveButton, moved (V-23): spends are pessimistic (W-13), so the
 // button is busy (aria-disabled, still focusable) until the batch's response lands; the
 // reserve is a setting. Every one sends under BOTTLENECK_BUY_LABEL, so they're busy together.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
@@ -111,6 +111,14 @@ export function ReserveRun({
   className?: string | undefined;
 }) {
   const [sending, setSending] = useState(false);
+  // The send can settle after the button is gone (the reserve is set, the advice moves on).
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const affordable = { affordable: true } as const;
   const key = hint(kind, undefined);
   return (
@@ -126,7 +134,9 @@ export function ReserveRun({
         store
           .send([reserve], BOTTLENECK_BUY_LABEL)
           .catch((err: unknown) => console.error(err))
-          .finally(() => setSending(false));
+          .finally(() => {
+            if (mounted.current) setSending(false);
+          });
       }}
     >
       {key !== null && (
@@ -174,15 +184,24 @@ export function Run(
 }
 
 /** The command's words: typed out in UI-3 (U-9e), so the visible span is aria-hidden and a
- * visually hidden sibling holds the same text, read once when it changes (U-8a). */
-function CommandWords({ text, className }: { text: string; className: string | undefined }) {
+ * visually hidden sibling holds the plain words (U-1h: never the shell's ids), read once when
+ * they change (U-8a). */
+function CommandWords({
+  text,
+  said,
+  className,
+}: {
+  text: string;
+  said: string;
+  className: string | undefined;
+}) {
   return (
     <span className={className}>
       <span aria-hidden="true" data-typed>
         {text}
       </span>
       <span className={css.visuallyHidden} data-command-text>
-        {text}
+        {said}
       </span>
     </span>
   );
@@ -199,7 +218,11 @@ export function CommandBar(
       <span className={css.prompt} aria-hidden="true">
         {voice === "shell" ? "operator@manufactory:~$" : "Next"}
       </span>
-      <CommandWords text={commandText(p.model, p.snapshot, voice)} className={css.command} />
+      <CommandWords
+        text={commandText(p.model, p.snapshot, voice)}
+        said={commandText(p.model, p.snapshot, "plain")}
+        className={css.command}
+      />
       <span className={css.cursor} aria-hidden="true" />
       <span className={css.spacer} />
       {p.model !== null && (

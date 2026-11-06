@@ -19,12 +19,14 @@ import {
   type GeneratorRow,
 } from "./dock-model.js";
 import { Guarded } from "./Guarded.js";
-import { useNames, type Names } from "./names.js";
+import { PLAIN } from "./command.js";
+import { itemName, machineLabel, useNames, type Names } from "./names.js";
 import { fmt, useNotation } from "./notation.js";
 import css from "./Power.module.css";
 import { GridBar, kickText, useTapReadout, type TapProps } from "./PowerFooter.js";
 import { affordability } from "./quote.js";
 import { RowList } from "./RowList.js";
+import { Spoken } from "./Spoken.js";
 import type { LayoutMode } from "./use-layout-mode.js";
 import { useTick } from "./use-tick.js";
 
@@ -87,8 +89,8 @@ function GeneratorBuy({
   );
 }
 
-function eatsText(row: GeneratorRow, names: Names): string {
-  const eats = row.eats.map((e) => `${fmt(D(e.perSecond))} ${names.item(e.itemId)}/s`).join(" + ");
+function eatsText(row: GeneratorRow, item: (id: ItemId) => string): string {
+  const eats = row.eats.map((e) => `${fmt(D(e.perSecond))} ${item(e.itemId)}/s`).join(" + ");
   return `eats ${eats} · ${mwText(row.mwEach)} MW each`;
 }
 
@@ -109,17 +111,31 @@ function Generators({
       <h2 className={css.head}>GENERATORS</h2>
       <ul className={css.list}>
         {rows.map((row) => {
+          // U-1h: COAL_GENERATOR x3 is seen; a reader hears Coal Generator x3.
           const label = `${names.machine(row.machineClass, null)} x${row.owned}`;
+          const said = `${machineLabel(snapshot, row.machineClass, null, PLAIN)} x${row.owned}`;
           const buy = row.buy;
           return (
             <li key={row.machineClass} className={css.gen} data-generator={row.machineClass}>
               {buy === null ? (
-                <span className={css.locked}>{`${label} · unlocks at tier ${row.unlockTier}`}</span>
+                <span className={css.locked}>
+                  <Spoken
+                    shown={`${label} · unlocks at tier ${row.unlockTier}`}
+                    said={`${said} · unlocks at tier ${row.unlockTier}`}
+                  />
+                </span>
               ) : (
                 <>
                   <span className={css.genText}>
-                    <span className={css.genName}>{label}</span>
-                    <span className={css.genDetail}>{eatsText(row, names)}</span>
+                    <span className={css.genName}>
+                      <Spoken shown={label} said={said} />
+                    </span>
+                    <span className={css.genDetail}>
+                      <Spoken
+                        shown={eatsText(row, names.item)}
+                        said={eatsText(row, (id) => itemName(snapshot, id))}
+                      />
+                    </span>
                   </span>
                   <span className={`${css.genMw} num`}>{`${mwText(row.mwNow)} MW`}</span>
                   <GeneratorBuy

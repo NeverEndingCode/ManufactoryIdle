@@ -209,6 +209,37 @@ describe("the shell (U-2)", { timeout: 60_000 }, () => {
     expect(iron.getAttribute("aria-label")).toBe("Iron, bottleneck");
   });
 
+  // Catches: "Lanes" and "Panels" said twice (the nav's label and the tablist's own); the marked
+  // power tab in lower case beside "Iron, bottleneck".
+  it("5c. each tablist is named by its nav; the marked power tab is cased like the lanes", () => {
+    stubWidth(390);
+    const s: Snapshot = {
+      ...fresh,
+      display: {
+        ...fresh.display,
+        solution: {
+          ...fresh.display.solution,
+          bottleneck: {
+            kind: "storage",
+            itemId: "biomass",
+            limitingTarget: "item:biomass",
+            upgrade: "storage",
+          },
+        },
+      },
+    };
+    mount(fakeStore(s));
+    for (const name of ["Lanes", "Panels"]) {
+      const list = screen.getByRole("tablist", { name });
+      expect(list.hasAttribute("aria-label")).toBe(false);
+      const nav = document.getElementById(list.getAttribute("aria-labelledby")!)!;
+      expect(nav.tagName).toBe("NAV");
+      expect(nav.getAttribute("aria-label")).toBe(name);
+    }
+    const power = document.querySelector<HTMLElement>('[data-view="power"]')!;
+    expect(power.getAttribute("aria-label")).toBe("Power, bottleneck");
+  });
+
   it("6. with Settings open the region is never inert, and its notice controls are", () => {
     stubWidth(1280);
     const store = fakeStore(fresh);

@@ -4,7 +4,7 @@
 // notices region, then the overlays), and the slots later tasks fill (the command line, the
 // footer, the floating TAP). The live region sits in the content row, so a modal inerts
 // around it (V-12), never it.
-import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import type { LaneId } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore, StoreView } from "../sync/store.js";
@@ -134,11 +134,13 @@ function LaneTabs({ p, s, phone }: { p: ShellProps; s: Snapshot; phone: boolean 
   const ids = p.lanes.map((t) => t.id);
   const locked = new Set(p.lanes.filter((t) => t.locked).map((t) => t.id));
   const keys = useTabKeys(ids, p.laneId, p.onLane, (id) => locked.has(id));
+  const navId = useId();
+  // One label: the tablist is named by its nav, so "Lanes" is written once.
   return (
-    <nav aria-label="Lanes" className={css.lanes}>
+    <nav id={navId} aria-label="Lanes" className={css.lanes}>
       <div
         role="tablist"
-        aria-label="Lanes"
+        aria-labelledby={navId}
         className={phone ? css.laneGrid : css.laneRow}
         onKeyDown={keys.onKeyDown}
       >
@@ -216,11 +218,12 @@ function PanelTabs({
     p.bottleneck !== null &&
     p.bottleneck.laneId !== null &&
     p.bottleneck.laneId === powerLaneId(p.snapshot);
+  const navId = useId();
   return (
-    <nav aria-label="Panels" className={phone ? css.bottomTabs : css.panels}>
+    <nav id={navId} aria-label="Panels" className={phone ? css.bottomTabs : css.panels}>
       <div
         role="tablist"
-        aria-label="Panels"
+        aria-labelledby={navId}
         className={phone ? css.bottomList : css.panelList}
         onKeyDown={keys.onKeyDown}
       >
@@ -236,7 +239,7 @@ function PanelTabs({
               id={`panel-tab-${v.id}`}
               aria-selected={selected}
               aria-controls={selected ? `view-${v.id}` : undefined}
-              aria-label={marked ? `${v.id}, bottleneck` : undefined}
+              aria-label={marked ? "Power, bottleneck" : undefined}
               tabIndex={selected ? 0 : -1}
               className={cx(phone ? css.bottomTab : css.panel, selected && css.on)}
               data-view={v.id}

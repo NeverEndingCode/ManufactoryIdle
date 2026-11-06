@@ -61,7 +61,9 @@ const BAR_FILLS = ["t2", "t-body", "state-bottleneck"] as const;
 /** The pairs allowed to fail the matrix, policed in the CSS instead (U-1f). */
 const BARRED = ["terminal t3/s-hi", "terminal t3/s2"];
 
-/** Classes that paint a barred surface (--s-hi or --s2); --t3 text under them is barred. */
+/** Classes that paint a barred surface (--s-hi or --s2); --t3 text under them is barred. It must
+ * list every class painted on --s2 or --s-hi: the policing only sees what's here, so a new
+ * surface on either extends this map in the same change. */
 const ON_SURFACE: Record<string, string> = {
   selected: "s-hi",
   on: "s-hi",

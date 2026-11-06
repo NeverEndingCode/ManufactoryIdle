@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { D, liquidCap, withInstalled, type Bottleneck, type WorldState } from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Outcome } from "../sync/errors.js";
@@ -507,15 +508,51 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expectBackOn("iron_plate");
   });
 
-  it("11. closing after the row left: focus goes to the shown lane's row list", () => {
+  // Catches: a drawer outliving its lane, covering another lane's rows; focus dropped to body.
+  it("11. a lane switch closes another lane's drawer; focus stays on the lane tabs", async () => {
+    const user = userEvent.setup();
     mount(fakeStore(fresh));
-    const d = open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: /Power/ }));
+    open("iron_ore");
+    expect(document.activeElement).toBe(document.getElementById("drawer-title"));
+    const power = screen.getByRole("tab", { name: /^Power/ });
+    await user.click(power);
     expect(document.querySelector('[data-item="iron_ore"]')).toBeNull();
-    fireEvent.click(within(d).getByRole("button", { name: "Close" }));
-    expect(drawer("iron_ore")).toBeNull();
-    expect(document.activeElement).toBe(listbox());
-    expect(listbox().getAttribute("aria-label")).toBe("Power lane");
+    expect(document.querySelector("[data-drawer]")).toBeNull();
+    expect(document.activeElement).toBe(power);
+    // Closed, not hidden: back on its lane it stays shut.
+    await user.click(screen.getByRole("tab", { name: /^Iron/ }));
+    expect(document.querySelector("[data-drawer]")).toBeNull();
+
+    // The arrows on the lane tabs: the same, focus on the new tab.
+    open("iron_ore");
+    const iron = screen.getByRole("tab", { name: /^Iron/ });
+    act(() => iron.focus());
+    fireEvent.keyDown(iron, { key: "ArrowRight" });
+    const lanes = within(screen.getByRole("tablist", { name: "Lanes" }));
+    const now = lanes.getByRole("tab", { selected: true });
+    expect(now).not.toBe(iron);
+    expect(document.querySelector("[data-drawer]")).toBeNull();
+    expect(document.activeElement).toBe(now);
+
+    // Its own lane's tab keeps it: a FUEL row's drawer on the power tab.
+    await user.click(power);
+    open("biomass");
+    await user.click(screen.getByRole("tab", { name: /^Power/ }));
+    expect(drawer("biomass")).not.toBeNull();
+  });
+
+  // Catches: the drawer shown over a lane it isn't in when the lane changes without a tab press:
+  // the phone has no power lane tab, so the factory view falls back to the first lane.
+  it("11b. a FUEL row's drawer doesn't follow a resize onto the phone's factory lane", async () => {
+    const user = userEvent.setup();
+    const media = stubWidth(1280);
+    mount(fakeStore(fresh));
+    await user.click(screen.getByRole("tab", { name: /^Power/ }));
+    open("biomass");
+    act(() => listbox().focus());
+    media.resize(390);
+    expect(document.querySelector('li[role="option"][data-item="iron_ore"]')).not.toBeNull();
+    expect(document.querySelector("[data-drawer]")).toBeNull();
   });
 
   it("12. the priority view hides the drawer; it's still open on the factory view (V-25)", () => {
@@ -806,18 +843,30 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     expect(title(open(cold)).classList.contains("state-bottleneck")).toBe(false);
   });
 
+  const z = (file: string, selector: string) => {
+    const path = fileURLToPath(new URL(file, import.meta.url));
+    const decl = declarations(file, readFileSync(path, "utf8")).find(
+      (x) => x.stack.at(-1) === selector && x.property === "z-index",
+    );
+    expect(decl, `${file} ${selector}`).toBeDefined();
+    return Number(decl!.value);
+  };
+
   it("5. the phone sheet sits above the floating TAP (V-19)", () => {
-    const z = (file: string, selector: string) => {
-      const path = fileURLToPath(new URL(file, import.meta.url));
-      const decl = declarations(file, readFileSync(path, "utf8")).find(
-        (x) => x.stack.at(-1) === selector && x.property === "z-index",
-      );
-      expect(decl, `${file} ${selector}`).toBeDefined();
-      return Number(decl!.value);
-    };
     expect(z("./Drawer.module.css", ".sheet")).toBeGreaterThan(
       z("./Power.module.css", ".floating"),
     );
+  });
+
+  // Catches: a rejection toast hidden under the open drawer sheet on the phone, or one painted
+  // over the modal NEXT_BUY sheet or Settings.
+  it("5b. on the phone the notices sit over the drawer sheet, under the modal sheets", () => {
+    const notices = z("../styles/base.css", '.app[data-layout="phone"] .notices');
+    expect(notices).toBeGreaterThan(z("./Drawer.module.css", ".sheet"));
+    expect(notices).toBeLessThan(z("./NextBuy.module.css", ".backdrop"));
+    expect(notices).toBeLessThan(z("./Settings.module.css", ".backdrop"));
+    // Elsewhere they stay at 3, over the desktop panel (2).
+    expect(z("../styles/base.css", ".notices")).toBe(3);
   });
 
   it("6. the phone sheet's head is sticky on the sheet's surface, so Close never scrolls away", () => {

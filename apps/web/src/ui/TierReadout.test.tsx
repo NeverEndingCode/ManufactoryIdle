@@ -12,6 +12,7 @@ import {
   freshState,
   loadSlice,
   snapshotOf,
+  spokenIds,
   type FakeStore,
   type Slice,
 } from "./test-fixtures.js";
@@ -37,6 +38,8 @@ function withTicks(store: FakeStore, node: ReactNode) {
 }
 
 const readout = () => document.querySelector<HTMLElement>("[data-tier]")!;
+/** The readout as seen; in terminal it's aria-hidden beside the words a reader hears. */
+const shown = () => readout().querySelector<HTMLElement>("[data-shown]")!;
 /** Tier 8's two requirements, as the content has them. */
 const REQS = [
   ["smart_plating", 512_000],
@@ -56,9 +59,11 @@ describe("TierReadout (Q-13, V-24)", () => {
     const [a, b] = REQS.map(
       ([id, amount]) => `${id.toUpperCase()} ${progress(tier8, store, id, amount)}`,
     );
-    expect(readout().textContent).toBe(`[TIER 8] next: ${a} · ${b}`);
-    // The full text is the title: the tablet ellipsizes it (U-2c).
-    expect(readout().getAttribute("title")).toBe(readout().textContent);
+    expect(shown().textContent).toBe(`[TIER 8] next: ${a} · ${b}`);
+    // The full text is the title: the tablet ellipsizes it (U-2c). It's on the seen part, which
+    // is aria-hidden in terminal (U-1h).
+    expect(shown().getAttribute("title")).toBe(shown().textContent);
+    expect(readout().getAttribute("title")).toBeNull();
     for (const [id] of REQS) {
       expect(readout().querySelector(`[data-requirement="${id}"]`)!.textContent).toContain(
         id.toUpperCase(),
@@ -66,6 +71,21 @@ describe("TierReadout (Q-13, V-24)", () => {
     }
     // Never a live region.
     expect(readout().closest("[aria-live]")).toBeNull();
+  });
+
+  // Catches: SMART_PLATING or the like in the readout's text or title reaching a reader (U-1h).
+  it("U-1h. terminal: a reader hears the content names, desktop and phone", () => {
+    const store = fakeStore(tier8);
+    const r = withTicks(store, <TierReadout snapshot={tier8} now={store.now} />);
+    expect(shown().textContent).toContain("SMART_PLATING");
+    expect(shown().getAttribute("aria-hidden")).toBe("true");
+    const said = readout().querySelector(".visually-hidden")!.textContent!;
+    expect(said).toMatch(/^Tier 8 · next: /);
+    expect(said).toContain(slice.content.items.get("smart_plating")!.name);
+    expect(spokenIds(readout())).toEqual([]);
+    r.unmount();
+    withTicks(store, <TierReadout snapshot={tier8} now={store.now} phone />);
+    expect(spokenIds(readout())).toEqual([]);
   });
 
   it("8b. the plain voice: Tier 8 · next: Name n/m · Name n/m", () => {
@@ -76,16 +96,16 @@ describe("TierReadout (Q-13, V-24)", () => {
       ([id, amount]) =>
         `${slice.content.items.get(id)!.name} ${progress(tier8, store, id, amount)}`,
     );
-    expect(readout().textContent).toBe(`Tier 8 · next: ${a} · ${b}`);
+    expect(shown().textContent).toBe(`Tier 8 · next: ${a} · ${b}`);
   });
 
   it("8c. tier 10 is complete, in each voice", () => {
     const s = snapshotOf(slice, { ...freshState(slice), tier: 10 });
     const store = fakeStore(s);
     withTicks(store, <TierReadout snapshot={s} now={store.now} />);
-    expect(readout().textContent).toBe("[TIER 10] complete");
+    expect(shown().textContent).toBe("[TIER 10] complete");
     act(() => void setTheme("clean-light"));
-    expect(readout().textContent).toBe("Tier 10 · complete");
+    expect(shown().textContent).toBe("Tier 10 · complete");
   });
 
   it("8d. the phone shows one requirement, the furthest from done", () => {
@@ -95,12 +115,12 @@ describe("TierReadout (Q-13, V-24)", () => {
     const ratio = ([id, amount]: (typeof REQS)[number]) =>
       shownStock(tier8, id, at).toNumber() / amount;
     const lowest = [...REQS].sort((x, y) => ratio(x) - ratio(y))[0]!;
-    expect(readout().textContent).toBe(
+    expect(shown().textContent).toBe(
       `[TIER 8] ${lowest[0].toUpperCase()} ${progress(tier8, store, lowest[0], lowest[1])}`,
     );
     expect(readout().querySelectorAll("[data-requirement]")).toHaveLength(1);
     act(() => void setTheme("clean-dark"));
-    expect(readout().textContent).toBe(
+    expect(shown().textContent).toBe(
       `Tier 8 · ${slice.content.items.get(lowest[0])!.name} ${progress(tier8, store, lowest[0], lowest[1])}`,
     );
   });

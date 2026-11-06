@@ -8,7 +8,7 @@ const proxy = { "/api": api, "/auth": api };
 
 export default defineConfig({
   plugins: [react()],
-  // S-17 / W-25: the footer links the source at the commit this build was made from.
+  // S-17 / W-25: Settings → About links the source at the commit this build was made from.
   define: { __BUILD_INFO__: JSON.stringify(buildInfo()) },
   // W-25: production source maps are published next to the chunks. U-1g: a font is always a
   // hashed file; the 1.3 KB symbols files would otherwise inline as data: URIs, once per

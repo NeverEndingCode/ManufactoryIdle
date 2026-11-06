@@ -10,25 +10,61 @@ import {
   useState,
   type FocusEvent,
   type KeyboardEvent,
-  type ReactNode,
   type RefObject,
 } from "react";
 import type { ItemId } from "@manufactory/engine";
 import { serverNow } from "../sync/snapshot.js";
-import { commandText, machineEffect, nextBuyModel, type NextBuyModel } from "./command.js";
+import { commandText, machineEffect, nextBuyModel, PLAIN, type NextBuyModel } from "./command.js";
 import { Run, type CommandProps } from "./CommandBar.js";
 import { trapTab } from "./dialog.js";
-import { useNames } from "./names.js";
+import { itemName, useNames } from "./names.js";
 import css from "./NextBuy.module.css";
+import { Spoken } from "./Spoken.js";
 import { useTheme } from "./theme.js";
 import { useTick } from "./use-tick.js";
 
-/** The model at the 4 Hz "have"; null with nothing to run. */
-function useNextBuy(p: CommandProps): NextBuyModel | null {
+/** The model at the 4 Hz "have", in the theme's names and in the plain ones a reader hears
+ * (U-1h; the preview under both is memoised per snapshot); null with nothing to run. */
+function useNextBuy(p: CommandProps): { n: NextBuyModel; said: NextBuyModel } | null {
   useTick();
   const { applied } = useTheme();
   if (p.model === null) return null;
-  return nextBuyModel(p.snapshot, p.model, serverNow(p.snapshot, p.store.now()), applied);
+  const at = serverNow(p.snapshot, p.store.now());
+  const n = nextBuyModel(p.snapshot, p.model, at, applied);
+  if (n === null) return null;
+  const said = applied.names === "title" ? n : nextBuyModel(p.snapshot, p.model, at, PLAIN)!;
+  return { n, said };
+}
+
+/** The card's and the sheet's title: NEXT_BUY is the shell's, "Next buy" what a reader hears. */
+function Title({ id, className }: { id: string; className: string | undefined }) {
+  const { applied } = useTheme();
+  return (
+    <h2 id={id} className={className}>
+      <Spoken shown={applied.voice === "shell" ? "NEXT_BUY" : "Next buy"} said="Next buy" />
+    </h2>
+  );
+}
+
+/** The model's lines, as shown or as said. */
+function Lines({ n, lane, hidden }: { n: NextBuyModel; lane: boolean; hidden?: true }) {
+  return (
+    <>
+      <p className={css.action} aria-hidden={hidden}>
+        {n.action}
+      </p>
+      <ul className={css.lines} aria-hidden={hidden}>
+        <li>why: {n.why}</li>
+        {lane && n.lane !== null && <li>lane: {n.lane}</li>}
+        {n.cost.map((c) => (
+          <li key={c}>cost: {c}</li>
+        ))}
+        {n.effect.map((e) => (
+          <li key={e}>effect: {e}</li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 /** On mount: the primary run, else the close button. */
@@ -45,12 +81,10 @@ function Details({
   p,
   n,
   lane,
-  extra,
 }: {
   p: CommandProps;
-  n: NextBuyModel | null;
+  n: { n: NextBuyModel; said: NextBuyModel } | null;
   lane: boolean;
-  extra?: ReactNode;
 }) {
   const { applied } = useTheme();
   if (n === null)
@@ -59,20 +93,14 @@ function Details({
         {p.model === null ? commandText(null, p.snapshot, applied.voice) : p.model.text}
       </p>
     );
+  if (n.said === n.n) return <Lines n={n.n} lane={lane} />;
+  // U-1h: the ids are seen, the content names heard.
   return (
     <>
-      <p className={css.action}>{n.action}</p>
-      <ul className={css.lines}>
-        <li>why: {n.why}</li>
-        {lane && n.lane !== null && <li>lane: {n.lane}</li>}
-        {n.cost.map((c) => (
-          <li key={c}>cost: {c}</li>
-        ))}
-        {n.effect.map((e) => (
-          <li key={e}>effect: {e}</li>
-        ))}
-        {extra}
-      </ul>
+      <Lines n={n.n} lane={lane} hidden />
+      <div className="visually-hidden">
+        <Lines n={n.said} lane={lane} />
+      </div>
     </>
   );
 }
@@ -103,7 +131,10 @@ function OneEffect({ p }: { p: CommandProps }) {
   if (p.model === null || a === undefined || a === null || a.type !== "BUY_MACHINE") return null;
   return (
     <span className={css.oneEffect}>
-      {`1: ${machineEffect(p.snapshot, p.model, { ...a, count: 1 }, applied)}`}
+      <Spoken
+        shown={`1: ${machineEffect(p.snapshot, p.model, { ...a, count: 1 }, applied)}`}
+        said={`1: ${machineEffect(p.snapshot, p.model, { ...a, count: 1 }, PLAIN)}`}
+      />
     </span>
   );
 }
@@ -142,9 +173,7 @@ export function NextBuyCard(p: CommandProps & { onClose(returnFocus: boolean): v
       onBlur={onBlur}
     >
       <div className={css.head}>
-        <h2 id={titleId} className={css.title}>
-          {applied.voice === "shell" ? "NEXT_BUY" : "Next buy"}
-        </h2>
+        <Title id={titleId} className={css.title} />
         <button
           type="button"
           className={css.close}
@@ -162,7 +191,7 @@ export function NextBuyCard(p: CommandProps & { onClose(returnFocus: boolean): v
       {n !== null && (
         <div className={css.buttons}>
           <Run {...p} kind="card" voice={applied.voice} className={css.primary} />
-          {n.buyOne !== null && <BuyOne p={p} kind="card" className={css.secondary} />}
+          {n.n.buyOne !== null && <BuyOne p={p} kind="card" className={css.secondary} />}
         </div>
       )}
     </section>
@@ -175,6 +204,7 @@ export function NextBuySheet(p: CommandProps & { onClose(): void; onOpenItem(id:
   const { applied } = useTheme();
   const names = useNames(p.snapshot);
   const n = useNextBuy(p);
+  const open = n?.n.open ?? null;
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
   useInitialFocus(ref);
@@ -206,9 +236,7 @@ export function NextBuySheet(p: CommandProps & { onClose(): void; onOpenItem(id:
       >
         <div className={css.grip} aria-hidden="true" />
         <div className={css.head}>
-          <h2 id={titleId} className={css.sheetTitle}>
-            {applied.voice === "shell" ? "NEXT_BUY" : "Next buy"}
-          </h2>
+          <Title id={titleId} className={css.sheetTitle} />
           <button
             type="button"
             className={css.x}
@@ -223,17 +251,18 @@ export function NextBuySheet(p: CommandProps & { onClose(): void; onOpenItem(id:
         {n !== null && (
           <div className={css.sheetButtons}>
             <Run {...p} kind="sheet" voice={applied.voice} className={css.sheetPrimary} />
-            {(n.buyOne !== null || n.open !== null) && (
+            {(n.n.buyOne !== null || open !== null) && (
               <div className={css.pair}>
-                {n.buyOne !== null && <BuyOne p={p} kind="sheet" className={css.outlined} />}
-                {n.open !== null && (
+                {n.n.buyOne !== null && <BuyOne p={p} kind="sheet" className={css.outlined} />}
+                {open !== null && (
                   <button
                     type="button"
                     className={css.outlined}
                     data-open-item
-                    onClick={() => p.onOpenItem(n.open!)}
+                    aria-label={`open ${itemName(p.snapshot, open)}`}
+                    onClick={() => p.onOpenItem(open)}
                   >
-                    {`open ${names.item(n.open)}`}
+                    {`open ${names.item(open)}`}
                   </button>
                 )}
               </div>

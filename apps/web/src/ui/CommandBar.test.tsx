@@ -5,6 +5,7 @@
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Solution } from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Outcome } from "../sync/errors.js";
 import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
@@ -16,6 +17,7 @@ import {
   freshState,
   loadSlice,
   snapshotOf,
+  spokenIds,
   stubWidth,
   type FakeStore,
   type Slice,
@@ -79,11 +81,13 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
     expect(bar().tagName).toBe("SECTION");
     expect(bar().getAttribute("aria-label")).toBe("Command line");
     const command = "buy 1 constructor_mk1 --lane iron --for iron_plate";
-    // The typed span is aria-hidden; a visually hidden sibling carries the same words.
+    // The typed span is aria-hidden; a visually hidden sibling carries the plain words (U-1h).
     const typed = bar().querySelector("[data-typed]")!;
     expect(typed.getAttribute("aria-hidden")).toBe("true");
     expect(typed.textContent).toBe(command);
-    expect(bar().querySelector("[data-command-text]")!.textContent).toBe(command);
+    expect(bar().querySelector("[data-command-text]")!.textContent).toBe(
+      "Buy 1 Constructor Mk.1 for Iron Plate",
+    );
 
     const button = run()!;
     expect(button.getAttribute("aria-label")).toBe("Buy 1 Constructor");
@@ -162,7 +166,8 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
     const text = bottleneckRow(frameless)!.text;
     expect(text).toMatch(/^Power is short, /);
     store.set({ snapshot: frameless });
-    expect(bar().querySelector("[data-command-text]")!.textContent).toBe(`# ${text.toLowerCase()}`);
+    expect(bar().querySelector("[data-typed]")!.textContent).toBe(`# ${text.toLowerCase()}`);
+    expect(bar().querySelector("[data-command-text]")!.textContent).toBe(text);
     expect(run()).toBeNull();
     expect(document.querySelector('[data-notice="bottleneck"]')).toBeNull();
     const said = announced();
@@ -178,6 +183,39 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
     expect(dash.textContent).toBe("—");
     expect(dash.getAttribute("aria-disabled")).toBe("true");
     expect(document.querySelector('[data-notice="bottleneck"]')).toBeNull();
+  });
+
+  // Catches: the reserve's settle setting state on a button that's gone (the advice moved on
+  // while its send was out). React 18 drops that update silently, so this pins the guard's
+  // contract (no error, no throw), not a visible symptom.
+  it("5b. the reserve's send settling after it unmounts does nothing", async () => {
+    const s = withBottleneck(fresh, RESERVE);
+    const store = fakeStore(s);
+    let settle!: () => void;
+    store.send.mockImplementation(
+      () => new Promise<Outcome>((r) => (settle = () => r({ ok: true } as unknown as Outcome))),
+    );
+    const error = vi.spyOn(console, "error");
+    const r = mount(store);
+    fireEvent.click(run()!);
+    expect(run()!.getAttribute("aria-disabled")).toBe("true");
+    r.unmount();
+    await act(async () => settle());
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  // Catches: the shell command (or any id) reaching a reader in the terminal theme (U-1h).
+  it("U-1h. terminal: the bar and the split bar say content names, never ids", () => {
+    const s = withBottleneck(fresh, RESERVE);
+    mount(fakeStore(s));
+    expect(bar().querySelector("[data-command-text]")!.textContent).toBe(
+      "Reserve 25% of Iron Plate",
+    );
+    expect(spokenIds(bar())).toEqual([]);
+    cleanup();
+    stubWidth(375);
+    mount(fakeStore(s));
+    expect(spokenIds(bar())).toEqual([]);
   });
 
   it("the plain voice: the prompt is Next, the command its plain form", () => {

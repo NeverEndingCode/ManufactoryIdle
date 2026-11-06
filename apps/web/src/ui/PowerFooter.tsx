@@ -25,7 +25,10 @@ export interface TapProps {
 export function useTapReadout({ store, snapshot, taps, pending = [] }: TapProps) {
   useTick();
   const m = dockModel(snapshot, taps, store.now(), pending);
-  // The model at the key's first render names it; the 4 Hz renders reuse that name.
+  // The model at the key's first render names it; the 4 Hz renders reuse that name. tapName
+  // reads m.stacks, m.maxStacks, m.kick and m.remainingMs only: stacks is a dep; maxStacks comes
+  // with the snapshot; kick follows stacks; remainingMs is the countdown left out on purpose,
+  // renewed by a new tap (lastTapAt) or snapshot. A new field read there needs a dep here.
   const name = useMemo(
     () => tapName(m),
     // eslint-disable-next-line react-hooks/exhaustive-deps

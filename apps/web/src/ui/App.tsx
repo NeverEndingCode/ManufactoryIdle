@@ -198,13 +198,20 @@ export function App({ store }: { store: GameStore }) {
   });
 
   const powerId = s === null ? null : powerLaneId(s);
-  /** V-25: the open drawer stays across a view switch, but renders on the factory view only,
+  const openLane = openItem === null ? undefined : s?.content.items.get(openItem)?.lane;
+  /** V-25: the open drawer stays across a view switch, but renders only over its own lane: on
+   * the factory view when its lane is the one shown (the desktop's power tab for a FUEL row),
    * and on the phone's power view for a FUEL row (U-6b). */
   const drawerItem =
-    shown === "factory" ||
-    (shown === "power" && openItem !== null && s?.content.items.get(openItem)?.lane === powerId)
+    (shown === "factory" && openLane === laneId) || (shown === "power" && openLane === powerId)
       ? openItem
       : null;
+  /** A lane tab: the drawer of another lane closes, so it never covers the new lane's rows.
+   * Focus stays on the tab that was pressed. */
+  const onLane = (lane: LaneId) => {
+    setPicked(lane);
+    if (openLane !== undefined && openLane !== lane) setOpenItem(null);
+  };
   /** A row's click, → or Space: its drawer, the title taking focus (U-7c). */
   const openRow = (itemId: ItemId) => {
     opened.current = openItem !== itemId;
@@ -236,12 +243,17 @@ export function App({ store }: { store: GameStore }) {
     if (onHandbook) navigate({ kind: "game" });
   };
 
-  /** The sheet's "open ROTOR": the sheet closes and that item's drawer opens, on its lane. */
+  /** The sheet's "open ROTOR": the sheet closes and that item's drawer opens, on its lane: the
+   * power view for a power-lane item, since the phone's lane tabs have no power (U-6a). */
   const openFromSheet = (itemId: ItemId) => {
     closeWhy(false);
     const lane = s?.content.items.get(itemId)?.lane;
     if (lane !== undefined) {
-      setPicked(lane);
+      if (lane === powerId) setPane("power");
+      else {
+        setPicked(lane);
+        setPane("factory");
+      }
       select(lane, itemId);
     }
     opened.current = true;
@@ -345,7 +357,7 @@ export function App({ store }: { store: GameStore }) {
     onView: selectView,
     lanes,
     laneId,
-    onLane: setPicked,
+    onLane,
     bottleneck,
     onSettings: (opener) => openSheet({}, opener),
     onSaveChip: (opener) => openSheet({ section: "account", mode: "sign-up" }, opener),

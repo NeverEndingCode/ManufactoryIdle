@@ -8,13 +8,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { App } from "./App.js";
-import { bottleneckRow } from "./derive.js";
+import { bottleneckRow, powerLaneId } from "./derive.js";
 import {
   CLIENT_T0,
   fakeStore,
   freshState,
   loadSlice,
   snapshotOf,
+  spokenIds,
   stubWidth,
   type FakeStore,
   type Slice,
@@ -65,7 +66,9 @@ describe("the NEXT_BUY card (U-4c, desktop)", { timeout: 60_000 }, () => {
     expect(c.getAttribute("role")).toBe("dialog");
     expect(c.getAttribute("aria-modal")).toBe("false");
     const title = document.getElementById(c.getAttribute("aria-labelledby")!)!;
-    expect(title.textContent).toBe("NEXT_BUY");
+    // U-1h: NEXT_BUY is seen, "Next buy" heard.
+    expect(title.querySelector('[aria-hidden="true"]')!.textContent).toBe("NEXT_BUY");
+    expect(title.querySelector(".visually-hidden")!.textContent).toBe("Next buy");
     expect(c.textContent).toContain("+1 CONSTRUCTOR_MK1 → IRON_PLATE");
     expect(why().getAttribute("aria-expanded")).toBe("true");
     const primary = c.querySelector<HTMLButtonElement>("[data-run]")!;
@@ -163,6 +166,26 @@ describe("the NEXT_BUY card (U-4c, desktop)", { timeout: 60_000 }, () => {
     fireEvent.click(buttons[1]!);
     expect(store.send).toHaveBeenCalledWith([P3_BUY], "bottleneck buy");
   });
+
+  // Catches: an id (CONSTRUCTOR_MK1, IRON_PLATE, NEXT_BUY) reaching a reader from the card's
+  // action, why, cost, effect or buy-1 lines (U-1h).
+  it("U-1h. terminal: the card says content names, never ids", () => {
+    const many = withBottleneck(fresh, {
+      kind: "recipe",
+      recipeId: "make_iron_plate",
+      limitingTarget: "item:iron_plate",
+      machinesToClear: 3,
+      mark: 1,
+    });
+    mount(fakeStore(many, { now: CLIENT_T0 + 3_600_000 }));
+    fireEvent.click(why());
+    const c = card()!;
+    fireEvent.mouseEnter(c.querySelectorAll<HTMLElement>("[data-run]")[1]!.parentElement!);
+    expect(c.textContent).toContain("+3 CONSTRUCTOR_MK1 → IRON_PLATE");
+    expect(c.textContent).toContain("+3 Constructor Mk.1 → Iron Plate");
+    expect(c.textContent).toContain("1: IRON_PLATE");
+    expect(spokenIds(c)).toEqual([]);
+  });
 });
 
 describe("the phone: the split bar and the sheet (U-4b, U-4c)", { timeout: 60_000 }, () => {
@@ -215,10 +238,41 @@ describe("the phone: the split bar and the sheet (U-4b, U-4c)", { timeout: 60_00
     fireEvent.click(why());
     const open = sheet()!.querySelector<HTMLButtonElement>("[data-open-item]")!;
     expect(open.textContent).toBe("open IRON_PLATE");
+    expect(open.getAttribute("aria-label")).toBe("open Iron Plate");
     fireEvent.click(open);
     expect(sheet()).toBeNull();
     expect(q('[data-drawer="iron_plate"]')).not.toBeNull();
     expect(document.querySelector("[inert]")).toBeNull();
+  });
+
+  // Catches: a power-lane item's "open" picking the power lane, which the phone's lane tabs
+  // don't have (the drawer would never show).
+  it("7. open ITEM for a power-lane item shows the power view with its drawer", () => {
+    stubWidth(375);
+    const s = withBottleneck(fresh, {
+      kind: "storage",
+      itemId: "biomass",
+      limitingTarget: "item:biomass",
+      upgrade: "storage",
+    });
+    expect(s.content.items.get("biomass")!.lane).toBe(powerLaneId(s));
+    mount(fakeStore(s, { now: CLIENT_T0 + 60_000 }));
+    fireEvent.click(why());
+    fireEvent.click(sheet()!.querySelector<HTMLButtonElement>("[data-open-item]")!);
+    expect(sheet()).toBeNull();
+    expect(q('[data-view="power"]')!.getAttribute("aria-selected")).toBe("true");
+    expect(q("[data-power-panel]")).not.toBeNull();
+    expect(q('[data-drawer="biomass"]')).not.toBeNull();
+  });
+
+  // Catches: the sheet's lines or its "open ITEM" button saying an id (U-1h).
+  it("U-1h. terminal: the sheet says content names, never ids", () => {
+    stubWidth(375);
+    mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
+    fireEvent.click(why());
+    const s = sheet()!;
+    expect(s.textContent).toContain("IRON_PLATE");
+    expect(spokenIds(s)).toEqual([]);
   });
 
   it("7. the backdrop, the close button and Esc close it, returning focus to why", () => {

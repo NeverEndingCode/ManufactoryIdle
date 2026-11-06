@@ -34,6 +34,17 @@ describe("names (U-1h, V-16)", () => {
     expect(machineLabel(s, "constructor", 3, terminal)).toBe("CONSTRUCTOR_MK3");
   });
 
+  // Catches: a mark the content doesn't have rendering "undefined" or the bare class name.
+  // MarkDef.name is required, so getMark finding no mark is the one way to the fallback.
+  it("2b. a mark the content lacks falls back to the class name and Mk.n", () => {
+    expect(s.content.machineClasses.get("constructor")!.marks.some((m) => m.mark === 99)).toBe(
+      false,
+    );
+    expect(machineLabel(s, "constructor", 99, clean)).toBe("Constructor Mk.99");
+    expect(machineLabel(s, "constructor", 99, industrial)).toBe("CONSTRUCTOR MK.99");
+    expect(machineLabel(s, "constructor", 99, terminal)).toBe("CONSTRUCTOR_MK99");
+  });
+
   it("3. a machine class without a mark", () => {
     expect(machineLabel(s, "constructor", null, terminal)).toBe("CONSTRUCTOR");
     expect(machineLabel(s, "constructor", null, clean)).toBe("Constructor");

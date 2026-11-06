@@ -23,6 +23,7 @@ import {
   freshState,
   loadSlice,
   snapshotOf,
+  spokenIds,
   stubWidth,
   type FakeStore,
   type Slice,
@@ -149,10 +150,11 @@ describe("PowerPanel, PowerFooter and FloatingTap (U-6)", { timeout: 60_000 }, (
     expect(store.send).toHaveBeenCalledTimes(1);
     // The locked classes: their text, no button.
     const coal = gens.querySelector<HTMLElement>('[data-generator="coal_generator"]')!;
-    expect(coal.textContent).toBe("COAL_GENERATOR x0 · unlocks at tier 4");
+    const seen = (el: HTMLElement) => el.querySelector('[aria-hidden="true"]')!.textContent;
+    expect(seen(coal)).toBe("COAL_GENERATOR x0 · unlocks at tier 4");
     expect(within(coal).queryByRole("button")).toBeNull();
     const fuel = gens.querySelector<HTMLElement>('[data-generator="fuel_generator"]')!;
-    expect(fuel.textContent).toBe("FUEL_GENERATOR x0 · unlocks at tier 7");
+    expect(seen(fuel)).toBe("FUEL_GENERATOR x0 · unlocks at tier 7");
     expect(gens.querySelectorAll("button")).toHaveLength(1);
   });
 
@@ -194,6 +196,51 @@ describe("PowerPanel, PowerFooter and FloatingTap (U-6)", { timeout: 60_000 }, (
     );
     expect(l8.textContent).not.toContain("headroom");
     expect(within(l8).getByRole("meter", { name: "Grid" }).classList).toContain("state-bottleneck");
+  });
+
+  // Catches: the limited branch dropped or merged into headroom: the grid covers demand, yet the
+  // bottleneck is power (a power-kind bottleneck stubbed on a fresh world).
+  it("4a. load: power limits production when not short but power is the bottleneck", () => {
+    const limited: Snapshot = {
+      ...fresh,
+      display: {
+        ...fresh.display,
+        solution: {
+          ...fresh.display.solution,
+          bottleneck: {
+            kind: "power",
+            limitingTarget: "item:iron_plate",
+            generatorRecipeId: null,
+            machinesToClear: 0,
+            mark: null,
+          },
+        },
+      },
+    };
+    expect(limited.display.solution.power.ratio).toBeGreaterThanOrEqual(1);
+    const { root } = panel(limited);
+    const load = within(root).getByRole("region", { name: "Load" });
+    expect(load.querySelector("span.state-bottleneck")!.textContent).toBe(
+      "power limits production",
+    );
+    expect(load.textContent).not.toContain("headroom");
+    expect(load.textContent).not.toContain("power is short");
+    expect(within(load).getByRole("meter", { name: "Grid" }).classList).toContain(
+      "state-bottleneck",
+    );
+  });
+
+  // Catches: an id (COAL_GENERATOR, COAL) in a generator's name, eats line or locked line
+  // reaching a reader in the terminal theme (U-1h).
+  it("U-1h. terminal: the generators say content names, never ids", () => {
+    const { root } = panel(tier8);
+    const gens = within(root).getByRole("region", { name: "Generators" });
+    expect(gens.textContent).toMatch(/[A-Z]+_GENERATOR x\d/);
+    expect(spokenIds(gens)).toEqual([]);
+    expect(spokenIds(within(root).getByRole("region", { name: "Load" }))).toEqual([]);
+    cleanup();
+    const fresh0 = panel(fresh).root;
+    expect(spokenIds(within(fresh0).getByRole("region", { name: "Generators" }))).toEqual([]);
   });
 
   // Catches: the users not from powerByLane, more than three, or unsorted.

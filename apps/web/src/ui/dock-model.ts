@@ -198,6 +198,8 @@ export function nextMachineDrawMw(s: Snapshot): number {
   const { content } = s;
   const tier = s.state.tier;
   let most = 0;
+  // The keys are the live recipes only: computeCapacity skips any recipe isLiveRecipe rejects
+  // (locked, in a cycle, or not its item's active recipe), so no filter is repeated here.
   for (const recipeId of s.display.solution.capacity.machinesByRecipe.keys()) {
     const recipe = content.recipes.get(recipeId);
     if (recipe === undefined || recipe.def.powerOutput > 0) continue;

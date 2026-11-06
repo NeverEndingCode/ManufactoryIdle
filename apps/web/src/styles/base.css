@@ -55,6 +55,16 @@ button {
   padding: 12px 12px 0;
 }
 
+/* U-1h: read, not seen. The plain words beside a visible text that is aria-hidden. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* V-9: key hints are rendered but hidden until the keyboard lands (UI-2). */
 .key-hint {
   display: none;
@@ -117,6 +127,12 @@ button {
   left: 0;
   z-index: 3;
   pointer-events: none;
+}
+
+/* The phone's drawer sheet (30, Drawer.module.css) covers the content row; a rejection toast
+   must show over it. Still under the NEXT_BUY sheet (40) and Settings (50), the modal ones. */
+.app[data-layout="phone"] .notices {
+  z-index: 35;
 }
 
 .notice-overlay {
