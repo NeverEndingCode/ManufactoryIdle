@@ -233,6 +233,19 @@ describe("fake sessions", { timeout: 60_000 }, () => {
     });
   });
 
+  // Mutation caught: deleting the code only after the provider check lets the right post win.
+  it("signinup: a discord code posted as github is refused, and burned", async () => {
+    const { authorize, paramsOf, signInUp } = await open();
+    const params = paramsOf((await authorize("discord", "carol")).headers.location as string);
+    const asGithub = await signInUp("github", params, `${ORIGIN}/account/callback/github`);
+    expect(asGithub.statusCode).toBe(500);
+    expect(asGithub.json()).toEqual({ error: "internal error" });
+    expect(asGithub.headers["set-cookie"]).toBeUndefined();
+    const thenRight = await signInUp("discord", params);
+    expect(thenRight.statusCode).toBe(500);
+    expect(thenRight.json()).toEqual({ error: "internal error" });
+  });
+
   it("the cookie is a session for /api/world and claim", async () => {
     const { get, post, signIn, cookieOf } = await open();
     const world = await get("/api/world", { cookie: cookieOf(await signIn("alice")) });

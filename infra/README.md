@@ -57,8 +57,8 @@ README.)
 Without `SUPERTOKENS_CONNECTION_URI` the API runs guest-only (it logs `accounts
 disabled`). With it, `API_DOMAIN` and `WEBSITE_DOMAIN` are required; an `http`
 `API_DOMAIN` logs a warning (session cookies aren't `Secure`), which is expected locally.
-The other account variables (SMTP for reset mail, the Discord and GitHub credentials)
-are listed in `apps/api/README.md`.
+The other account variables (the Discord and GitHub credentials) are listed in
+`apps/api/README.md`.
 
 The core image is pinned (`12.3.1`) to a version whose supported CDI list includes the
 one `supertokens-node` speaks (5.4 for 24.0.3). When bumping either, compare
@@ -67,15 +67,24 @@ release's `coreDriverInterfaceSupported.json`.
 
 ## The SuperTokens smoke test
 
-`apps/api/src/auth/supertokens.smoke.test.ts` signs up a real EmailPassword user through
-the core, loads its lazily created world, and claims a guest. `pnpm test` skips it. With
+`apps/api/src/auth/supertokens.smoke.test.ts` makes sessions without email or a browser
+(O-15): it creates a ThirdParty user directly in the core
+(`ThirdParty.manuallyCreateOrUpdateUser`, provider `discord`) and a session for it
+(`Session.createNewSessionWithoutRequestResponse`), then sends the access token as
+`Authorization: Bearer`. With that it loads the account's lazily created world and claims a
+guest. It checks that a cookie-mode `POST /auth/session/refresh` sets a `SameSite=Lax`
+`sAccessToken` with no `anti-csrf` header (W-2). With dummy `DISCORD_CLIENT_ID` and
+`DISCORD_CLIENT_SECRET` (it sets them; nothing is sent to Discord), it checks that
+`/auth/authorisationurl` with the pinned redirect URI answers a `discord.com/oauth2/authorize`
+URL with the scope `identify email`, and that a foreign URI gets `GENERAL_ERROR`. `pnpm test`
+skips it. With
 the compose stack up (it sets its own `API_DOMAIN`/`WEBSITE_DOMAIN`; no browser is involved):
 
     SUPERTOKENS_CONNECTION_URI=http://localhost:3567 \
     SUPERTOKENS_API_KEY=<SUPERTOKENS_API_KEY> \
       pnpm --filter @manufactory/api exec vitest run src/auth/supertokens.smoke.test.ts
 
-It creates accounts with unique `smoke-...@example.com` emails in the `supertokens`
+It creates users with unique `smoke-...@example.com` emails in the `supertokens`
 database each run; `docker compose down -v` clears them.
 
 ## Deploying (example)
@@ -107,7 +116,7 @@ Unraid with them.
        SUPERTOKENS_CONNECTION_URI=... SUPERTOKENS_API_KEY=... \
          pnpm --filter @manufactory/api start
 
-   plus the other account variables (SMTP for reset mail; see `apps/api/README.md`).
+   plus the sign-in providers' variables (`DISCORD_*`, `GITHUB_*`; see `apps/api/README.md`).
    Without `SUPERTOKENS_CONNECTION_URI` it runs guest-only and needs no domains.
 
 3. Run Caddy with the example, setting `SITE_ADDRESS` (default `localhost:8443`),

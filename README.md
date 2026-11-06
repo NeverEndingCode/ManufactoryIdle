@@ -32,10 +32,9 @@ proves tier 10 through the client's own builders.
 
     DEV_FAKE_SESSIONS=1 pnpm --filter @manufactory/api dev
 
-Then "Save your factory" (from tier 1) or Settings → Account signs up, signs in and resets
-a password with no SuperTokens core; the reset link is at
-`/auth/dev/reset-link?email=<email>`, since no mail is sent. Accounts are in memory and gone
-when the API stops. **Never in production**: only `src/dev.ts` can turn it on, and it
+Then "Save your factory" (from tier 1) or Settings → Account signs in with a fake Discord or
+GitHub that redirects straight back, with no SuperTokens core; set the `dev-oauth-user` cookie
+to choose the user (default `player`). Accounts are in memory and gone when the API stops. **Never in production**: only `src/dev.ts` can turn it on, and it
 refuses under `NODE_ENV=production`. The real SuperTokens path is in
 [`infra/README.md`](infra/README.md).
 

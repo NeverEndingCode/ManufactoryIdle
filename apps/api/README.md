@@ -22,9 +22,9 @@ client sends actions and gets back the resolved world.
 | `SUPERTOKENS_API_KEY` | unset | The core's API key (`API_KEYS` in `infra/.env`). |
 | `API_DOMAIN` | required with accounts | Where browsers reach this API: the site's one origin (W-2), e.g. `https://play.example.com`, since the proxy in front forwards `/api` and `/auth`; SuperTokens serves `/auth/*` there. Session cookies are `Secure` only when it is `https` (startup warns otherwise; `http://localhost:5173` is fine for local dev). |
 | `WEBSITE_DOMAIN` | required with accounts | The web client's origin, the same as `API_DOMAIN` (W-2; `http://localhost:5173` for both locally, behind Vite's proxy): the only CORS origin, with credentials. |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Password-reset mail over your SMTP server (port 465 uses TLS). All five or none (R-24). |
-| `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | unset | Discord sign-in. Configured only when both are set (R-12). |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | GitHub sign-in. Configured only when both are set (R-12). |
+| `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | unset | Discord sign-in. On only when both are set; one without the other logs a warning (O-2). Register `<WEBSITE_DOMAIN>/account/callback/discord` as the redirect. |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | GitHub sign-in, the same way; the callback is `<WEBSITE_DOMAIN>/account/callback/github`. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | not yet | Not read yet: adding Google is one line in `PROVIDER_TABLE` (`src/auth/supertokens.ts`). |
 
 See `infra/README.md` for running against the compose Postgres.
 
@@ -47,16 +47,22 @@ and `404 unknown-guest` for an unknown token or one already claimed by another a
 (R-18). Clients claim on sign-in, and at a boot that finds a session and a guest token
 (a sign-in cut short), before the account's first `GET /api/world`.
 
-SuperTokens' own routes (`/auth/signup`, `/auth/signin`, `/auth/session/refresh`, ...)
-are served by its Fastify plugin. Sign-in is EmailPassword, plus Discord and GitHub when
-their credentials are set. With `SUPERTOKENS_CONNECTION_URI` set, `API_DOMAIN` and
-`WEBSITE_DOMAIN` are required: startup fails naming whichever is missing.
+SuperTokens' own routes (`/auth/authorisationurl`, `/auth/signinup`,
+`/auth/session/refresh`, `/auth/signout`, ...) are served by its Fastify plugin. Sign-in is
+OAuth only, through SuperTokens' ThirdParty recipe: Discord and GitHub, each when both of
+its variables are set (O-1, O-2). There are no passwords and no mail. The providers are
+listed in `PROVIDER_TABLE` (`src/auth/supertokens.ts`), and `GET /api/health` reports the
+configured ones as `providers` (in table order; `[]` without accounts, O-3). The scopes are
+the SDK's defaults (Discord `identify email`, GitHub `read:user user:email`). The same email
+on two providers is two accounts (no linking, O-12).
 
-**Password-reset mail stays self-hosted (R-24).** SuperTokens' default would POST the
-player's email and the live reset link to `api.supertokens.io`. Instead, with all five
-`SMTP_*` variables set the API sends it through that SMTP server (the SDK's SMTP
-service). Otherwise it sends nothing and logs only `password reset email not sent: SMTP
-not configured`, without the address or the token.
+**The redirect URI is pinned (O-4).** `authorisationurl` and `signinup` answer
+`GENERAL_ERROR` ("Sign-in isn't available from this address.") unless
+`redirectURIOnProviderDashboard` is exactly
+`<WEBSITE_DOMAIN origin>/account/callback/<provider>`, and `signinup` refuses a request
+without `redirectURIInfo`, so provider tokens are never accepted directly. With
+`SUPERTOKENS_CONNECTION_URI` set, `API_DOMAIN` and `WEBSITE_DOMAIN` are required: startup
+fails naming whichever is missing.
 
 **Accounts disabled (R-16).** Without `SUPERTOKENS_CONNECTION_URI` the API logs
 `accounts disabled (SUPERTOKENS_CONNECTION_URI unset)` and runs guest-only: no `/auth/*`
@@ -223,9 +229,23 @@ runs a PGlite-backed, guest-only server (`src/dev.ts`): no accounts, no admin ro
 ### Fake sessions (`DEV_FAKE_SESSIONS=1`)
 
 `DEV_FAKE_SESSIONS=1 pnpm --filter @manufactory/api dev` also mounts an in-memory fake of the
-SuperTokens front-end interface (`src/dev-sessions.ts`: sign-up, sign-in, sign-out, refresh,
-password reset, plus `GET /auth/dev/reset-link?email=`), so the web client's account e2e runs
-without a SuperTokens core. It rejects an `fdi-version` the node SDK does not speak. Any value
+SuperTokens front-end interface (`src/dev-sessions.ts`), so the web client's account e2e runs
+without a SuperTokens core or a real provider (O-14). Its providers are `discord` and `github`:
+
+- `GET /auth/authorisationurl` answers a path-only URL to the fake provider, after the same
+  redirect-URI check as the real API;
+- `GET /auth/dev/oauth/authorize` is the fake provider. It redirects straight back to
+  `/account/callback/<provider>` (path-only, whatever `redirect_uri` says) with a single-use
+  `code`, for the user named by the `dev-oauth-user` cookie (`[a-z0-9-]{1,40}`, default
+  `player`). Special users: `deny` comes back with `error=access_denied`; `no-email` signs in
+  to `NO_EMAIL_GIVEN_BY_PROVIDER`; `not-allowed` to `SIGN_IN_UP_NOT_ALLOWED`;
+- `POST /auth/signinup` spends the code and finds or creates the user `<provider>:<user>`
+  (email `<user>@<provider>.example`). An unknown, used or other-provider code is a `500`, as
+  the real API answers when the token exchange fails;
+- `POST /auth/signout` and `POST /auth/session/refresh` as before.
+
+Users live in memory, so a reused dev server keeps them; the e2e names its users
+`<name>-<timestamp>`. It rejects an `fdi-version` the node SDK does not speak. Any value
 other than unset, empty or `1` stops `dev.ts`. **Never in production**: `main.ts` cannot reach
 it and `devServer` throws under `NODE_ENV=production`. The real path is covered only by the
 SuperTokens smoke test (`src/auth/supertokens.smoke.test.ts`, needs a core).

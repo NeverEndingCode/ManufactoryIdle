@@ -110,26 +110,22 @@ test("every view fits 320 px", async ({ page }) => {
     await expectNoOverflow(page, "the settings sheet");
   });
 
-  await test.step("the sign-up form with a field error", async () => {
-    const form = sheet.getByRole("form", { name: "Create account" });
-    await form.getByLabel("Email").fill("x");
-    await form.getByLabel("Password").fill("password1");
-    await form.getByRole("button", { name: "Create account" }).click();
-    await expect(form.getByLabel("Email")).toHaveAttribute("aria-invalid", "true");
-    await expectNoOverflow(page, "the sign-up form with a field error");
+  await test.step("the Account section", async () => {
+    const buttons = sheet.locator("[data-provider]");
+    await expect(buttons).toHaveCount(2);
+    for (const name of ["Discord", "GitHub"])
+      await expect(sheet.getByRole("button", { name: `Sign in with ${name}` })).toBeVisible();
+    await expectNoOverflow(page, "the Account section");
     await page.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);
   });
 
-  await test.step("the reset-password page", async () => {
-    await page.goto("/account/reset-password?token=bogus");
-    const main = page.locator('main[data-reset="form"]');
-    await expect(main).toBeVisible();
-    await expectNoOverflow(page, "the reset page");
-    await main.getByLabel("New password", { exact: true }).fill("password2");
-    await main.getByRole("button", { name: "Change password" }).click();
-    await expect(main).toContainText("This link has expired or was already used.");
-    await expectNoOverflow(page, "the reset page, an expired link");
+  await test.step("a sign-in toast", async () => {
+    await page.goto("/account/callback/github?error=access_denied&state=x");
+    const toast = page.locator('[data-notice="sign-in-failed"]');
+    await expect(toast).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+    await expectNoOverflow(page, "a sign-in toast");
   });
 
   await test.step("a rejection toast", async () => {

@@ -219,7 +219,7 @@ pgnet_subnet() {
 # render <name> KEY=VALUE...: $SRC/infra/unraid/templates/my-<name>.xml with @@KEY@@ filled in
 # (XML-escaped), written atomically to $TEMPLATES/my-<name>.xml. <Config> lines of the old
 # rendered file whose Target the new one lacks (a variable added to the file by hand, such as the
-# SMTP ones) are carried over. The old file is kept in $WORK for a rollback.
+# DISCORD_* ones) are carried over. The old file is kept in $WORK for a rollback.
 render() {
   local name=$1 kv key val line target out extras="" tmp
   shift
@@ -352,9 +352,10 @@ wait_healthy() { # the image's HEALTHCHECK (probing every 2s while starting)
 # ---- 6. smoke test -------------------------------------------------------------------------
 # Through the published port, so through Caddy. /api/health's "accounts":true says only that the
 # SuperTokens env is set (the SDK contacts no core until a request needs one), so a second probe
-# asks the core something: EmailPassword's email-exists lookup (supertokens-node 24,
-# /auth/emailpassword/email/exists) answers {"status":"OK",...} only when the core accepted the
-# API key and speaks the SDK's interface.
+# asks the core something: Multitenancy's login methods (supertokens-node 24, /auth/loginmethods)
+# read the tenant from the core and answer {"status":"OK",...} only when the core accepted the
+# API key and speaks the SDK's interface. Health's "providers" (the sign-in providers whose
+# DISCORD_*/GITHUB_* variables are set) is logged, not required: an empty list still deploys.
 smoke() {
   local base=http://127.0.0.1:$HOST_PORT body="" i
   for ((i = 0; i < 30; i++)); do
@@ -371,7 +372,12 @@ smoke() {
     log "the API answers but accounts are off"
     return 1
   fi
-  if ! body=$(curl -fsS --max-time 15 "$base/auth/emailpassword/email/exists?email=smoke@example.invalid" 2>&1); then
+  if [[ $body =~ \"providers\":\[[^]]*\] ]]; then
+    log "sign-in providers: ${BASH_REMATCH[0]#\"providers\":}"
+  else
+    log "sign-in providers: none listed"
+  fi
+  if ! body=$(curl -fsS --max-time 15 "$base/auth/loginmethods" 2>&1); then
     log "the SuperTokens probe failed: $body"
     return 1
   fi
