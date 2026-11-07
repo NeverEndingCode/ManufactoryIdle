@@ -179,6 +179,7 @@ The Phase 4 rulings, the post-launch rulings, the U-rulings, UI-1's V-rulings an
   - Task 4 updates `layout-320` (the log sheet);
   - Task 6 updates `themes` (CRT) and `reduced-motion` (`text-shadow`);
   - Task 2 updates `themes` (geometry) and `reduced-motion` (the command complete at once).
+- **L-23. The command bar's gap is 8 px below desktop (Task 2, amends U-4a's 14 px there).** With 14 px, terminal at 600 px left the command 157 px, under L-1's 20 characters (160 px). The desktop keeps 14 px.
 
 ## Global Constraints
 

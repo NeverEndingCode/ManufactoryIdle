@@ -89,7 +89,7 @@ export function RunButton({
           {key}
         </span>
       )}
-      {runLabel(shown, snapshot, voice, kind, a, busy)}
+      <span className={css.runText}>{runLabel(shown, snapshot, voice, kind, a, busy)}</span>
     </Guarded>
   );
 }
@@ -148,7 +148,9 @@ export function ReserveRun({
           {key}
         </span>
       )}
-      {runLabel(model, snapshot, voice, kind, affordable, false)}
+      <span className={css.runText}>
+        {runLabel(model, snapshot, voice, kind, affordable, false)}
+      </span>
     </button>
   );
 }

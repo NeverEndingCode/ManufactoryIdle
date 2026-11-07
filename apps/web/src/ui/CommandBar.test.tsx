@@ -334,4 +334,49 @@ describe("the command bar types (U-9e, L-1, L-19)", { timeout: 60_000 }, () => {
     expect(run()!.textContent).not.toBe(label);
     expect(later).not.toHaveBeenCalled();
   });
+
+  // Catches (fix round 1): typing in a hidden tab, or behind help or Settings (L-19's instant
+  // list), where nobody sees it and a timer runs for nothing.
+  it("11b. instant in a hidden tab, and with help or Settings open", () => {
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const store = fakeStore(withBottleneck(fresh, RESERVE), AFFORDABLE);
+    const later = vi.spyOn(store, "later");
+    mount(store);
+    expect(typed().textContent).toBe("reserve iron_plate 25%");
+    store.set({ snapshot: fresh });
+    expect(typed().textContent).toBe(SHELL);
+    expect(later).not.toHaveBeenCalled();
+    hidden.mockRestore();
+    cleanup();
+
+    for (const opener of ["[data-open-help]", "[data-open-settings]"]) {
+      const open = fakeStore(withBottleneck(fresh, RESERVE), AFFORDABLE);
+      mount(open);
+      open.tick(600);
+      fireEvent.click(document.querySelector<HTMLElement>(opener)!);
+      expect(document.querySelector('[role="dialog"]'), opener).not.toBeNull();
+      open.set({ snapshot: fresh });
+      expect(typed().textContent, opener).toBe(SHELL);
+      cleanup();
+    }
+  });
+
+  // Catches: the plain voice typing (U-9e: it crossfades), or its span not remounting per
+  // command, so the fade wouldn't replay.
+  it("11c. the Clean themes type nothing: the words swap whole, on a fresh span", () => {
+    for (const theme of ["clean-dark", "clean-oled", "clean-light"] as const) {
+      act(() => void setTheme(theme));
+      const store = fakeStore(withBottleneck(fresh, RESERVE), AFFORDABLE);
+      const later = vi.spyOn(store, "later");
+      mount(store);
+      const first = typed();
+      expect(first.textContent, theme).toBe("Reserve 25% of Iron Plate");
+      store.set({ snapshot: fresh });
+      expect(typed().textContent, theme).toBe(PLAIN);
+      expect(typed().hasAttribute("data-typing"), theme).toBe(false);
+      expect(typed(), theme).not.toBe(first);
+      expect(later, theme).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
 });

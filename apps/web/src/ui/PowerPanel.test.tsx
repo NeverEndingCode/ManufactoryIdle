@@ -309,6 +309,15 @@ describe("PowerPanel, PowerFooter and FloatingTap (U-6)", { timeout: 60_000 }, (
     expect(button().closest("[data-power]")!.hasAttribute("data-holding")).toBe(true);
   });
 
+  // Catches: the footer hiding the taps it has counted but not sent, which tap-hold.spec waits
+  // on (a release flushes only what is pending).
+  it("5c. the footer carries its unsent taps", () => {
+    const store = fakeStore(fresh);
+    const taps = { pending: 7, lastTapAt: store.now() - 9_000, holding: true };
+    const { button } = tapButton("footer", fresh, store, taps);
+    expect(button().closest("[data-power]")!.getAttribute("data-taps-pending")).toBe("7");
+  });
+
   // PowerDock.test 1 and 2, moved, on both buttons; plus U-6c's stopped propagation.
   it("6. the hold: pointer and held keys, repeats ignored, keyup and blur release; Space stops", () => {
     for (const kind of ["footer", "floating"] as const) {

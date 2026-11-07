@@ -77,6 +77,34 @@ test("the command reads at every width (L-1)", async ({ page }) => {
         run: box.closest("[data-command]")!.querySelector("[data-run]")?.textContent ?? null,
       };
     });
+  /** The same reading with the run's label swapped for `label` (its voice's case), then put
+   * back, all in one task so React never sees it. */
+  const worstCase = (label: string) =>
+    page.locator("[data-command]").evaluate((bar, label) => {
+      const run = bar.querySelector("[data-run]")!;
+      const text = [...run.childNodes]
+        .filter(
+          (n) =>
+            n.textContent !== "" && !(n instanceof Element && n.classList.contains("key-hint")),
+        )
+        .at(-1)!;
+      const before = text.textContent;
+      const plain = /^[A-Z]/.test(before ?? "");
+      text.textContent = plain ? label[0]!.toUpperCase() + label.slice(1) : label;
+      const box = bar.querySelector("[data-typed]")!.parentElement!;
+      const ctx = document.createElement("canvas").getContext("2d")!;
+      ctx.font = getComputedStyle(box).font;
+      const doc = document.documentElement;
+      const reading = {
+        client: box.clientWidth,
+        twenty: ctx.measureText("0".repeat(20)).width,
+        runRight: Math.round(run.getBoundingClientRect().right),
+        barRight: Math.round(bar.getBoundingClientRect().right),
+        page: { scroll: doc.scrollWidth, client: doc.clientWidth },
+      };
+      text.textContent = before;
+      return reading;
+    }, label);
   type Reading = Awaited<ReturnType<typeof measure>>;
   /** At least 20 characters show, or the whole command fits; and no sideways scroll. */
   const reads = (m: Reading) =>
@@ -111,6 +139,19 @@ test("the command reads at every width (L-1)", async ({ page }) => {
       const label = `${theme} at ${width}px: ${JSON.stringify(m)}`;
       test.info().annotations.push({ type: "command width", description: label });
       expect(reads(m), label).toBe(true);
+      if (width <= 640) {
+        // The worst labels the run can show (fix round 1): the longest compact wait and
+        // "not affordable yet", written into the button's text for one layout. The run gives
+        // way, not the command: 20 characters still show, and the run stays inside the bar.
+        for (const worst of ["affordable in 100h 00m", "not affordable yet"]) {
+          const w = await worstCase(worst);
+          const at = `${theme} at ${width}px, run "${worst}": ${JSON.stringify(w)}`;
+          test.info().annotations.push({ type: "command width, worst run", description: at });
+          expect(w.client, at).toBeGreaterThanOrEqual(Math.floor(w.twenty));
+          expect(w.runRight, at).toBeLessThanOrEqual(w.barRight);
+          expect(w.page.scroll, at).toBeLessThanOrEqual(w.page.client);
+        }
+      }
     }
   }
 });
