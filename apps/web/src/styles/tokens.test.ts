@@ -452,15 +452,32 @@ describe("the CSS source", () => {
     }
   });
 
-  it("9a. a segmented button is a 44 px target both ways (W-20)", () => {
-    // The 320 px e2e found the drawer's "×1" at 38.8 px wide: short labels need a min-width.
-    const segs = all.filter((d) => d.stack.at(-1) === ".segBtn");
-    expect(segs.length).toBeGreaterThan(0);
-    const byFile = new Map<string, Record<string, string>>();
-    for (const d of segs) byFile.set(d.file, { ...byFile.get(d.file), [d.property]: d.value });
-    for (const [file, rule] of byFile) {
-      expect(rule["min-height"], file).toBe("44px");
-      expect(rule["min-width"], file).toBe("44px");
-    }
+  // U-8d / K-16. Catches: a module min-height under 44 px, which beats the coarse rule's
+  // element selector on specificity and leaves a touch target short.
+  it("9a. a coarse pointer gets 44 px targets from one rule, and nothing undercuts it", () => {
+    const coarse = all.filter(
+      (d) =>
+        d.file === "styles/base.css" &&
+        d.stack.length === 2 &&
+        d.stack[0] === "@media (pointer: coarse)" &&
+        d.stack[1]!.split(",")
+          .map((x) => x.trim())
+          .includes("button"),
+    );
+    expect(Object.fromEntries(coarse.map((d) => [d.property, d.value]))).toMatchObject({
+      "min-height": "44px",
+      "min-width": "44px",
+    });
+    const fine = (d: (typeof all)[number]) => d.stack.some((s) => /pointer:\s*fine/.test(s));
+    const under = all.filter((d) => {
+      if (d.property !== "min-height" && d.property !== "min-width") return false;
+      const px = /^(\d+(?:\.\d+)?)px$/.exec(d.value);
+      return px !== null && Number(px[1]) < 44 && !fine(d);
+    });
+    expect(
+      under.map((d) => `${d.file}: ${d.stack.join(" > ")} { ${d.property}: ${d.value} }`),
+    ).toEqual([]);
+    // The segmented tabs are gone (U-5c).
+    expect(all.filter((d) => d.stack.some((s) => s.includes(".segBtn")))).toEqual([]);
   });
 });

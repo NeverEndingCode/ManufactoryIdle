@@ -40,8 +40,9 @@
   text-shadow: var(--glow-advice);
 }
 
+/* 36 px (44 on a coarse pointer, K-16). */
 .close {
-  min-height: 36px;
+  height: 36px;
   padding: 0 4px;
   border: 0;
   background: transparent;

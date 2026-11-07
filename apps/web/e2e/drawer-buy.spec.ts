@@ -16,11 +16,13 @@ test("the drawer shows the ladder and the projection, then buys a Miner", async 
   });
 
   await test.step("a Miner becomes affordable and the buy lands", async () => {
-    const buy = drawer.getByRole("button", { name: /^Buy 1 Miner/ });
-    await expect(buy).toBeEnabled({ timeout: 60_000 });
+    // MACHINES' buy 1 on mark 1 (U-5c, K-13): off by aria-disabled while short, never the
+    // native disabled, so wait on the attribute.
+    const buy = drawer.locator('[data-mark-buy="1"][data-count="1"]');
+    await expect(buy).toHaveAttribute("aria-disabled", "false", { timeout: 60_000 });
     await buy.click();
     await expect(root).toHaveAttribute("data-state-version", "1");
-    await expect(drawer.locator("[data-owned]")).toHaveText("3 owned");
+    await expect(drawer.locator('[data-mark="1"] [data-owned]')).toHaveText("x3");
     await expect(page.locator('[data-notice="rejected"]')).toHaveCount(0);
   });
 });

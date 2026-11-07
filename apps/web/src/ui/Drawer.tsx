@@ -2,6 +2,8 @@
 // storage and its lane's Quantum Storage, over one pure model (drawerModel). Spends are
 // pessimistic (W-13): a button is busy while its own batch is pending, and the numbers move
 // only with snapshots. Settings (recipe, assignment) are optimistic in the control (Q-10).
+// U-5c: MACHINES is the default body; the other sections are MORE buttons with letter keys
+// (K-4: a key clicks the button carrying its data-key, so a key is a click).
 import {
   useEffect,
   useId,
@@ -10,10 +12,12 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   D,
   DECIMAL_ZERO,
+  getMark,
   liquidCap,
   type Action,
   type Dec,
@@ -29,11 +33,13 @@ import type { GameStore } from "../sync/store.js";
 import {
   bottleneckRow,
   className as classLabel,
+  plural,
   rateText,
   splitOf,
   type RowModel,
 } from "./derive.js";
 import styles from "./Drawer.module.css";
+import type { SectionKey } from "./keys.js";
 import {
   buyAction,
   dismantleAction,
@@ -45,12 +51,20 @@ import {
   type MachineSection,
 } from "./machines.js";
 import { Guarded } from "./Guarded.js";
-import { laneLabel, useNames } from "./names.js";
+import { itemName as spokenName, laneLabel, useNames, type Names } from "./names.js";
 import { fmt, useNotation } from "./notation.js";
 import { Projection } from "./Projection.js";
 import { navigate, routePath } from "./route.js";
-import { affordability, creditFor, maxAffordableCount, quote, type Quote } from "./quote.js";
+import {
+  affordability,
+  creditFor,
+  maxAffordableCount,
+  quote,
+  type Affordability,
+  type Quote,
+} from "./quote.js";
 import { LiveStock } from "./Row.js";
+import { Spoken } from "./Spoken.js";
 import { useTheme } from "./theme.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
 import { useTick } from "./use-tick.js";
@@ -66,7 +80,7 @@ export interface DrawerProps {
   itemId: ItemId;
   pending: readonly Batch[];
   onClose(): void;
-  /** V-18 / §13.1: the split bar's tap, to the item's entry in the priority list. */
+  /** K-15 / §13.1: a SPLIT row's tap, to the item's entry in the priority list. */
   onSplit(itemId: ItemId): void;
   /** U-5a: the desktop and tablet panel over the content row; V-19: the phone's fixed sheet.
    * Both are non-modal: role="dialog", aria-modal="false". */
@@ -79,41 +93,64 @@ export interface DrawerProps {
   onLeaveFocused?: () => void;
 }
 
-type Tab = "buy" | "upgrade" | "dismantle" | "recipe" | "storage" | "assign";
+/** U-5c: the sections behind MORE; MACHINES is the body when none is open. */
+export type Section = "upgrade" | "recipe" | "assign" | "storage" | "dismantle";
 
-const TAB_NAMES: Record<Tab, string> = {
-  buy: "Buy",
+/** Each section's letter (U-5c's table); B is MACHINES' own buy 1. */
+export const SECTION_KEY: Readonly<Record<Section, SectionKey>> = {
+  upgrade: "U",
+  recipe: "R",
+  assign: "A",
+  storage: "S",
+  dismantle: "D",
+};
+
+/** A reader's name for each MORE button (storage adds its next cost). */
+const SECTION_NAME: Record<Section, string> = {
   upgrade: "Upgrade",
-  dismantle: "Dismantle",
   recipe: "Recipe",
-  storage: "Storage",
   assign: "Assign",
+  storage: "Storage",
+  dismantle: "Dismantle",
 };
 
 type Assign = Extract<Action, { type: "ASSIGN_MACHINES" }>;
 type SelectRecipe = Extract<Action, { type: "SELECT_RECIPE" }>;
 
-/** Only the sections the model has. */
-function tabsOf(m: DrawerModel): Tab[] {
+/** Only what the model offers (U-5c): upgrade with a consolidation, recipe with ≥ 2 recipes,
+ *  assign with assign rows, storage always (items), dismantle with any owned; in that order. */
+export function sectionsOf(m: DrawerModel): Section[] {
   const sec = m.machines;
-  const tabs: Tab[] = [];
-  if (sec !== null && sec.bestMark !== null) tabs.push("buy");
-  if (sec?.marks.some((r) => r.consolidation !== null)) tabs.push("upgrade");
-  if (sec?.marks.some((r) => r.owned > 0)) tabs.push("dismantle");
-  if (m.recipes.length > 0) tabs.push("recipe");
-  tabs.push("storage");
-  if (sec !== null && sec.assign.length > 0) tabs.push("assign");
-  return tabs;
+  const out: Section[] = [];
+  if (sec?.marks.some((r) => r.consolidation !== null)) out.push("upgrade");
+  if (m.recipes.length >= 2) out.push("recipe");
+  if (sec !== null && sec.assign.length > 0) out.push("assign");
+  out.push("storage");
+  if (sec?.marks.some((r) => r.owned > 0)) out.push("dismantle");
+  return out;
 }
 
 interface Ctx {
   snapshot: Snapshot;
   model: DrawerModel;
+  names: Names;
   now: () => number;
   busy(verb: DrawerVerb): boolean;
   send(actions: Action[], verb: DrawerVerb): Promise<Outcome>;
-  /** Q-10's hold owner: the store, so a held setting survives a tab switch or a close. */
+  /** Q-10's hold owner: the store, so a held setting survives a section switch or a close. */
   owner: object;
+  /** U-7e / K-17: key hints on the desktop panel only; the phone has none. */
+  hints: boolean;
+}
+
+/** K-7: a hint is rendered from its control's own data-key, so it can't name another key. */
+function hint(ctx: Ctx, key: string | undefined): ReactNode {
+  if (!ctx.hints || key === undefined) return null;
+  return (
+    <span className="key-hint" aria-hidden="true">
+      {`[${key}]`}
+    </span>
+  );
 }
 
 export function Drawer({
@@ -130,9 +167,10 @@ export function Drawer({
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
   const [notation] = useNotation();
   const model = drawerModel(snapshot, itemId, notation);
-  const tabs = tabsOf(model);
-  const [picked, setPicked] = useState<Tab>(tabs[0]!);
-  const tab = tabs.includes(picked) ? picked : tabs[0]!;
+  const sections = sectionsOf(model);
+  const [picked, setPicked] = useState<Section | null>(null);
+  // A section the model no longer offers falls back to MACHINES.
+  const shown = picked !== null && sections.includes(picked) ? picked : null;
   const title = useRef<HTMLHeadingElement>(null);
   const box = useRef<HTMLElement>(null);
   const names = useNames(snapshot);
@@ -153,13 +191,30 @@ export function Drawer({
     };
   }, []);
 
+  // K-11: the drawer never drops focus to <body>. After every commit: when the last element
+  // focused inside it has gone (a section swap, a dismantle-all's row, a mark row) and focus
+  // fell to the body, the title takes it. A click on blank space leaves that element in place,
+  // so it never pulls focus back.
+  const lastFocused = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    const el = lastFocused.current;
+    if (el === null || el.isConnected) return;
+    lastFocused.current = null;
+    if (document.activeElement === document.body && box.current?.isConnected === true) {
+      title.current?.focus();
+    }
+  });
+
+  const sheet = presentation === "sheet";
   const ctx: Ctx = {
     snapshot,
     model,
+    names,
     now: () => store.now(),
     busy: (verb) => pending.some((b) => b.label === drawerLabel(itemId, verb)),
     send: (actions, verb) => store.send(actions, drawerLabel(itemId, verb)),
     owner: store,
+    hints: !sheet,
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -169,8 +224,6 @@ export function Drawer({
   };
 
   const sec = model.machines;
-  const split = splitOf(snapshot, itemId);
-  const sheet = presentation === "sheet";
   return (
     <section
       ref={box}
@@ -182,6 +235,9 @@ export function Drawer({
       data-presentation={presentation}
       className={`${styles.drawer} ${sheet ? styles.sheet : styles.panel}`}
       onKeyDown={onKeyDown}
+      onFocus={(e) => {
+        lastFocused.current = e.target;
+      }}
     >
       <div className={styles.head}>
         {/* U-1h: the theme's label shown; a reader gets the content name. */}
@@ -194,28 +250,16 @@ export function Drawer({
         >
           {names.item(itemId)}
         </h2>
-        {sec !== null && (
-          <span data-class className={styles.muted}>
-            {sec.className}
-          </span>
+        {sheet ? (
+          // U-5b: a 44 × 44 x.
+          <button type="button" className={styles.x} aria-label="Close" onClick={onClose}>
+            x
+          </button>
+        ) : (
+          <button type="button" className={`btn secondary ${styles.close}`} onClick={onClose}>
+            Close
+          </button>
         )}
-        {/* §13.4's context-aware entry: this item's handbook page. A link, so it can open in a
-          new tab too; a plain click stays in the app. */}
-        <a
-          className={`btn secondary ${styles.close} ${styles.handbookLink}`}
-          href={routePath({ kind: "handbook", itemId })}
-          data-handbook-link
-          onClick={(e) => {
-            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-            e.preventDefault();
-            navigate({ kind: "handbook", itemId });
-          }}
-        >
-          Handbook entry
-        </a>
-        <button type="button" className="btn secondary" onClick={onClose}>
-          Close
-        </button>
         <Meta snapshot={snapshot} itemId={itemId} now={ctx.now} />
         {/* U-5a's hint, fine pointer only (U-7e). No ↑/↓ on the phone. */}
         {!sheet && (
@@ -224,36 +268,25 @@ export function Drawer({
           </span>
         )}
       </div>
-      <div role="group" aria-label="Action" className={styles.seg}>
-        {tabs.map((t) => (
-          <button
-            key={t}
-            type="button"
-            aria-pressed={t === tab}
-            className={t === tab ? `${styles.segBtn} ${styles.on}` : styles.segBtn}
-            onClick={() => setPicked(t)}
-          >
-            {TAB_NAMES[t]}
-          </button>
-        ))}
+      <div className={styles.body} data-body={shown ?? "machines"}>
+        {shown === null ? (
+          <MachinesBody ctx={ctx} sec={sec} onSplit={onSplit} />
+        ) : (
+          <h3 className={styles.h3}>{SECTION_NAME[shown].toUpperCase()}</h3>
+        )}
+        {shown === "upgrade" && sec !== null && <UpgradeSection ctx={ctx} sec={sec} />}
+        {shown === "recipe" && <RecipeSection ctx={ctx} />}
+        {shown === "assign" && sec !== null && <AssignSection ctx={ctx} sec={sec} />}
+        {shown === "storage" && <StorageSection ctx={ctx} />}
+        {shown === "dismantle" && sec !== null && <DismantleSection ctx={ctx} sec={sec} />}
       </div>
-      {split !== null && (
-        <button
-          type="button"
-          className={styles.splitButton}
-          aria-label={`${model.name} split: show in the priority list`}
-          data-split
-          onClick={() => onSplit(itemId)}
-        >
-          <SplitBar split={split} />
-        </button>
-      )}
-      {tab === "buy" && sec !== null && <BuySection ctx={ctx} sec={sec} />}
-      {tab === "upgrade" && sec !== null && <UpgradeSection ctx={ctx} sec={sec} />}
-      {tab === "dismantle" && sec !== null && <DismantleSection ctx={ctx} sec={sec} />}
-      {tab === "recipe" && <RecipeSection ctx={ctx} />}
-      {tab === "storage" && <StorageSection ctx={ctx} />}
-      {tab === "assign" && sec !== null && <AssignSection ctx={ctx} sec={sec} />}
+      <MoreBar
+        ctx={ctx}
+        sections={sections}
+        shown={shown}
+        sheet={sheet}
+        onToggle={(s) => setPicked(shown === s ? null : s)}
+      />
     </section>
   );
 }
@@ -291,12 +324,101 @@ function Meta({
   );
 }
 
+/** "900 IRON_PLATE" seen, "900 Iron Plate" heard; a two-item cost joins with " + ". */
+function costWords(ctx: Ctx, q: Quote): { shown: string; said: string } {
+  const parts = [...q.cost];
+  return {
+    shown: parts.map(([id, n]) => `${fmt(n)} ${ctx.names.item(id)}`).join(" + "),
+    said: parts.map(([id, n]) => `${fmt(n)} ${spokenName(ctx.snapshot, id)}`).join(" + "),
+  };
+}
+
+/** U-5c: the MORE buttons, one per section the model offers, then the handbook link. On the
+ *  phone sheet a 2-column grid at the bottom, with no heading (U-5b). */
+function MoreBar({
+  ctx,
+  sections,
+  shown,
+  sheet,
+  onToggle,
+}: {
+  ctx: Ctx;
+  sections: readonly Section[];
+  shown: Section | null;
+  sheet: boolean;
+  onToggle(s: Section): void;
+}) {
+  const { itemId, storage } = ctx.model;
+  const s = ctx.snapshot;
+  const label = (sec: Section): { shown: string; said: string } => {
+    if (sec !== "storage") return { shown: sec, said: SECTION_NAME[sec] };
+    // U-5c: the next level's cost, so the key reads as opening the section, not as a buy.
+    if (storage.buy === null) return { shown: "storage · max", said: "Storage, max" };
+    const words = costWords(ctx, quote(s.content, s.state, storage.buy));
+    return { shown: `storage · next ${words.shown}`, said: `Storage, next ${words.said}` };
+  };
+  return (
+    <div className={styles.more} data-more>
+      {!sheet && <h3 className={styles.h3}>MORE</h3>}
+      {sections.map((sec) => {
+        const key = SECTION_KEY[sec];
+        const words = label(sec);
+        return (
+          <button
+            key={sec}
+            type="button"
+            className={styles.moreBtn}
+            data-section={sec}
+            data-key={key}
+            aria-pressed={shown === sec}
+            aria-label={words.said}
+            onClick={() => onToggle(sec)}
+          >
+            {hint(ctx, key)}
+            {words.shown}
+          </button>
+        );
+      })}
+      {/* §13.4's context-aware entry: this item's handbook page. A link, so it can open in a
+          new tab too; a plain click stays in the app. H is the global handbook key (K-10). */}
+      <a
+        className={styles.moreBtn}
+        href={routePath({ kind: "handbook", itemId })}
+        data-handbook-link
+        data-key="H"
+        aria-label="Handbook entry"
+        onClick={(e) => {
+          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          navigate({ kind: "handbook", itemId });
+        }}
+      >
+        {hint(ctx, "H")}
+        handbook
+      </a>
+    </div>
+  );
+}
+
 const SPLIT_TONES = ["toneA", "toneB", "toneC"] as const;
 
-/** §13.1: the producer's allocations, moved from the row (V-18); UI-2 re-skins it as SPLIT. */
-function SplitBar({ split }: { split: NonNullable<RowModel["split"]> }) {
+/** K-15 / U-3c: the producer's allocations as SPLIT, one button per part, each to the item's
+ *  priority entry (as onSplit did from the bar). The bar itself is decoration. */
+function SplitSection({
+  ctx,
+  split,
+  onSplit,
+}: {
+  ctx: Ctx;
+  split: NonNullable<RowModel["split"]>;
+  onSplit(itemId: ItemId): void;
+}) {
+  const { itemId, name } = ctx.model;
+  const shownLabel = (entryId: string, label: string) =>
+    entryId.startsWith("item:") ? ctx.names.item(entryId.slice("item:".length)) : label;
   return (
-    <div className={styles.splitWrap}>
+    <div className={styles.splitSection}>
+      <h3 className={styles.h3}>SPLIT</h3>
       <div className={styles.split} aria-hidden="true">
         {split.map((part, i) => (
           <div
@@ -306,20 +428,35 @@ function SplitBar({ split }: { split: NonNullable<RowModel["split"]> }) {
           />
         ))}
       </div>
-      <div className={styles.splitLabels}>
-        {split.map((part) => (
-          <span
-            key={part.entryId}
-            className="num"
-          >{`${Math.round(part.share * 100)}% ${part.label}`}</span>
-        ))}
-      </div>
+      <ul className={styles.splitList}>
+        {split.map((part, i) => {
+          const pct = `${Math.round(part.share * 100)}%`;
+          return (
+            <li key={part.entryId}>
+              <button
+                type="button"
+                className={styles.splitRow}
+                data-split
+                aria-label={`${pct} ${part.label}: show ${name} in the priority list`}
+                onClick={() => onSplit(itemId)}
+              >
+                <span
+                  className={`${styles.swatch} ${styles[SPLIT_TONES[i % SPLIT_TONES.length]!]}`}
+                  aria-hidden="true"
+                />
+                <span className="num">
+                  <Spoken
+                    shown={`${pct} ${shownLabel(part.entryId, part.label)}`}
+                    said={`${pct} ${part.label}`}
+                  />
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
-}
-
-function itemName(s: Snapshot, itemId: ItemId): string {
-  return s.content.items.get(itemId)?.name ?? itemId;
 }
 
 /** "43s", "1m 20s", "2h 5m". */
@@ -346,8 +483,41 @@ function stateAt(s: Snapshot, q: Quote, atMs: number): WorldState {
   return { ...s.state, stored, quantum };
 }
 
+/** One spend's standing at atMs. Off when busy, or when the model doesn't offer the action
+ *  (null), or for lack of an item: one shortfall for both the red cost and the button, so they
+ *  can never disagree. A rejected action quotes empty maps, which affordability() alone would
+ *  call affordable. */
+interface SpendState {
+  q: Quote | null;
+  short: ReadonlyMap<ItemId, Dec>;
+  a: Affordability | null;
+  busy: boolean;
+  off: boolean;
+}
+
+function spendState(ctx: Ctx, action: Action | null, verb: DrawerVerb, atMs: number): SpendState {
+  const s = ctx.snapshot;
+  const q = action === null ? null : quote(s.content, s.state, action);
+  const short = q === null ? new Map<ItemId, Dec>() : creditFor(stateAt(s, q, atMs), q);
+  const a = action === null ? null : affordability(s, action, atMs);
+  const busy = ctx.busy(verb);
+  return { q, short, a, busy, off: busy || action === null || short.size > 0 };
+}
+
+/** "affordable in 43s", or the words for never, while off for lack and not busy. */
+function Countdown({ st }: { st: SpendState }) {
+  if (st.a === null || st.a.affordable || st.busy) return null;
+  return (
+    <span data-countdown aria-live="off" className={`${styles.muted} num`}>
+      {st.a.inMs === null
+        ? "not affordable on current rates"
+        : `affordable in ${duration(st.a.inMs)}`}
+    </span>
+  );
+}
+
 /** Each cost item, red exactly when the model's shortfall (creditFor) has it. */
-function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<ItemId, Dec> }) {
+function CostList({ ctx, q, short }: { ctx: Ctx; q: Quote; short: ReadonlyMap<ItemId, Dec> }) {
   if (q.cost.size === 0) return null;
   return (
     <ul aria-label="Cost" className={styles.cost}>
@@ -358,9 +528,11 @@ function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<I
             key={itemId}
             data-cost={itemId}
             data-short={isShort ? "" : undefined}
-            className={isShort ? styles["state-bottleneck"] : undefined}
+            className={isShort ? "state-bottleneck" : undefined}
           >
-            <span>{itemName(s, itemId)}</span>
+            <span>
+              <Spoken shown={ctx.names.item(itemId)} said={spokenName(ctx.snapshot, itemId)} />
+            </span>
             <span className="num">{fmt(need)}</span>
           </li>
         );
@@ -371,8 +543,7 @@ function CostList({ s, q, short }: { s: Snapshot; q: Quote; short: ReadonlyMap<I
 
 /**
  * A spend's cost, its countdown and its button, at the 4 Hz tick. Enabled only when the
- * model offers the action (non-null) AND it is affordable: a rejected action quotes empty
- * maps, which affordability() alone would call affordable.
+ * model offers the action (non-null) AND it is affordable.
  */
 function Spend({
   ctx,
@@ -388,21 +559,14 @@ function Spend({
   ariaLabel?: string;
 }) {
   useTick();
-  const s = ctx.snapshot;
-  const atMs = serverNow(s, ctx.now());
-  const q = action === null ? null : quote(s.content, s.state, action);
-  // One shortfall for both the red cost and the button: they can never disagree.
-  const short = q === null ? new Map<ItemId, Dec>() : creditFor(stateAt(s, q, atMs), q);
-  const a = action === null ? null : affordability(s, action, atMs);
-  const busy = ctx.busy(verb);
-  const can = action !== null && short.size === 0;
+  const st = spendState(ctx, action, verb, serverNow(ctx.snapshot, ctx.now()));
   return (
     <div className={styles.spend}>
-      {q !== null && <CostList s={s} q={q} short={short} />}
+      {st.q !== null && <CostList ctx={ctx} q={st.q} short={st.short} />}
       <div className={styles.btnrow}>
         <Guarded
-          off={busy || !can}
-          aria-busy={busy}
+          off={st.off}
+          aria-busy={st.busy}
           aria-label={ariaLabel}
           onPress={() => {
             if (action !== null) spend(ctx, [action], verb);
@@ -410,85 +574,172 @@ function Spend({
         >
           {text}
         </Guarded>
-        {action !== null && a !== null && !a.affordable && !busy && (
-          <span data-countdown aria-live="off" className={`${styles.muted} num`}>
-            {a.inMs === null
-              ? "not affordable on current rates"
-              : `affordable in ${duration(a.inMs)}`}
-          </span>
-        )}
+        {action !== null && <Countdown st={st} />}
       </div>
     </div>
   );
 }
 
-// ---- Buy -------------------------------------------------------------------------------------
+// ---- MACHINES --------------------------------------------------------------------------------
 
-type CountChoice = "1" | "10" | "max";
+type Count = "1" | "10" | "max";
+const COUNTS: readonly Count[] = ["1", "10", "max"];
 
-function BuySection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
-  useTick(); // ×max moves with the stock
+/** V-17's form: the plain words, plus when it's off for lack and not busy ", affordable in N
+ *  seconds" (or ", not affordable yet"). */
+function buyName(base: string, st: SpendState): string {
+  if (!st.off || st.busy || st.a === null || st.a.affordable) return base;
+  if (st.a.inMs === null) return `${base}, not affordable yet`;
+  const n = Math.max(1, Math.ceil(st.a.inMs / 1000));
+  return `${base}, affordable in ${n} ${plural(n, "second")}`;
+}
+
+/**
+ * U-5c / K-13: a row per mark (the label, the owned count, the cost of one), each unlocked mark
+ * with buy 1, ×10 and max; the best mark's buy 1 carries B. Then the ladder, the IF YOU BUY
+ * line following the hovered or focused count, its projection, and SPLIT when contested.
+ */
+function MachinesBody({
+  ctx,
+  sec,
+  onSplit,
+}: {
+  ctx: Ctx;
+  sec: MachineSection | null;
+  onSplit(itemId: ItemId): void;
+}) {
+  useTick(); // max and the countdowns move with the stock
   const s = ctx.snapshot;
-  const unlocked = sec.marks.filter((m) => m.unlocked);
-  const [picked, setPicked] = useState<number>(sec.bestMark!);
-  const mark = unlocked.some((m) => m.mark === picked) ? picked : sec.bestMark!;
-  const [choice, setChoice] = useState<CountChoice>("1");
-  const row = sec.marks.find((m) => m.mark === mark)!;
-  const max = Math.max(
-    1,
-    maxAffordableCount(s, sec.lane, sec.machineClass, mark, serverNow(s, ctx.now())),
-  );
-  const n = choice === "1" ? 1 : choice === "10" ? 10 : max;
-  const action = buyAction(sec, mark, n);
-  const markId = useId();
+  const [follow, setFollow] = useState<{ mark: number; count: Count } | null>(null);
+  const split = useMemo(() => splitOf(s, ctx.model.itemId), [s, ctx.model.itemId]);
+  if (sec === null) {
+    return (
+      <>
+        <h3 className={styles.h3}>MACHINES</h3>
+        <p className={styles.muted}>No machine makes this.</p>
+      </>
+    );
+  }
+  const atMs = serverNow(s, ctx.now());
+  const best = sec.bestMark;
+  const unlocked = (mark: number) => sec.marks.some((r) => r.mark === mark && r.unlocked);
+  const followed =
+    follow !== null && unlocked(follow.mark)
+      ? follow
+      : best === null
+        ? null
+        : { mark: best, count: "1" as const };
+  const countOf = (mark: number, c: Count) =>
+    c === "1"
+      ? 1
+      : c === "10"
+        ? 10
+        : Math.max(1, maxAffordableCount(s, sec.lane, sec.machineClass, mark, atMs));
+  const followAction =
+    followed === null
+      ? null
+      : buyAction(sec, followed.mark, countOf(followed.mark, followed.count));
+  const followState = spendState(ctx, followAction, "buy", atMs);
+  const ladder = sec.ladder;
+
   return (
-    <div className={styles.body}>
-      <div className={styles.kv}>
-        <label htmlFor={markId}>Mark</label>
-        <select
-          id={markId}
-          className={styles.select}
-          value={mark}
-          onChange={(e) => setPicked(Number(e.target.value))}
-        >
-          {unlocked.map((m) => (
-            <option key={m.mark} value={m.mark}>
-              {m.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className={styles.kv}>
-        <span data-owned className="num">{`${row.owned} owned`}</span>
-        <span className="num">{`${sec.pool} in the pool, ${sec.unassigned} unassigned`}</span>
-      </div>
-      <div role="group" aria-label="Count" className={styles.seg}>
-        {(["1", "10", "max"] as const).map((c) => (
-          <button
-            key={c}
-            type="button"
-            aria-pressed={c === choice}
-            className={c === choice ? `${styles.segBtn} ${styles.on}` : styles.segBtn}
-            onClick={() => setChoice(c)}
-          >
-            {`×${c}`}
-          </button>
-        ))}
-      </div>
-      {sec.ladder !== null && (
-        <p data-ladder className={styles.ladder}>
-          <span className="num">{`Ladder ×${fmt(D(sec.ladder.multiplier))}`}</span>
-          <span className="num">{sec.ladder.text}</span>
+    <>
+      <h3 className={styles.h3}>MACHINES</h3>
+      <ul className={styles.marks}>
+        {sec.marks.map((r) => {
+          const name = (
+            <span className={styles.markName}>
+              <Spoken shown={ctx.names.machine(sec.machineClass, r.mark)} said={r.name} />
+            </span>
+          );
+          if (!r.unlocked) {
+            const tier = getMark(s.content, sec.machineClass, r.mark)?.unlockTier;
+            return (
+              <li key={r.mark} data-mark={r.mark} data-locked className={styles.mark}>
+                {name}
+                <span className={styles.owned} aria-hidden="true">
+                  —
+                </span>
+                <span className={styles.locked}>{`locked · tier ${tier ?? "?"}`}</span>
+              </li>
+            );
+          }
+          const one = spendState(ctx, buyAction(sec, r.mark, 1), "buy", atMs);
+          const each = one.q === null ? null : costWords(ctx, one.q);
+          return (
+            <li key={r.mark} data-mark={r.mark} className={styles.mark}>
+              {name}
+              <span data-owned className={`${styles.owned} num`}>{`x${r.owned}`}</span>
+              <span
+                data-each
+                className={
+                  one.short.size > 0 ? `${styles.each} num state-bottleneck` : `${styles.each} num`
+                }
+              >
+                {each !== null && (
+                  <Spoken shown={`${each.shown} each`} said={`${each.said} each`} />
+                )}
+              </span>
+              <span className={styles.markBtns}>
+                {COUNTS.map((c) => {
+                  const n = countOf(r.mark, c);
+                  const action = buyAction(sec, r.mark, n);
+                  const st = c === "1" ? one : spendState(ctx, action, "buy", atMs);
+                  const key = c === "1" && r.mark === best ? "B" : undefined;
+                  const base = c === "max" ? `Buy max (${n}) ${r.name}` : `Buy ${n} ${r.name}`;
+                  const point = () => setFollow({ mark: r.mark, count: c });
+                  return (
+                    <Guarded
+                      key={c}
+                      className={c === "1" ? `${styles.markBtn} ${styles.buy}` : styles.markBtn}
+                      data-mark-buy={r.mark}
+                      data-count={c}
+                      data-key={key}
+                      off={st.off}
+                      aria-busy={st.busy}
+                      aria-label={buyName(base, st)}
+                      onFocus={point}
+                      onMouseEnter={point}
+                      onPress={() => spend(ctx, [action], "buy")}
+                    >
+                      {hint(ctx, key)}
+                      {c === "1" ? "buy 1" : c === "10" ? "x10" : "max"}
+                    </Guarded>
+                  );
+                })}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {ladder !== null && (
+        // K-13: "ladder: 8 more MINER → x1.50" seen; a reader hears ladder.text.
+        <p data-ladder className={`${styles.ladder} num`}>
+          <Spoken
+            shown={`ladder: ${ladder.more} more ${ctx.names.machine(sec.machineClass, null)} → x${fmt(D(ladder.nextMultiplier / ladder.multiplier))}`}
+            said={ladder.text}
+          />
         </p>
       )}
-      <Spend
-        ctx={ctx}
-        action={action}
-        verb="buy"
-        text={`Buy ${n} ${classLabel(s, sec.machineClass, n)}`}
+      {followed !== null && (
+        <div data-follow className={styles.follow}>
+          <p
+            className={styles.followLine}
+          >{`IF YOU BUY ${countOf(followed.mark, followed.count)}`}</p>
+          {followState.q !== null && (
+            <CostList ctx={ctx} q={followState.q} short={followState.short} />
+          )}
+          <Countdown st={followState} />
+        </div>
+      )}
+      <Projection
+        snapshot={s}
+        actions={followAction === null ? null : [followAction]}
+        laneId={ctx.model.laneId}
+        caption=""
       />
-      <Projection snapshot={s} actions={[action]} laneId={ctx.model.laneId} />
-    </div>
+      {split !== null && <SplitSection ctx={ctx} split={split} onSplit={onSplit} />}
+    </>
   );
 }
 
@@ -501,7 +752,7 @@ function UpgradeSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
   const offered = (r: (typeof rows)[number]) => (r.upgradeBlocked === null ? r.upgrade : null);
   const focusAction = shown === undefined ? null : offered(shown);
   return (
-    <div className={styles.body}>
+    <div className={styles.stack}>
       <ul className={styles.list}>
         {rows.map((r, i) => {
           const c = r.consolidation!;
@@ -542,7 +793,7 @@ function UpgradeSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
 
 function refundText(s: Snapshot, q: Quote): string {
   if (q.refund.size === 0) return "no refund";
-  const parts = [...q.refund].map(([id, v]) => `${fmt(v)} ${itemName(s, id)}`);
+  const parts = [...q.refund].map(([id, v]) => `${fmt(v)} ${spokenName(s, id)}`);
   // C.5: a refund lands in Quantum Storage first, then BOUND.
   return `refunds ${parts.join(", ")}; to Quantum Storage first, then BOUND`;
 }
@@ -563,7 +814,7 @@ function DismantleSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
           count: focus !== null && focus.mark === at.mark && focus.all ? at.owned : 1,
         };
   return (
-    <div className={styles.body}>
+    <div className={styles.stack}>
       <ul className={styles.list}>
         {rows.map((r) => {
           const one = dismantleAction(sec, r.mark, 1);
@@ -640,7 +891,7 @@ function RecipeSection({ ctx }: { ctx: Ctx }) {
   const target = focus ?? recipes.find((c) => c.select !== null)?.recipeId ?? null;
   const name = useId();
   return (
-    <div className={styles.body}>
+    <div className={styles.stack}>
       <div role="radiogroup" aria-label="Recipe" className={styles.list}>
         {recipes.map((c) => {
           const reason = reasonOf(c);
@@ -717,7 +968,7 @@ function StorageSection({ ctx }: { ctx: Ctx }) {
   const [focus, setFocus] = useState<"storage" | "qs">("storage");
   const action = focus === "storage" ? storage.buy : qs.buy;
   return (
-    <div className={styles.body}>
+    <div className={styles.stack}>
       <Level
         ctx={ctx}
         title="Storage"
@@ -767,7 +1018,7 @@ function AssignSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
   });
 
   return (
-    <div className={styles.body}>
+    <div className={styles.stack}>
       <div className={`${styles.kv} num`}>
         <span>{`${sec.pool} ${classLabel(s, sec.machineClass, sec.pool)}`}</span>
         <span data-unassigned>{`${free} unassigned`}</span>

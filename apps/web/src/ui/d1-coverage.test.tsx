@@ -85,8 +85,9 @@ function open(item: string): HTMLElement {
   return d!;
 }
 
+/** U-5c: a MORE button opens its section in place of MACHINES. */
 function pick(d: HTMLElement, verb: string) {
-  fireEvent.click(within(d).getByRole("button", { name: verb, pressed: false }));
+  fireEvent.click(d.querySelector<HTMLElement>(`[data-section="${verb.toLowerCase()}"]`)!);
 }
 
 /** The priority view (F2), then an entry in it. */
@@ -104,10 +105,12 @@ describe("D.1 coverage (Q-6, Q-14)", { timeout: 60_000 }, () => {
     const store = mount(s);
     lane(/Power/);
     const d = open("biomass");
-    expect(d.querySelector("[data-class]")!.textContent).toBe("Biomass Collector");
-    fireEvent.click(within(d).getByRole("button", { name: /^Buy 1 Biomass Collector$/ }));
+    // MACHINES' buy 1 on the best mark (U-5c, K-13).
+    const buy = d.querySelector<HTMLElement>('[data-mark-buy][data-count="1"][data-key="B"]')!;
+    expect(buy.getAttribute("aria-label")).toBe("Buy 1 Collector Mk.2");
+    fireEvent.click(buy);
     const [a] = expectSent(store, s, "BUY_MACHINE");
-    expect(a).toMatchObject({ lane: "power", machineClass: "collector", count: 1 });
+    expect(a).toMatchObject({ lane: "power", machineClass: "collector", mark: 2, count: 1 });
   });
 
   it("DISMANTLE: the drawer's Dismantle", () => {

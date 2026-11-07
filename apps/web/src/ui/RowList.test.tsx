@@ -381,10 +381,16 @@ describe("RowList: what moved into the drawer (V-18)", { timeout: 60_000 }, () =
     fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
     expect(option("screw").textContent).toContain(" · split");
     fireEvent.click(option("screw"));
-    const split = drawer("screw")!.querySelector<HTMLButtonElement>("button[data-split]");
-    expect(split).not.toBeNull();
-    expect(split!.getAttribute("aria-label")).toBe("Screw split: show in the priority list");
-    expect(split!.textContent).toMatch(/\d+% Reinforced Iron Plate/);
+    // SPLIT (K-15): a button per part, each to screw's priority entry.
+    const parts = [...drawer("screw")!.querySelectorAll<HTMLButtonElement>("button[data-split]")];
+    expect(parts.length).toBeGreaterThanOrEqual(2);
+    expect(
+      parts.some((b) =>
+        /^\d+% Reinforced Iron Plate: show Screw in the priority list$/.test(
+          b.getAttribute("aria-label")!,
+        ),
+      ),
+    ).toBe(true);
   });
 });
 

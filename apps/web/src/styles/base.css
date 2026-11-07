@@ -78,6 +78,18 @@ button {
   }
 }
 
+/* U-8d / K-16: a coarse pointer gets 44 px targets from this one rule. Modules set their small
+   fine-pointer sizes with height, which min-height always beats; none declares a min-height or
+   min-width under 44 px outside a (pointer: fine) block (tokens.test 9a). */
+@media (pointer: coarse) {
+  button,
+  .btn,
+  [role="tab"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* A status light or mark: one cell of the mono grid (U-3e). Its colour is its state class. */
 .glyph {
   display: inline-block;

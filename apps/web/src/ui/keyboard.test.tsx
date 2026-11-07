@@ -11,6 +11,7 @@ import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { App } from "./App.js";
 import { laneItemIds, laneRows } from "./derive.js";
+import { drawerModel } from "./machines.js";
 import { hintProbe, resolveKey, type Command, type KeyInput, type Scope } from "./keys.js";
 import { currentRow, stepRow } from "./selection.js";
 import {
@@ -523,6 +524,44 @@ describe("the keyboard (U-7)", { timeout: 60_000 }, () => {
     const copper = document.getElementById("lane-tab-copper")!;
     expect(copper.getAttribute("aria-disabled")).toBe("true");
     expect(copper.querySelector(".key-hint")).toBeNull();
+
+    // The power lane, with a FUEL row's drawer; then the priority and handbook views.
+    fireEvent.click(document.querySelector<HTMLElement>('[data-lane="power"]')!);
+    checkHints("global");
+    fireEvent.click(option("biomass"));
+    checkHints("drawer");
+    escapeCloses("[data-drawer]");
+    key("F2");
+    expect(document.querySelector('[data-view="priority"]')!.getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    checkHints("global", "priority");
+    key("F3");
+    checkHints("global", "handbook");
+    cleanup();
+    history.replaceState(null, "", "/");
+
+    // The phone, on a fine pointer: no hint at all, and none in the drawer sheet (U-7e, K-17).
+    mount(fakeStore(fresh), 390);
+    checkHints("global", "factory", 0);
+    fireEvent.click(option("iron_ore"));
+    expect(drawer()!.getAttribute("data-presentation")).toBe("sheet");
+    checkHints("sheet", "factory", 0);
+  });
+
+  // Catches: a section letter whose hint names another key, or a hint on the wrong control
+  // (K-7: the hint is rendered from the control's own data-key).
+  it("10b. the drawer's letters: [B] [U] [R] [A] [S] [D] [H] all resolve, each to its control", () => {
+    mount(fakeStore(tier8));
+    fireEvent.click(option("iron_rod"));
+    const hints = [...drawer()!.querySelectorAll(".key-hint")].map((h) => h.textContent);
+    for (const k of ["[B]", "[U]", "[R]", "[A]", "[S]", "[D]", "[H]"]) expect(hints).toContain(k);
+    // Exactly one [B]: on the best mark's buy 1.
+    const b = [...drawer()!.querySelectorAll(".key-hint")].filter((h) => h.textContent === "[B]");
+    expect(b).toHaveLength(1);
+    const best = drawerModelBest("iron_rod");
+    expect(b[0]!.closest(`[data-mark-buy="${best}"][data-count="1"]`)).not.toBeNull();
+    checkHints("drawer");
   });
 
   it("11. the listbox's description says what the keys do (U-7d)", () => {
@@ -536,6 +575,14 @@ describe("the keyboard (U-7)", { timeout: 60_000 }, () => {
 
 /** Each control a hint sits on, and the command its key must give (K-7). */
 const OWNERS: readonly [string, (c: Command, el: Element) => boolean][] = [
+  // K-7 / K-10: a drawer letter clicks its own [data-key]; H is the handbook view.
+  [
+    "[data-key]",
+    (c, el) =>
+      el.getAttribute("data-key") === "H"
+        ? c.kind === "view" && c.view === "handbook"
+        : c.kind === "section" && c.key === el.getAttribute("data-key"),
+  ],
   ["[data-lane]", (c, el) => c.kind === "lane" && laneKey(el) === c.n],
   ["[data-view]", (c, el) => c.kind === "view" && c.view === el.getAttribute("data-view")],
   ["[data-run-one]", (c) => c.kind === "runOne"],
@@ -544,6 +591,11 @@ const OWNERS: readonly [string, (c: Command, el: Element) => boolean][] = [
   ["[data-tap]", (c) => c.kind === "tap" && c.down],
   ["[data-drawer]", (c) => c.kind === "move"],
 ];
+
+/** The best unlocked mark of an item's machines, on tier 8. */
+function drawerModelBest(itemId: string): number {
+  return drawerModel(tier8, itemId as ItemId).machines!.bestMark!;
+}
 
 function laneKey(el: Element): number {
   const tabs = [...document.querySelectorAll("[data-lane]")];
@@ -565,24 +617,32 @@ function probeOf(p: Partial<KeyInput>): KeyInput {
   };
 }
 
-/** Every rendered .key-hint resolves in the scope it's rendered in, to its control's command. */
-function checkHints(appScope: Scope) {
+/** Every rendered .key-hint resolves in the scope it's rendered in, to its control's command.
+ *  `count`: exactly that many hints (the phone has none), else at least one. */
+function checkHints(
+  appScope: Scope,
+  view: "factory" | "priority" | "handbook" = "factory",
+  count?: number,
+) {
   const hints = [...document.querySelectorAll(".key-hint")];
-  expect(hints.length).toBeGreaterThan(0);
+  if (count === undefined) expect(hints.length).toBeGreaterThan(0);
+  else expect(hints).toHaveLength(count);
   for (const h of hints) {
     const text = h.textContent ?? "";
     expect(h.getAttribute("aria-hidden"), text).toBe("true");
     const scope: Scope =
       h.closest("[data-next-buy]") !== null
         ? "card"
-        : h.closest("[data-drawer]") !== null
-          ? "drawer"
-          : appScope;
+        : h.closest('[data-drawer][data-presentation="sheet"]') !== null
+          ? "sheet"
+          : h.closest("[data-drawer]") !== null
+            ? "drawer"
+            : appScope;
     const ctx = {
       scope,
       focus: "rest" as const,
       onRows: false,
-      view: "factory" as const,
+      view,
       rows: true,
       advice: document.querySelector("[data-why]") !== null,
       follows: true,
@@ -610,6 +670,27 @@ function escapeCloses(sel: string) {
   fireEvent.keyDown(dialog, { key: "Escape" });
   expect(document.querySelector(sel), `${sel} closes on Esc`).toBeNull();
 }
+
+describe("hints under a section (K-9)", { timeout: 60_000 }, () => {
+  // Catches: [B] left on screen while its target is hidden, so the hint lies.
+  it("13. with a section open there's no [B] hint, and B does nothing", () => {
+    const store = fakeStore(tier8);
+    mount(store);
+    fireEvent.click(option("iron_rod"));
+    for (const section of ["upgrade", "recipe", "assign", "storage", "dismantle"]) {
+      const toggle = q(`[data-drawer] [data-section="${section}"]`)!;
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      const hints = [...drawer()!.querySelectorAll(".key-hint")].map((h) => h.textContent);
+      expect(hints, section).not.toContain("[B]");
+      expect(q('[data-drawer] [data-key="B"]'), section).toBeNull();
+      checkHints("drawer");
+    }
+    focus(listbox());
+    expect(key("b")).toBe(true);
+    expect(store.send).not.toHaveBeenCalled();
+  });
+});
 
 describe("selection.ts (U-7d)", { timeout: 60_000 }, () => {
   const ids = ["a", "b", "c"] as ItemId[];
