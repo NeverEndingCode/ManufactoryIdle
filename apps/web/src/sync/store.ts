@@ -40,6 +40,15 @@ import type {
 
 export type SyncStatus = "loading" | "ready" | "offline" | "error";
 
+/** U-9f, L-2: one adopted snapshot. `prev` is null on a world's first snapshot (a boot or a
+ * world change, L-4); `settled` is the batch whose response this was, null for a GET or a tap
+ * flush sent past the outbox. */
+export interface AdoptEvent {
+  prev: Snapshot | null;
+  next: Snapshot;
+  settled: Batch | null;
+}
+
 export interface Notice {
   kind:
     | "rejected"
@@ -298,6 +307,7 @@ export class GameStore {
   /** Everything in flight that idle() waits on, bar the outbox's own request. */
   readonly #work = new Set<Promise<unknown>>();
   readonly #listeners = new Set<() => void>();
+  readonly #adoptListeners = new Set<(e: AdoptEvent) => void>();
   readonly #tickers = new Set<() => void>();
   #view: StoreView;
 
@@ -319,7 +329,7 @@ export class GameStore {
       authHeader: () => this.#authHeader(),
       baseVersion: () => this.#snapshot?.stateVersion ?? 0,
       onOutcome: async (b, o, sent) => {
-        await this.#handle(o, "post", this.#clock.now(), sent ?? this.#sent(), b.id);
+        await this.#handle(o, "post", this.#clock.now(), sent ?? this.#sent(), b);
       },
       retryAnyway: (o, sent) => this.#strayGuest401(o, sent ?? this.#sent()),
       isStale: (sent) => sent !== undefined && sent.epoch !== this.#epoch,
@@ -357,6 +367,27 @@ export class GameStore {
       if (this.#tickers.size === 0) this.#clearTick();
     };
   };
+
+  /** U-9f, L-2: called once per adopted snapshot, after the swap and before the view emits.
+   * It observes only: a listener that throws is logged, and adoption carries on. */
+  onAdopt(fn: (e: AdoptEvent) => void): () => void {
+    this.#adoptListeners.add(fn);
+    return () => {
+      this.#adoptListeners.delete(fn);
+    };
+  }
+
+  /** A one-shot timer on the ClientClock; the returned function cancels it. */
+  later(fn: () => void, ms: number): () => void {
+    let id: number | null = this.#clock.setTimeout(() => {
+      id = null;
+      fn();
+    }, ms);
+    return () => {
+      if (id !== null) this.#clock.clearTimeout(id);
+      id = null;
+    };
+  }
 
   /** The client clock, for serverNow(snapshot, store.now()). */
   now(): number {
@@ -1291,7 +1322,7 @@ export class GameStore {
     cause: Cause,
     receivedAt: number,
     sent: Sent,
-    settling?: number,
+    settling?: Batch,
   ): Promise<Adoption | void> {
     if (this.#stopped) return;
     if (sent.epoch !== this.#epoch) return "ignored";
@@ -1408,7 +1439,7 @@ export class GameStore {
     cause: Cause,
     receivedAt: number,
     epoch: number,
-    settling?: number,
+    settling?: Batch,
   ): Promise<Adoption> {
     let next: Snapshot;
     try {
@@ -1441,7 +1472,7 @@ export class GameStore {
     }
     const prev = this.#snapshot;
     // From the swap on, the snapshot counts this batch's actions: the view stops listing it.
-    if (settling !== undefined) this.#settlingId = settling;
+    if (settling !== undefined) this.#settlingId = settling.id;
     this.#snapshot = next;
     // A world loaded on this token: a later 401 on it is a real expiry, not a dead park (E).
     if (this.#identity === "guest") this.#tokenFromPark = false;
@@ -1455,15 +1486,26 @@ export class GameStore {
     } else {
       this.#dropNotice("plateau", false);
     }
-    this.#arm();
+    // No emit from #arm: the listeners see the old view, and the one emit below shows the new
+    // snapshot together with whatever they recorded (L-2).
+    this.#arm(false);
+    const event: AdoptEvent = { prev, next, settled: settling ?? null };
+    for (const fn of this.#adoptListeners) {
+      try {
+        fn(event);
+      } catch (err) {
+        console.error("onAdopt", err);
+      }
+    }
     this.#emit();
     return "adopted";
   }
 
   // ---- timers ----
 
-  /** The one boundary timer, from nextFetchAt (W-9, P-4, P-6). */
-  #arm(): void {
+  /** The one boundary timer, from nextFetchAt (W-9, P-4, P-6). Emits when polling changes,
+   * unless the caller emits next anyway. */
+  #arm(emit = true): void {
     const was = this.#boundaryTimer !== null;
     this.#clearBoundary(false);
     if (
@@ -1482,7 +1524,7 @@ export class GameStore {
         }, at - this.#clock.now());
       }
     }
-    if (was !== (this.#boundaryTimer !== null)) this.#emit();
+    if (emit && was !== (this.#boundaryTimer !== null)) this.#emit();
   }
 
   /** Emits when polling changes (StoreView.polling). */

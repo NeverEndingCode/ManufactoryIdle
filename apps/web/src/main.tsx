@@ -11,6 +11,7 @@ import type { ClientClock } from "./sync/snapshot.js";
 import { GameStore } from "./sync/store.js";
 import { App } from "./ui/App.js";
 import { capabilities } from "./ui/capabilities.js";
+import { feelOf } from "./ui/feel.js";
 import { parseRoute, replaceRoute } from "./ui/route.js";
 import { applyTheme, storedTheme } from "./ui/theme.js";
 
@@ -49,6 +50,8 @@ const store = new GameStore({
       }
     : {}),
 });
+// L-3: the feel pair subscribes now, before start() can adopt the first snapshot.
+feelOf(store);
 
 /** W-9: a hidden tab has no boundary timer, no text tick, and every animation paused.
  * Q-11: hiding ends a hold and sends the pending taps at once, with keepalive. */
