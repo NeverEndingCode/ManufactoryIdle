@@ -168,6 +168,52 @@ test("every view fits 320 px", async ({ page }) => {
   });
 });
 
+// U-9a / L-10 / L-11: the phone's log. A buy puts a line in it; the ticker shows it, clear of the
+// floating TAP, and opens the modal log sheet, which fits 320 px and gives focus back on close.
+test("the log ticker and its sheet fit 320 px", async ({ page }) => {
+  const { root } = await startGuest(page);
+  const ticker = page.locator("[data-log-ticker]");
+
+  await test.step("a Miner bought from the drawer sheet puts a line in the log", async () => {
+    await expect(ticker).toHaveCount(0);
+    await page.locator('[role="option"][data-item="iron_ore"]').click();
+    const drawer = page.locator('[data-drawer="iron_ore"]');
+    await expect(drawer).toBeVisible();
+    const buy = drawer.locator('[data-mark-buy="1"][data-count="1"]');
+    await expect(buy).toHaveAttribute("aria-disabled", "false", { timeout: 60_000 });
+    await buy.click();
+    await expect(root).toHaveAttribute("data-state-version", "1");
+    await drawer.getByRole("button", { name: "Close" }).click();
+    await expect(drawer).toHaveCount(0);
+  });
+
+  await test.step("the ticker", async () => {
+    await expect(ticker).toBeVisible();
+    await expect(ticker).toHaveAccessibleName("Factory log, 1 entry");
+    await expect(ticker).toContainText(/bought 1 MINER/);
+    const t = await boxOf(ticker);
+    const tap = await boxOf(page.locator("[data-power][data-with-command]"));
+    const overlap =
+      tap.x < t.x + t.width &&
+      t.x < tap.x + tap.width &&
+      tap.y < t.y + t.height &&
+      t.y < tap.y + tap.height;
+    expect(overlap, `TAP ${JSON.stringify(tap)} vs ticker ${JSON.stringify(t)}`).toBe(false);
+    await expectNoOverflow(page, "the log ticker");
+  });
+
+  await test.step("the log sheet", async () => {
+    await ticker.click();
+    const sheet = page.locator('[data-log-sheet][aria-modal="true"]');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.locator("li")).toHaveCount(1);
+    await expectNoOverflow(page, "the log sheet");
+    await sheet.getByRole("button", { name: "Close" }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(ticker).toBeFocused();
+  });
+});
+
 test("About in Settings links the source at the built commit, and the source maps are served", async ({
   page,
   request,

@@ -78,6 +78,8 @@ const ON_SURFACE: Record<string, string> = {
   formError: "s2",
   // UI-2 Task 3: the help overlay's panel.
   help: "s2",
+  // UI-3 Task 4: the log sheet (L-11).
+  logSheet: "s2",
 };
 const ON_SURFACE_ATTRS = [/\[aria-selected="?true"?\]/, /\[aria-current/];
 

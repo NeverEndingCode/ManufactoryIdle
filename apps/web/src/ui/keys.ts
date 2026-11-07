@@ -186,6 +186,10 @@ export function focusKind(el: Element | null): FocusKind {
   // At rest (U-7b, K-18): the row list, the main box, the command bar's section itself.
   if (isRowList(el) || el.matches("[data-main-box], [data-command]")) return "rest";
 
+  // L-9: the factory log scrolls natively under ↑/↓ (K-18 amended for this region only), and
+  // Enter there runs nothing, since the focus isn't at rest.
+  if (el.closest("[data-factory-log]") !== null) return "arrows";
+
   // Controls that use arrows (U-7a): a radio, a listbox other than the row list.
   if (type === "radio" || role === "radio" || el.closest('[role="radiogroup"]') !== null) {
     return "arrows";
@@ -196,17 +200,19 @@ export function focusKind(el: Element | null): FocusKind {
   return "control";
 }
 
-/** help > settings > (phone && (why || drawer) → sheet) > why → card > drawer > global (K-5). */
+/** help > settings > (log, or phone && (why || drawer) → sheet) > why → card > drawer > global
+ * (K-5). L-11: the log sheet is always modal, on the phone and on a short tablet (L-10). */
 export function scopeOf(open: {
   help: boolean;
   settings: boolean;
   phone: boolean;
   why: boolean;
   drawer: boolean;
+  log: boolean;
 }): Scope {
   if (open.help) return "help";
   if (open.settings) return "settings";
-  if (open.phone && (open.why || open.drawer)) return "sheet";
+  if (open.log || (open.phone && (open.why || open.drawer))) return "sheet";
   if (open.why) return "card";
   if (open.drawer) return "drawer";
   return "global";

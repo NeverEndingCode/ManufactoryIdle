@@ -1,0 +1,198 @@
+/* U-9a, L-9..L-11: the factory log. The box is a fixed 96 px block in the .app column, between
+   the content row and the command line, so a new line never moves or shrinks a row (U-3a). It
+   scrolls inside itself. --t3 is on the header line only, on --bg; the sheet's lines are --t2
+   or the tone colours, never --t3 (U-1f). */
+
+.box {
+  flex: none;
+  height: 96px;
+  min-width: 0;
+  padding: 6px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.head {
+  margin: 0;
+  color: var(--t3);
+  white-space: pre;
+}
+
+.lines,
+.sheetLines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* `14:02:11  text`: the two spaces kept, a long line wrapped rather than scrolled sideways. */
+.lines > li,
+.sheetLines > li {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.normal {
+  color: var(--t2);
+}
+
+.advice {
+  color: var(--advice);
+}
+
+.milestone {
+  color: var(--advice-hi);
+}
+
+/* The newest line's 8×13 block cursor: steady under reduced motion. */
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 13px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: var(--t-body);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cursor {
+    animation: blink 1.06s steps(1) infinite;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* L-10: the ticker, 24 px on a fine pointer (44 on a coarse one, base.css's K-16 rule). */
+.ticker {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 1ch;
+  min-width: 0;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* U-8d: 44 px on the phone, whatever the pointer. The floating TAP (68 px wide, 14 px from the
+   right) stands over the ticker's right end on the factory tab, so the ticker stops short of it. */
+:global(.app[data-layout="phone"]) .ticker {
+  height: 44px;
+  margin-right: 90px;
+}
+
+.tickerText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tickerMark {
+  flex: none;
+  color: var(--t2);
+}
+
+/* L-11: the sheet's backdrop, as the drawer sheet's: over the TAP (20) and the bottom tabs, under
+   the phone notices (35), the NEXT_BUY sheet (40) and Settings (50). The background is inert. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  background: var(--scrim);
+}
+
+.logSheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 85dvh;
+  padding: 14px 16px calc(22px + env(safe-area-inset-bottom, 0px));
+  border-top: 2px solid var(--line);
+  background: var(--s2);
+  color: var(--t2);
+  font-family: var(--font-mono);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .logSheet {
+    animation: rise 180ms ease-out;
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.grip {
+  flex: none;
+  align-self: center;
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.sheetHead {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sheetTitle {
+  margin: 0;
+  color: var(--t1);
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.x {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--t1);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.sheetLines {
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}

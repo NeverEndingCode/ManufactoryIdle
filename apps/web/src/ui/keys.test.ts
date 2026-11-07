@@ -321,6 +321,13 @@ describe("focusKind", () => {
     for (const h of control) expect(focusKind(el(h)), h).toBe("control");
   });
 
+  // Catches: the factory log taking the rows' arrows (L-9, amending K-18 for this region).
+  it("L-9. the factory log and its lines are arrows", () => {
+    const log = `<section data-factory-log tabindex="0"><ol><li id="l">a</li></ol></section>`;
+    expect(focusKind(el(log, "[data-factory-log]"))).toBe("arrows");
+    expect(focusKind(el(log, "#l"))).toBe("arrows");
+  });
+
   it("isRowList is the row list only", () => {
     expect(isRowList(null)).toBe(false);
     expect(isRowList(el(`<ul id="t" role="listbox" data-rows></ul>`))).toBe(true);
@@ -330,7 +337,14 @@ describe("focusKind", () => {
 });
 
 describe("scopeOf", () => {
-  const none = { help: false, settings: false, phone: false, why: false, drawer: false };
+  const none = {
+    help: false,
+    settings: false,
+    phone: false,
+    why: false,
+    drawer: false,
+    log: false,
+  };
   it("8. the topmost scope wins (K-5)", () => {
     expect(scopeOf({ ...none, help: true, settings: true })).toBe("help");
     expect(scopeOf({ ...none, settings: true, why: true })).toBe("settings");
@@ -340,6 +354,15 @@ describe("scopeOf", () => {
     expect(scopeOf({ ...none, drawer: true })).toBe("drawer");
     expect(scopeOf(none)).toBe("global");
     expect(scopeOf({ ...none, phone: true })).toBe("global");
+  });
+
+  // Catches: the log sheet left out of the modal scopes, so keys act behind it (L-11).
+  it("L-11. the log sheet is a sheet, under help and Settings", () => {
+    expect(scopeOf({ ...none, phone: true, log: true })).toBe("sheet");
+    // A short tablet's sheet is modal too (L-10).
+    expect(scopeOf({ ...none, log: true })).toBe("sheet");
+    expect(scopeOf({ ...none, log: true, settings: true })).toBe("settings");
+    expect(scopeOf({ ...none, log: true, help: true })).toBe("help");
   });
 });
 

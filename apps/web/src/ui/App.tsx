@@ -24,6 +24,8 @@ import { Help } from "./Help.js";
 import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
 import { capabilities } from "./capabilities.js";
 import { CommandBar, CommandSplit } from "./CommandBar.js";
+import { FactoryLog, LogSheet, LogTicker } from "./FactoryLog.js";
+import { FeelContext, feelOf } from "./feel.js";
 import { FloatingTap } from "./FloatingTap.js";
 import { NextBuyCard, NextBuySheet } from "./NextBuy.js";
 import { useNotation } from "./notation.js";
@@ -38,7 +40,7 @@ import { Settings, type SettingsProps } from "./Settings.js";
 import { DesktopShell, PhoneShell, type ShellProps, type View } from "./Shell.js";
 import { syncCapabilities } from "./theme.js";
 import { useKeyboard, type KeyActions } from "./use-keyboard.js";
-import { useLayoutMode } from "./use-layout-mode.js";
+import { useLayoutMode, useTallViewport } from "./use-layout-mode.js";
 import { createTickSource, TickContext } from "./use-tick.js";
 
 type SheetAt = Pick<SettingsProps, "section">;
@@ -76,6 +78,11 @@ export function App({ store }: { store: GameStore }) {
   // Every number goes through fmt(): a notation change re-renders the tree (S-11).
   useNotation();
   const mode = useLayoutMode();
+  // L-3: the store's feel pair (main.tsx created it before the first adoption).
+  const feel = useMemo(() => feelOf(store), [store]);
+  /** L-10: the log's box on desktop and tablet 700 px tall or more; the ticker elsewhere. */
+  const tall = useTallViewport();
+  const logBox = mode !== "phone" && tall;
   const [sheet, setSheet] = useState<SheetAt | null>(null);
   const appRef = useRef<HTMLDivElement>(null);
   /** The control that opened the sheet; focus goes back to it, else to Settings. */
@@ -125,6 +132,13 @@ export function App({ store }: { store: GameStore }) {
     helpReturn.current = true;
     setHelpOpen(false);
   };
+  /** L-11: the log sheet (the ticker's), and whether focus goes back to the ticker. */
+  const [logOpen, setLogOpen] = useState(false);
+  const logReturn = useRef(false);
+  const closeLog = () => {
+    logReturn.current = true;
+    setLogOpen(false);
+  };
   // S-11 / V-12 / K-5: while a modal (Settings, the help, the phone's NEXT_BUY or drawer sheet)
   // is open everything outside it is inert, but the live region never is (W-20: the one region
   // keeps speaking, and the sheet's announcements land there); only its controls go inert.
@@ -163,6 +177,16 @@ export function App({ store }: { store: GameStore }) {
     (back !== null && back.isConnected
       ? back
       : appRef.current?.querySelector<HTMLElement>("[data-why]")
+    )?.focus();
+  });
+  // The log sheet closed by x, the backdrop or Esc: focus goes back to the ticker, once inert
+  // is gone; the row list if the ticker went with the lines (a new world).
+  useLayoutEffect(() => {
+    if (logOpen || !logReturn.current) return;
+    logReturn.current = false;
+    (
+      appRef.current?.querySelector<HTMLElement>("[data-log-ticker]") ??
+      appRef.current?.querySelector<HTMLElement>('ul[role="listbox"][data-rows]')
     )?.focus();
   });
   // The help closed: focus goes back to its opener (K-6), once inert is gone; with none (a key
@@ -350,6 +374,15 @@ export function App({ store }: { store: GameStore }) {
   };
 
   const game = route.kind !== "callback" && s !== null && laneId !== null;
+  /** L-11: the sheet only where the ticker is (the phone, a short viewport). */
+  const logSheetShown = game && logOpen && !logBox;
+  // A layout that gets the box (or a world being loaded) closes the sheet; focus that was in it
+  // goes to the shown view's target (refocusRows). In a layout effect, so no frame has both.
+  useLayoutEffect(() => {
+    if (!logOpen || logSheetShown) return;
+    refocusRows.current = true;
+    setLogOpen(false);
+  }, [logOpen, logSheetShown]);
 
   // U-7: the dispatcher. Every action is the click path (K-4): it clicks the real button, or
   // calls the handler the button calls. Each returns whether it found its target (K-9).
@@ -388,6 +421,7 @@ export function App({ store }: { store: GameStore }) {
           phone: mode === "phone",
           why: whyOpen,
           drawer: drawerTarget !== null,
+          log: logSheetShown,
         }),
         focus: focusKind(at),
         onRows: isRowList(at),
@@ -584,9 +618,11 @@ export function App({ store }: { store: GameStore }) {
             onWhy={openWhy}
             whyOpen={whyOpen}
             mode={mode}
-            instant={whyOpen || helpOpen || sheet !== null}
+            instant={whyOpen || helpOpen || sheet !== null || logSheetShown}
           />
         ),
+      // U-9a / L-10: the box, else the ticker (rendered only once there's a line).
+      log: !game ? null : logBox ? <FactoryLog /> : <LogTicker onOpen={() => setLogOpen(true)} />,
       footer:
         game && mode !== "phone" ? (
           <PowerFooter store={store} snapshot={s} taps={view.taps} pending={view.pending} />
@@ -605,28 +641,37 @@ export function App({ store }: { store: GameStore }) {
   };
 
   return (
-    <AnnounceContext.Provider value={announcer}>
-      <TickContext.Provider value={ticks}>
-        <div
-          ref={appRef}
-          className="app"
-          data-layout={mode}
-          data-route={route.kind}
-          data-sync={view.status}
-          data-state-version={s === null ? "" : String(s.stateVersion)}
-          data-polling={view.polling ? "armed" : "off"}
-        >
-          {mode === "phone" ? <PhoneShell {...props} /> : <DesktopShell {...props} />}
-          {/* K-3: the phone's modal sheet, its backdrop on the app root over the TAP and the
+    <FeelContext.Provider value={feel}>
+      <AnnounceContext.Provider value={announcer}>
+        <TickContext.Provider value={ticks}>
+          <div
+            ref={appRef}
+            className="app"
+            data-layout={mode}
+            data-route={route.kind}
+            data-sync={view.status}
+            data-state-version={s === null ? "" : String(s.stateVersion)}
+            data-polling={view.polling ? "armed" : "off"}
+          >
+            {mode === "phone" ? <PhoneShell {...props} /> : <DesktopShell {...props} />}
+            {/* K-3: the phone's modal sheet, its backdrop on the app root over the TAP and the
               bottom tabs (inert while it's open). */}
-          {mode === "phone" && drawer}
-          {command !== null && whyOpen && mode === "phone" && drawerTarget === null && (
-            <NextBuySheet {...command} onClose={() => closeWhy(true)} onOpenItem={openFromSheet} />
-          )}
-          {helpOpen && <Help onClose={closeHelp} />}
-          {sheet !== null && <Settings store={store} view={view} {...sheet} onClose={closeSheet} />}
-        </div>
-      </TickContext.Provider>
-    </AnnounceContext.Provider>
+            {mode === "phone" && drawer}
+            {command !== null && whyOpen && mode === "phone" && drawerTarget === null && (
+              <NextBuySheet
+                {...command}
+                onClose={() => closeWhy(true)}
+                onOpenItem={openFromSheet}
+              />
+            )}
+            {logSheetShown && <LogSheet onClose={closeLog} />}
+            {helpOpen && <Help onClose={closeHelp} />}
+            {sheet !== null && (
+              <Settings store={store} view={view} {...sheet} onClose={closeSheet} />
+            )}
+          </div>
+        </TickContext.Provider>
+      </AnnounceContext.Provider>
+    </FeelContext.Provider>
   );
 }

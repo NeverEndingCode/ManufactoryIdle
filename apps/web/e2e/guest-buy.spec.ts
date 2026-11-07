@@ -8,6 +8,9 @@ import { expect, test } from "@playwright/test";
 const TOKEN_KEY = "mi.guestToken";
 const GUEST_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
+// U-9a's cost line is measured at 1280×820: the log box leaves room for eight rows.
+test.use({ viewport: { width: 1280, height: 820 } });
+
 test("a guest starts, buys the bottleneck machine, and keeps the world across a reload", async ({
   page,
 }) => {
@@ -40,6 +43,13 @@ test("a guest starts, buys the bottleneck machine, and keeps the world across a 
       "buy 1 constructor_mk1 --lane iron --for iron_plate",
     );
     await expect(page.locator("[data-frame]")).toHaveCount(0);
+    // U-9a: the 96 px log box costs the main box 106 px; eight 44 px rows still fit (the
+    // header row and the box's padding and border are the 30).
+    const log = page.locator("section[data-factory-log]");
+    await expect(log).toBeVisible();
+    expect((await log.boundingBox())?.height).toBe(96);
+    const mainBox = await page.locator("[data-main-box]").evaluate((el) => el.clientHeight);
+    expect(mainBox - 30).toBeGreaterThanOrEqual(8 * 44);
     const overflow = await page.evaluate(() => {
       const d = document.documentElement;
       return { scroll: d.scrollWidth, client: d.clientWidth };
@@ -50,9 +60,15 @@ test("a guest starts, buys the bottleneck machine, and keeps the world across a 
   await test.step("the run buys the bottleneck machine", async () => {
     const run = page.locator("[data-command] [data-run]");
     await expect(run).toHaveAttribute("aria-disabled", "false", { timeout: 120_000 });
+    const top = (await plate.boundingBox())?.y;
     await run.click();
     await expect(root).toHaveAttribute("data-state-version", "1");
     await expect(page.locator('[data-notice="rejected"]')).toHaveCount(0);
+    // U-9a: the purchase is logged, in the box, and the rows didn't move (U-3a).
+    await expect(
+      page.locator("[data-factory-log] li", { hasText: "bought 1 CONSTRUCTOR_MK1 (IRON)" }),
+    ).toHaveCount(1);
+    expect((await plate.boundingBox())?.y).toBe(top);
   });
 
   await test.step("a reload keeps the world", async () => {

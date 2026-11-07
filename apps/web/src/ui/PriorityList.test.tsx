@@ -320,8 +320,10 @@ describe("PriorityList", { timeout: 60_000 }, () => {
     const store = fakeStore(fresh);
     render(<App store={store as unknown as GameStore} />);
     fireEvent.click(screen.getByRole("tab", { name: "priority" }));
-    // W-20: exactly one live region in the whole App.
-    expect(document.querySelectorAll("[aria-live], [role='status']")).toHaveLength(1);
+    // W-20: exactly one live region in the whole App (the factory log is aria-live="off", L-9).
+    expect(
+      document.querySelectorAll("[aria-live]:not([aria-live='off']), [role='status']"),
+    ).toHaveLength(1);
     const region = screen.getByRole("status");
     expect(region.getAttribute("aria-live")).toBe("polite");
     const said = () => region.querySelector("[data-announce]")?.textContent ?? "";
@@ -337,7 +339,9 @@ describe("PriorityList", { timeout: 60_000 }, () => {
     expect(said()).toBe(`${nameOf("iron_rod")} move undone`);
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Move" }));
     expect(said()).toBe("Power moved to position 2 of 6");
-    expect(document.querySelectorAll("[aria-live], [role='status']")).toHaveLength(1);
+    expect(
+      document.querySelectorAll("[aria-live]:not([aria-live='off']), [role='status']"),
+    ).toHaveLength(1);
   });
 
   it("7. Simple / Advanced: the indicator, mode, target, reserve; power has none", () => {

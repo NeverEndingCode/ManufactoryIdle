@@ -46,6 +46,9 @@ export interface ShellProps {
     main: ReactNode;
     overlays: ReactNode;
     command: ReactNode;
+    /** U-9a / L-10: the factory log's box, or its ticker; between the content row and the
+     * command line (on the phone, the factory tab's only). */
+    log: ReactNode;
     footer: ReactNode;
     floating: ReactNode;
   };
@@ -338,6 +341,7 @@ export function DesktopShell(p: ShellProps) {
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone={false} />}
       <ContentRow p={p} />
+      {p.slots.log}
       {p.slots.command}
       {p.slots.footer}
     </>
@@ -387,6 +391,7 @@ export function PhoneShell(p: ShellProps) {
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone />}
       <ContentRow p={p} lead={lead} />
+      {p.shown === "factory" && p.slots.log}
       {p.shown === "factory" && p.slots.command}
       {p.slots.floating}
       {s !== null && <PanelTabs p={p} views={PHONE_VIEWS.map((id) => ({ id }))} phone />}
