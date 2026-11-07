@@ -315,7 +315,7 @@ there too would run them twice.
 
 **Check:**
 
-    crontab -l | grep manufactory
+    grep manufactory /etc/cron.d/root     # update_cron merges dynamix/*.cron here, not into crontab -l
     bash /boot/config/plugins/user.scripts/scripts/manufactory-backup/script    # a backup now
     bash /boot/config/plugins/user.scripts/scripts/manufactory-healthcheck/script -v
     ls -l /mnt/user/appdata/manufactory/backups/
