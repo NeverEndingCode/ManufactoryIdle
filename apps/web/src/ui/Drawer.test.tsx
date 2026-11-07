@@ -114,6 +114,17 @@ const BUY_PLATE: Action = {
   recipeId: "make_iron_plate",
 };
 
+/** jsdom focuses an inert element; a browser doesn't. This makes focus() refuse, as there. */
+const honourInert = () => {
+  const focus = HTMLElement.prototype.focus;
+  vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+    this: HTMLElement,
+    opts?: FocusOptions,
+  ) {
+    if (this.closest("[inert]") === null) focus.call(this, opts);
+  });
+};
+
 const batch = (label: string, id = 1): Batch => ({ id, key: `k${id}`, actions: [], label });
 
 describe("Drawer", { timeout: 60_000 }, () => {
@@ -539,7 +550,9 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expectBackOn("iron_ore");
   });
 
-  it("13. a layout change re-lays out and never steals focus", () => {
+  // Catches: a panel remount stealing focus, or a modal sheet remount leaving focus behind the
+  // inert background (Esc would then do nothing).
+  it("13. a layout change re-lays out; a panel never steals focus, the modal sheet takes it", () => {
     const media = stubWidth(800);
     const r = mount(fakeStore(fresh));
     const app = () => r.container.querySelector<HTMLElement>(".app")!;
@@ -552,12 +565,15 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(app().dataset.layout).toBe("desktop");
     expect(drawer("iron_ore")).toBe(d);
     expect(document.activeElement).toBe(lane);
-    // The phone is its own tree: the drawer is a dialog sheet now, and it takes no focus.
+    // The phone is its own tree: the drawer is the modal sheet now, and a modal always takes
+    // focus (K-3), or it would be stranded on the inert background (<body> in a browser).
+    honourInert();
     media.resize(400);
     expect(app().dataset.layout).toBe("phone");
     const sheet = drawer("iron_ore")!;
     expect(sheet.dataset.presentation).toBe("sheet");
-    expect(sheet.contains(document.activeElement)).toBe(false);
+    expect(document.activeElement).toBe(document.getElementById("drawer-title"));
+    expect(sheet.contains(document.activeElement)).toBe(true);
     media.resize(1200);
     expect(app().dataset.layout).toBe("desktop");
     expect(drawer("iron_ore")!.dataset.presentation).toBe("panel");
@@ -753,16 +769,6 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
   const grip = () => document.querySelector<HTMLElement>("[data-drawer] [data-grip]")!;
   const heading = (d: HTMLElement) => within(d).getByRole("heading", { level: 2 });
   const inert = (el: Element | null) => el !== null && el.closest("[inert]") !== null;
-  /** jsdom focuses an inert element; a browser doesn't. This makes focus() refuse, as there. */
-  const honourInert = () => {
-    const focus = HTMLElement.prototype.focus;
-    vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
-      this: HTMLElement,
-      opts?: FocusOptions,
-    ) {
-      if (this.closest("[inert]") === null) focus.call(this, opts);
-    });
-  };
   const pointer = (
     type: "pointerDown" | "pointerMove" | "pointerUp" | "pointerCancel",
     el: HTMLElement,
@@ -799,17 +805,25 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
   // Catches: no Tab wrap; a close path that leaves the background inert, or focus on <body>
   // (focus sent to the row list while it's still inert, before the sheet unmounts); a mousedown on the sheet itself read as
   // one on the backdrop.
-  it("3b. Tab wraps in the sheet; Esc, the x, the backdrop and the grip each close it, back to the row", () => {
+  it("3b. Tab wraps in the sheet, the x first; Esc, the x and the backdrop each close it, back to the row", () => {
     stubWidth(390);
     honourInert();
     mount(fakeStore(fresh));
     const sheet = open("iron_plate");
     const tabbable = [
-      ...sheet.querySelectorAll<HTMLElement>("button, a[href], [tabindex]:not([tabindex='-1'])"),
-    ];
+      ...sheet.querySelectorAll<HTMLElement>(
+        "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])",
+      ),
+    ].filter((el) => el.tabIndex >= 0);
     const first = tabbable[0]!;
     const last = tabbable.at(-1)!;
-    expect(first).toBe(grip());
+    // K-20: the grip is pointer-only, hidden from assistive tech and never a Tab stop; the x is.
+    expect(grip().tagName).toBe("DIV");
+    expect(grip().getAttribute("aria-hidden")).toBe("true");
+    expect(grip().tabIndex).toBe(-1);
+    expect(grip().hasAttribute("aria-label")).toBe(false);
+    expect(tabbable).not.toContain(grip());
+    expect(first).toBe(within(sheet).getByRole("button", { name: "Close" }));
     act(() => last.focus());
     fireEvent.keyDown(last, { key: "Tab" });
     expect(document.activeElement).toBe(first);
@@ -826,7 +840,6 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
         () => fireEvent.click(within(drawer("iron_plate")!).getByRole("button", { name: "Close" })),
       ],
       ["the backdrop", () => fireEvent.mouseDown(host()!)],
-      ["the grip, pressed", () => fireEvent.click(grip())],
     ];
     for (const [name, close] of paths) {
       if (drawer("iron_plate") === null) open("iron_plate");
@@ -843,6 +856,7 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
   // to <body> because the opener (the open button) is gone.
   it("3c. opened from the NEXT_BUY sheet's open IRON_PLATE, it closes to the row list", () => {
     stubWidth(390);
+    honourInert();
     mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
     fireEvent.click(document.querySelector<HTMLElement>("[data-why]")!);
     const go = document.querySelector<HTMLElement>("[data-next-buy] [data-open-item]")!;
@@ -877,7 +891,9 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     expect(drawer("power:biomass_burner")).toBeNull();
     expect(document.activeElement).toBe(gen());
     fireEvent.click(gen()!);
-    fireEvent.click(grip());
+    pointer("pointerDown", grip(), 100);
+    pointer("pointerUp", grip(), 220);
+    expect(drawer("power:biomass_burner")).toBeNull();
     expect(document.activeElement).toBe(gen());
   });
 
@@ -937,6 +953,13 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     pointer("pointerMove", heading(sheet), 300, 3);
     expect(sheet.style.transform).toBe("");
     pointer("pointerUp", heading(sheet), 300, 3);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    // The grip drags wherever the content is scrolled.
+    pointer("pointerDown", grip(), 100, 5);
+    pointer("pointerMove", grip(), 150, 5);
+    expect(sheet.style.transform).toBe("translateY(50px)");
+    pointer("pointerUp", grip(), 150, 5);
     expect(drawer("iron_plate")).toBe(sheet);
 
     top = 0;
@@ -1028,6 +1051,31 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     expect(decl, `${file} ${selector}`).toBeDefined();
     return Number(decl!.value);
   };
+
+  // Catches: SPLIT on the phone keeping the drawer open behind the priority view, so the factory
+  // tab remounts the modal sheet with focus left on the (now inert) tab: <body> in a browser,
+  // and Esc does nothing.
+  it("3i. SPLIT → priority → factory: the remounted sheet takes focus, and Esc closes it", () => {
+    stubWidth(390);
+    honourInert();
+    mount(fakeStore(snapshotOf(slice, fixtureState("slice-tier-8-reinforced-full.world.json"))));
+    fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
+    open("screw");
+    const split = document.querySelector<HTMLElement>("[data-drawer] button[data-split]")!;
+    expect(split).not.toBeNull();
+    fireEvent.click(split);
+    expect(document.getElementById("view-priority")).not.toBeNull();
+    expect(drawer("screw")).toBeNull();
+    const factory = screen.getByRole("tab", { name: "factory" });
+    act(() => factory.focus());
+    fireEvent.click(factory);
+    const sheet = drawer("screw")!;
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(document.activeElement).toBe(heading(sheet));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("screw")).toBeNull();
+    expectBackOn("screw");
+  });
 
   // Catches: the scrim (and the sheet in it) under the floating TAP, or over the NEXT_BUY sheet
   // or Settings.

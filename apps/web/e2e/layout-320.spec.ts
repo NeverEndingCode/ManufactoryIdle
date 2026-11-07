@@ -71,7 +71,7 @@ test("every view fits 320 px", async ({ page }) => {
     // Reopened, the x closes it.
     await page.locator('[role="option"][data-item="iron_plate"]').click();
     await expect(drawer).toBeVisible();
-    await drawer.getByRole("button", { name: "Close", exact: true }).click();
+    await drawer.getByRole("button", { name: "Close" }).click();
     await expect(drawer).toHaveCount(0);
   });
 

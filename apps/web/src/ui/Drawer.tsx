@@ -222,8 +222,15 @@ export function Drawer({
 
   const claim = useRef(claimFocus);
   claim.current = claimFocus;
+  const modal = useRef(presentation === "sheet");
+  modal.current = presentation === "sheet";
   useEffect(() => {
-    if (claim.current === undefined || claim.current()) title.current?.focus();
+    // claimFocus is always asked, so its one-shot flags are spent either way.
+    const mine = claim.current === undefined || claim.current();
+    // K-3: the modal sheet always takes focus on mount. Everything behind it is inert, so focus
+    // left there (a resize below 600 px, the factory tab after SPLIT) is stranded: <body> in a
+    // browser, and Esc would do nothing. A panel's remount still never steals it.
+    if (mine || modal.current) title.current?.focus();
   }, [targetKey]);
   // A layout cleanup runs while the DOM is still attached, so focus is still where it was.
   const left = useRef(onLeaveFocused);
@@ -276,13 +283,16 @@ export function Drawer({
   // The body never starts a drag (that's a scroll), nor do the head's own buttons (the x).
   const { grip, offset } = useSheetDrag(onClose);
   const [atTop, setAtTop] = useState(true);
-  const fromHead = (e: PointerEvent<HTMLElement>) =>
-    !(e.target instanceof Element && e.target.closest("button") !== null) &&
-    (box.current?.scrollTop ?? 0) <= 0;
+  // The grip always starts one; the rest of the head only at the top, and never its buttons.
+  const startsDrag = (e: PointerEvent<HTMLElement>) => {
+    const at = e.target instanceof Element ? e.target : null;
+    if (at?.closest("[data-grip]") != null) return true;
+    return at?.closest("button") == null && (box.current?.scrollTop ?? 0) <= 0;
+  };
   const head = sheet
     ? {
         onPointerDown: (e: PointerEvent<HTMLElement>) => {
-          if (fromHead(e)) grip.onPointerDown(e);
+          if (startsDrag(e)) grip.onPointerDown(e);
         },
         onPointerMove: grip.onPointerMove,
         onPointerUp: grip.onPointerUp,
@@ -313,20 +323,10 @@ export function Drawer({
     >
       <div className={styles.head} {...head}>
         {sheet && (
-          // K-20: the grip's 44 px hit area, the sheet's width; a button too, so a key or a
-          // screen reader can press it (the x stays the plain Close).
-          <button
-            type="button"
-            className={styles.grip}
-            data-grip
-            aria-label="Drag down to close"
-            onPointerDown={grip.onPointerDown}
-            onPointerMove={grip.onPointerMove}
-            onPointerUp={grip.onPointerUp}
-            onPointerCancel={grip.onPointerCancel}
-            onLostPointerCapture={grip.onLostPointerCapture}
-            onClick={grip.onClick}
-          />
+          // K-20: the grip's 44 px hit area, the sheet's width. Pointer-only and hidden from
+          // assistive tech; the x, Esc and the scrim are the accessible closes. The head's
+          // handlers drag it (the capture goes on the head).
+          <div className={styles.grip} data-grip aria-hidden="true" />
         )}
         {/* U-1h: the theme's label shown; a reader gets the content name. */}
         <h2

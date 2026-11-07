@@ -97,30 +97,4 @@ describe("useSheetDrag (U-5b, K-20)", () => {
     act(() => g().onPointerUp(ev(1, 220).e));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
-
-  // Catches: a short drag's trailing click closing the sheet anyway, or a grip that a keyboard
-  // or screen reader can't press (its click is the accessible close).
-  it("6. a click closes, except a pointer's click that ends a drag", () => {
-    const { onClose, g } = hook();
-    act(() => g().onClick({ detail: 1 }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-    // A tap: under the slop, so its click closes.
-    act(() => g().onPointerDown(ev(1, 100).e));
-    act(() => g().onPointerMove(ev(1, 103).e));
-    act(() => g().onPointerUp(ev(1, 103).e));
-    act(() => g().onClick({ detail: 1 }));
-    expect(onClose).toHaveBeenCalledTimes(2);
-    // A short drag: its trailing click is swallowed.
-    act(() => g().onPointerDown(ev(2, 100).e));
-    act(() => g().onPointerMove(ev(2, 160).e));
-    act(() => g().onPointerUp(ev(2, 160).e));
-    act(() => g().onClick({ detail: 1 }));
-    expect(onClose).toHaveBeenCalledTimes(2);
-    // A key press's click (detail 0) is never swallowed, even straight after a drag.
-    act(() => g().onPointerDown(ev(3, 100).e));
-    act(() => g().onPointerMove(ev(3, 160).e));
-    act(() => g().onPointerUp(ev(3, 160).e));
-    act(() => g().onClick({ detail: 0 }));
-    expect(onClose).toHaveBeenCalledTimes(3);
-  });
 });
