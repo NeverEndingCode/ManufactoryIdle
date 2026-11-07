@@ -124,7 +124,8 @@ export function resolveKey(e: KeyInput, ctx: KeyContext): Resolved | null {
       return taken({
         kind: "view",
         view: VIEWS[key.toLowerCase() as keyof typeof VIEWS],
-        closeDrawer: drawer,
+        // In the card too: F-keys close an open drawer (U-7a), and F/P/H agree with them (K-10).
+        closeDrawer: drawer || card,
         closeCard: card,
       });
     case "ArrowUp":
@@ -425,12 +426,23 @@ export const KEYMAP: readonly KeyRow[] = [
   },
 ];
 
-/** Each hint token's probe: bracketed caps, F-keys, and the lane tabs' bare digits. */
+/** Each hint token's probe: bracketed caps (every KEYMAP cap too), F-keys, and the lane tabs'
+ *  bare digits. */
 const HINT_KEYS: Record<string, readonly string[]> = {
   "[ENTER]": ["Enter"],
   "[TAB]": ["Tab"],
   "[T]": ["t"],
   "[1]": ["1"],
+  "[2]": ["2"],
+  "[3]": ["3"],
+  "[4]": ["4"],
+  "[5]": ["5"],
+  "[F]": ["f"],
+  "[P]": ["p"],
+  "[→]": ["ArrowRight"],
+  "[SPACE]": [" "],
+  "[HOME]": ["Home"],
+  "[END]": ["End"],
   "[↑↓]": ["ArrowUp", "ArrowDown"],
   "[ESC]": ["Escape"],
   "[?]": ["?"],

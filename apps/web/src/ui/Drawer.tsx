@@ -217,7 +217,7 @@ export function Drawer({
           Close
         </button>
         <Meta snapshot={snapshot} itemId={itemId} now={ctx.now} />
-        {/* U-5a's hint, fine pointer only (U-7e); hidden until UI-2 (V-9). No ↑/↓ on the phone. */}
+        {/* U-5a's hint, fine pointer only (U-7e). No ↑/↓ on the phone. */}
         {!sheet && (
           <span className={`key-hint ${styles.hint}`} aria-hidden="true">
             {"[↑↓] row  [ESC] close"}

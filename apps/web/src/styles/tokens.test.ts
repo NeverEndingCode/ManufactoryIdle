@@ -432,6 +432,26 @@ describe("the CSS source", () => {
     expect(heights.map((d) => d.value)).toEqual(heights.map(() => "var(--row-h)"));
   });
 
+  // Catches: a hint shown unconditionally (a touch screen would see keys it has no way to press),
+  // or shown under some other query.
+  it("11a. key hints show only on a fine pointer (U-7e, K-7)", () => {
+    const FINE = "@media (hover: hover) and (pointer: fine)";
+    const hints = all.filter(
+      (d) =>
+        d.property === "display" &&
+        /\.key-hint\b/.test(d.stack.filter((s) => !s.startsWith("@")).at(-1) ?? ""),
+    );
+    const shown = hints.map((d) => `${d.stack.join(" > ")} { display: ${d.value} }`);
+    expect(shown).toEqual([
+      ".key-hint { display: none }",
+      `${FINE} > .key-hint { display: inline }`,
+    ]);
+    for (const d of hints) {
+      if (d.value === "none") expect(d.stack, shown.join("; ")).toEqual([".key-hint"]);
+      else expect(d.stack, shown.join("; ")).toEqual([FINE, ".key-hint"]);
+    }
+  });
+
   it("9a. a segmented button is a 44 px target both ways (W-20)", () => {
     // The 320 px e2e found the drawer's "×1" at 38.8 px wide: short labels need a min-width.
     const segs = all.filter((d) => d.stack.at(-1) === ".segBtn");

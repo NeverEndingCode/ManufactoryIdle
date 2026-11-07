@@ -113,7 +113,7 @@
   white-space: nowrap;
 }
 
-/* U-5a's hint, 12 px --t3 on --s1; .key-hint hides it until UI-2 (V-9). */
+/* U-5a's hint, 12 px --t3 on --s1; .key-hint shows it on a fine pointer only (U-7e). */
 .hint {
   flex-basis: 100%;
   color: var(--t3);

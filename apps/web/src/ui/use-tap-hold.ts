@@ -19,6 +19,32 @@ export interface TapHold {
   onContextMenu(e: { preventDefault(): void }): void;
 }
 
+/** K-4: useTapHold's key semantics, for the global held T (U-7a). */
+export interface TapKey {
+  /** Press once; ignored while already held (a repeat, or a second keydown). */
+  down(): void;
+  /** Release the key's hold; ignored when the key isn't holding (a pointer hold is its own). */
+  up(): void;
+  held(): boolean;
+}
+
+export function tapKeyHold(store: Pick<GameStore, "pressTap" | "releaseTap">): TapKey {
+  let held = false;
+  return {
+    down() {
+      if (held) return;
+      held = true;
+      store.pressTap();
+    },
+    up() {
+      if (!held) return;
+      held = false;
+      store.releaseTap();
+    },
+    held: () => held,
+  };
+}
+
 export function useTapHold(store: Pick<GameStore, "pressTap" | "releaseTap">): TapHold {
   const keyHeld = useRef(false);
   const release = () => store.releaseTap();

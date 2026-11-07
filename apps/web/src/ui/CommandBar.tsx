@@ -31,7 +31,7 @@ export interface CommandProps {
   pending: readonly Batch[];
 }
 
-/** The key hint a run button carries: hidden until the keyboard lands (V-9). */
+/** The key hint a run button carries, seen on a fine pointer (U-7e). */
 function hint(kind: RunKind, count: 1 | undefined): string | null {
   if (kind === "bar") return "[ENTER]";
   if (kind === "card") return count === 1 ? "[1]" : "[ENTER]";
@@ -76,6 +76,7 @@ export function RunButton({
       aria-busy={busy}
       aria-label={runName(shown, snapshot, busy ? { affordable: true } : a)}
       data-run
+      data-run-one={count === 1 ? "" : undefined}
       onPress={() => {
         store.send([sent], BOTTLENECK_BUY_LABEL).catch((err: unknown) => console.error(err));
       }}
@@ -234,9 +235,12 @@ export function CommandBar(
           aria-expanded={p.whyOpen}
           onClick={(e) => p.onWhy(e.currentTarget)}
         >
-          <span className="key-hint" aria-hidden="true">
-            [TAB]
-          </span>
+          {/* Tab opens why only while it's closed (K-22); inside the card it's native. */}
+          {!p.whyOpen && (
+            <span className="key-hint" aria-hidden="true">
+              [TAB]
+            </span>
+          )}
           {voice === "shell" ? "why" : "Why"}
         </button>
       )}

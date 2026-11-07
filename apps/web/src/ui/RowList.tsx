@@ -1,8 +1,8 @@
 // U-3 / U-7d / V-10: one lane's rows as a listbox (W-19: only the visible lane renders). The
 // list is the one tab stop; aria-activedescendant names the selected row, and the selection is
-// the App's, per lane. Its own keys until UI-2's dispatcher: ↑ ↓ Home End move, → and Space open
-// the drawer. Enter is left alone (UI-2 runs the next buy with it), and so is every modified key.
-import { useCallback, useId, useMemo, type KeyboardEvent } from "react";
+// the App's, per lane. The keys are the dispatcher's (U-7a, K-8): ↑ ↓ Home End move, → and Space
+// open the drawer, Enter runs the next buy; currentRow is the one rule both read (selection.ts).
+import { useCallback, useId, useMemo } from "react";
 import type { ItemId, LaneId } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
@@ -11,6 +11,7 @@ import { useNames } from "./names.js";
 import { useNotation } from "./notation.js";
 import { Row, rowId } from "./Row.js";
 import css from "./Row.module.css";
+import { currentRow } from "./selection.js";
 import type { LayoutMode } from "./use-layout-mode.js";
 
 export interface RowListProps {
@@ -31,13 +32,12 @@ export function defaultSelection(
   rows: readonly RowModel[],
   bottleneck: BottleneckModel | null,
 ): ItemId | null {
-  const framed = bottleneck?.itemId ?? null;
-  if (framed !== null && rows.some((r) => r.itemId === framed)) return framed;
-  return rows[0]?.itemId ?? null;
+  return currentRow(
+    rows.map((r) => r.itemId),
+    null,
+    bottleneck,
+  );
 }
-
-const MOVES = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
-const OPENS = new Set(["ArrowRight", " "]);
 
 export function RowList({
   store,
@@ -55,34 +55,12 @@ export function RowList({
   const now = useCallback(() => store.now(), [store]);
   const names = useNames(snapshot);
   const hint = useId();
-  const current =
-    selected !== null && rows.some((r) => r.itemId === selected)
-      ? selected
-      : defaultSelection(rows, bottleneck);
+  const current = currentRow(
+    rows.map((r) => r.itemId),
+    selected,
+    bottleneck,
+  );
   const framed = bottleneck?.itemId ?? null;
-
-  const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    if (rows.length === 0) return;
-    if (OPENS.has(e.key)) {
-      e.preventDefault();
-      if (current !== null) open(current);
-      return;
-    }
-    if (!MOVES.has(e.key)) return;
-    e.preventDefault();
-    const at = rows.findIndex((r) => r.itemId === current);
-    const last = rows.length - 1;
-    const next =
-      e.key === "Home"
-        ? 0
-        : e.key === "End"
-          ? last
-          : Math.min(last, Math.max(0, at + (e.key === "ArrowDown" ? 1 : -1)));
-    const id = rows[next]!.itemId;
-    onSelect(id);
-    document.getElementById(rowId(id))?.scrollIntoView?.({ block: "nearest" });
-  };
 
   const open = (id: ItemId) => {
     onSelect(id);
@@ -107,7 +85,7 @@ export function RowList({
         aria-describedby={hint}
         tabIndex={0}
         className={css.list}
-        onKeyDown={onKeyDown}
+        data-rows
       >
         {rows.map((row) => (
           <Row
@@ -124,7 +102,7 @@ export function RowList({
         ))}
       </ul>
       <span id={hint} className={css.hint}>
-        Arrow keys to move, right arrow or space for details.
+        Arrow keys to move, right arrow or space for details, enter runs the next buy.
       </span>
     </div>
   );

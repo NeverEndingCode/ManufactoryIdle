@@ -68,7 +68,9 @@ const tap = R({ kind: "tap", down: true });
 const help = R({ kind: "help" });
 const same = (c: Resolved | null): readonly [Resolved | null, Resolved | null] => [c, c];
 
-/** U-7a's table, written out cell by cell (K-8, K-10, K-21, K-22). */
+/** U-7a's table, written out cell by cell (K-8, K-10, K-21, K-22). In the card, F1–F3 and F/P/H
+ *  close an open drawer as they do outside it (U-7a, K-10); the digits 2–5 are the global
+ *  lane switch, whose drawer follows its lane (closing only when the lane changes). */
 const TABLE: Record<string, Cells> = {
   Enter: { global: [run, null], drawer: [run, null], card: [run, null] },
   Tab: { global: [why, null], drawer: [why, null], card: [null, null] },
@@ -80,32 +82,32 @@ const TABLE: Record<string, Cells> = {
   F1: {
     global: same(view("factory")),
     drawer: same(view("factory", true)),
-    card: same(view("factory", false, true)),
+    card: same(view("factory", true, true)),
   },
   f: {
     global: same(view("factory")),
     drawer: same(view("factory", true)),
-    card: same(view("factory", false, true)),
+    card: same(view("factory", true, true)),
   },
   F2: {
     global: same(view("priority")),
     drawer: same(view("priority", true)),
-    card: same(view("priority", false, true)),
+    card: same(view("priority", true, true)),
   },
   p: {
     global: same(view("priority")),
     drawer: same(view("priority", true)),
-    card: same(view("priority", false, true)),
+    card: same(view("priority", true, true)),
   },
   F3: {
     global: same(view("handbook")),
     drawer: same(view("handbook", true)),
-    card: same(view("handbook", false, true)),
+    card: same(view("handbook", true, true)),
   },
   h: {
     global: same(view("handbook")),
     drawer: same(view("handbook", true)),
-    card: same(view("handbook", false, true)),
+    card: same(view("handbook", true, true)),
   },
   ArrowUp: { global: same(move("prev")), drawer: same(move("prev", true)), card: same(null) },
   ArrowDown: { global: same(move("next")), drawer: same(move("next", true)), card: same(null) },
@@ -409,5 +411,25 @@ describe("hintProbe", () => {
     expect(() => hintProbe("[Q]")).toThrow();
     expect(() => hintProbe("why")).toThrow();
     expect(() => hintProbe("[ENTER] [Q]")).toThrow();
+  });
+
+  // Catches: the help overlay showing a cap the hint test can't read (a real hint would throw).
+  it("10b. reads every cap KEYMAP shows, and each resolves in its row's scope", () => {
+    const full: Partial<KeyContext> = { rows: true, advice: true, follows: true, onRows: true };
+    for (const row of KEYMAP)
+      for (const cap of row.caps) {
+        const got = hintProbe(cap.shown);
+        expect(got.length, cap.shown).toBeGreaterThan(0);
+        // Esc is the dialog's own; a row with no probes is native (the card's Tab).
+        if (row.byComponent || row.probes.length === 0) continue;
+        for (const { probe, byComponent } of got) {
+          if (byComponent) continue;
+          const r = resolveKey(ev(probe.key ?? "", probe), ctx(row.scope, "rest", full));
+          expect(r, `${row.scope} ${cap.shown}`).not.toBeNull();
+        }
+      }
+    expect(keys("[1]–[5]")).toEqual(["1", "5"]);
+    expect(keys("[→] [SPACE] [HOME] [END]")).toEqual(["ArrowRight", " ", "Home", "End"]);
+    expect(keys("[F] [P] [H] [?]")).toEqual(["f", "p", "h", "?"]);
   });
 });

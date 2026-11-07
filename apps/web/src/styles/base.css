@@ -65,9 +65,17 @@ button {
   white-space: nowrap;
 }
 
-/* V-9: key hints are rendered but hidden until the keyboard lands (UI-2). */
+/* U-7e / K-7: key hints show on a fine pointer only (touch screens never see them), with a
+   one-cell gap before the label they sit in. */
 .key-hint {
   display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .key-hint {
+    display: inline;
+    margin-inline-end: 1ch;
+  }
 }
 
 /* A status light or mark: one cell of the mono grid (U-3e). Its colour is its state class. */

@@ -35,6 +35,8 @@ export interface ShellProps {
   laneId: LaneId | null;
   onLane(id: LaneId): void;
   bottleneck: BottleneckModel | null;
+  /** The NEXT_BUY card is open: its `1` buys one, so the first lane tab's hint steps aside (K-7). */
+  cardOpen?: boolean;
   onSettings(opener: HTMLElement): void;
   onSaveChip(opener: HTMLElement): void;
   /** Filled by later tasks: the main box content, the overlays, the command line, the footer/TAP. */
@@ -183,7 +185,9 @@ function LaneTabs({ p, s, phone }: { p: ShellProps; s: Snapshot; phone: boolean 
                   ●
                 </span>
               )}
-              {!phone && (
+              {/* K-7: a hint only where its digit works (U-7a): never on a locked lane, and
+                  not on lane 1 while the card's `1` buys one. */}
+              {!phone && !t.locked && !(p.cardOpen === true && t.key === 1) && (
                 <span className="key-hint" aria-hidden="true">
                   {t.key}
                 </span>
