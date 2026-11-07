@@ -92,7 +92,7 @@ install_all() {
     printf '%s' "$cron" | sed 's/^/    /'
   done
   refresh_cron
-  log "installed; check with: crontab -l | grep manufactory"
+  log "installed; check with: grep manufactory /etc/cron.d/root"
 }
 
 uninstall_all() {
