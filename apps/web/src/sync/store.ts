@@ -308,6 +308,8 @@ export class GameStore {
   readonly #work = new Set<Promise<unknown>>();
   readonly #listeners = new Set<() => void>();
   readonly #adoptListeners = new Set<(e: AdoptEvent) => void>();
+  /** later()'s timers not yet fired or cancelled; stop() clears them. */
+  readonly #laterIds = new Set<number>();
   readonly #tickers = new Set<() => void>();
   #view: StoreView;
 
@@ -377,15 +379,19 @@ export class GameStore {
     };
   }
 
-  /** A one-shot timer on the ClientClock; the returned function cancels it. */
+  /** A one-shot timer on the ClientClock; the returned function cancels it. A negative `ms`
+   * is 0. stop() cancels every live one, and none fires while stopped. */
   later(fn: () => void, ms: number): () => void {
-    let id: number | null = this.#clock.setTimeout(() => {
-      id = null;
-      fn();
-    }, ms);
+    const id = this.#clock.setTimeout(
+      () => {
+        this.#laterIds.delete(id);
+        if (!this.#stopped) fn();
+      },
+      Math.max(0, ms),
+    );
+    this.#laterIds.add(id);
     return () => {
-      if (id !== null) this.#clock.clearTimeout(id);
-      id = null;
+      if (this.#laterIds.delete(id)) this.#clock.clearTimeout(id);
     };
   }
 
@@ -426,6 +432,8 @@ export class GameStore {
     this.#bootTimer = null;
     if (this.#claimTimer !== null) this.#clock.clearTimeout(this.#claimTimer);
     this.#claimTimer = null;
+    this.#laterIds.forEach((id) => this.#clock.clearTimeout(id));
+    this.#laterIds.clear();
     // The page isn't leaving any more (O-11): nothing would clear `leaving` later.
     this.#clearLeaving(false);
     this.#holding = false;

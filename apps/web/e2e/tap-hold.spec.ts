@@ -2,12 +2,22 @@
 // a second while held, and once more after release; every flush is its own one-TAP batch.
 // The 1 s floor itself is pinned exactly in the store's unit tests (Task 5); this sees it
 // through the network, so it allows 100 ms of observation jitter.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { actionPosts, isTapPost, startGuest } from "./helpers.js";
+
+/** The first advice has typed itself out (U-9e). Its ~12 ms timers shift the hold's timers by
+ * a millisecond: the flush and the tenth repeat are both due a second after the press, and
+ * the release's flush needs a tap after the last flush. Holding on a settled page keeps the
+ * order this spec has always seen. */
+async function settled(page: Page): Promise<void> {
+  await expect(page.locator("[data-command] [data-typed]")).not.toBeEmpty();
+  await expect(page.locator("[data-command] [data-typing]")).toHaveCount(0);
+}
 
 test("holding the tap flushes once a second, then once after release", async ({ page }) => {
   const posts = actionPosts(page);
   await startGuest(page);
+  await settled(page);
   const footer = page.locator("footer[data-power]");
   const tap = footer.locator("button[data-tap]");
   const tapPost = () =>
@@ -51,6 +61,7 @@ test("holding the tap flushes once a second, then once after release", async ({ 
 test("a held T taps like the button", async ({ page }) => {
   const posts = actionPosts(page);
   await startGuest(page);
+  await settled(page);
   const footer = page.locator("footer[data-power]");
   const tapPost = () =>
     page.waitForRequest((r) => isTapPost(r.url(), r.method(), r.postDataJSON()));

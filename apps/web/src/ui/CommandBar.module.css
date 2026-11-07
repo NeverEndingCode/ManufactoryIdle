@@ -19,6 +19,14 @@
   text-shadow: var(--glow-advice);
 }
 
+/* L-1: below desktop the gaps tighten too, so the command keeps its 20 characters at 600 px
+   beside a long run label ("[ENTER] affordable in 43s"). */
+@media (max-width: 1000px) {
+  .bar {
+    gap: 8px;
+  }
+}
+
 .prompt {
   flex: none;
   color: var(--t1);
@@ -54,6 +62,25 @@
 
 @keyframes blink {
   50% {
+    opacity: 0;
+  }
+}
+
+/* U-9e: the typed words. The plain voice remounts this span per command (keyed on the text),
+   so the fade replays: the crossfade. The shell voice types instead, and while it types the
+   cursor holds steady, as a terminal's does. */
+@media (prefers-reduced-motion: no-preference) {
+  .typed {
+    animation: fade-in 150ms ease-out;
+  }
+
+  .command:has(> [data-typing]) + .cursor {
+    animation: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
     opacity: 0;
   }
 }

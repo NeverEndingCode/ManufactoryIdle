@@ -23,6 +23,7 @@ import {
   type Slice,
 } from "./test-fixtures.js";
 import { setTheme } from "./theme.js";
+import { typeInterval } from "./use-typed.js";
 
 let slice: Slice;
 let fresh: Snapshot;
@@ -84,6 +85,7 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
     // The typed span is aria-hidden; a visually hidden sibling carries the plain words (U-1h).
     const typed = bar().querySelector("[data-typed]")!;
     expect(typed.getAttribute("aria-hidden")).toBe("true");
+    store.tick(600); // the first advice types out (U-9e)
     expect(typed.textContent).toBe(command);
     expect(bar().querySelector("[data-command-text]")!.textContent).toBe(
       "Buy 1 Constructor Mk.1 for Iron Plate",
@@ -133,6 +135,7 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
     const s = withBottleneck(fresh, RESERVE);
     const store = fakeStore(s);
     mount(store);
+    store.tick(600); // typed out (U-9e)
     expect(bar().textContent).toContain("reserve iron_plate 25%");
     const button = run()!;
     expect(button.getAttribute("aria-label")).toBe("Reserve 25% of Iron Plate");
@@ -154,7 +157,9 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
     cleanup();
     const set: Snapshot = { ...s, state: { ...s.state, reserve: { iron_plate: 0.25 } } };
     expect(bottleneckRow(set)!.action).toBeNull();
-    mount(fakeStore(set));
+    const after = fakeStore(set);
+    mount(after);
+    after.tick(600);
     expect(run()).toBeNull();
     expect(bar().textContent).toContain("# iron plate never banks");
   });
@@ -166,6 +171,7 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
     const text = bottleneckRow(frameless)!.text;
     expect(text).toMatch(/^Power is short, /);
     store.set({ snapshot: frameless });
+    store.tick(600);
     expect(bar().querySelector("[data-typed]")!.textContent).toBe(`# ${text.toLowerCase()}`);
     expect(bar().querySelector("[data-command-text]")!.textContent).toBe(text);
     expect(run()).toBeNull();
@@ -226,5 +232,106 @@ describe("the command bar (U-4a)", { timeout: 60_000 }, () => {
       "Buy 1 Constructor Mk.1 for Iron Plate",
     );
     expect(run()!.textContent).toBe("[ENTER]Run");
+  });
+});
+
+// U-9e, L-1, L-19: the prompt per layout, and the advice typing itself out. Cosmetic only: the
+// run is live before the first character, a reader hears the whole text, and nothing re-types
+// on the 4 Hz tick.
+describe("the command bar types (U-9e, L-1, L-19)", { timeout: 60_000 }, () => {
+  const typed = () => bar().querySelector<HTMLElement>("[data-typed]")!;
+  const prompt = () => bar().querySelector<HTMLElement>("[data-prompt]")!;
+  const AFFORDABLE = { now: CLIENT_T0 + 60_000 };
+  const SHELL = "buy 1 constructor_mk1 --lane iron --for iron_plate";
+  const PLAIN = "Buy 1 Constructor Mk.1 for Iron Plate";
+
+  // Catches: the long prompt on the tablet (L-1: the command is what the player reads), or a
+  // prompt chosen by width in CSS where jsdom can't see it.
+  it("8. the prompt: the full one on desktop, $ on the tablet, Next in the plain voice", () => {
+    stubWidth(1280);
+    mount(fakeStore(fresh));
+    expect(prompt().textContent).toBe("operator@manufactory:~$");
+    expect(prompt().getAttribute("aria-hidden")).toBe("true");
+    cleanup();
+    stubWidth(800);
+    mount(fakeStore(fresh));
+    expect(prompt().textContent).toBe("$");
+    cleanup();
+    act(() => void setTheme("clean-dark"));
+    for (const width of [1280, 800]) {
+      stubWidth(width);
+      mount(fakeStore(fresh));
+      expect(prompt().textContent).toBe("Next");
+      cleanup();
+    }
+  });
+
+  // Catches: the accessible text typed out too (a reader hearing it a character at a time),
+  // or the typed span losing aria-hidden.
+  it("9. a reader has the whole text throughout", () => {
+    const store = fakeStore(fresh, AFFORDABLE);
+    mount(store);
+    store.tick(typeInterval(SHELL.length));
+    expect(typed().textContent).toBe("b");
+    expect(typed().hasAttribute("data-typing")).toBe(true);
+    expect(typed().getAttribute("aria-hidden")).toBe("true");
+    expect(bar().querySelector("[data-command-text]")!.textContent).toBe(PLAIN);
+    expect(spokenIds(bar())).toEqual([]);
+    store.tick(600);
+    expect(typed().textContent).toBe(SHELL);
+    expect(typed().hasAttribute("data-typing")).toBe(false);
+  });
+
+  // Catches: gating the run on `done`, and a missing finish (the section's onClickCapture).
+  it("10. runnable from the first frame, and the click finishes the text", () => {
+    const store = fakeStore(withBottleneck(fresh, RESERVE), AFFORDABLE);
+    mount(store);
+    store.tick(600);
+    store.set({ snapshot: fresh });
+    expect(typed().textContent).toBe("");
+    const button = run()!;
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+    fireEvent.click(button);
+    expect(store.send).toHaveBeenCalledTimes(1);
+    expect(store.send).toHaveBeenCalledWith([P3_BUY], "bottleneck buy");
+    expect(typed().textContent).toBe(SHELL);
+    expect(typed().hasAttribute("data-typing")).toBe(false);
+  });
+
+  // Catches: typing behind the open card (L-19's instant), or under reduced motion (U-8c).
+  it("11. instant with the card open, and under reduced motion", () => {
+    stubWidth(1280);
+    const store = fakeStore(withBottleneck(fresh, RESERVE), AFFORDABLE);
+    mount(store);
+    store.tick(600);
+    fireEvent.click(bar().querySelector<HTMLElement>("[data-why]")!);
+    expect(document.querySelector("[data-why]")!.getAttribute("aria-expanded")).toBe("true");
+    store.set({ snapshot: fresh });
+    expect(typed().textContent).toBe(SHELL);
+    cleanup();
+    vi.unstubAllGlobals();
+
+    stubWidth(1280, { reducedMotion: true });
+    const reduced = fakeStore(withBottleneck(fresh, RESERVE), AFFORDABLE);
+    mount(reduced);
+    expect(typed().textContent).toBe("reserve iron_plate 25%");
+    reduced.set({ snapshot: fresh });
+    expect(typed().textContent).toBe(SHELL);
+  });
+
+  // Catches: keying the typing on the run label (its countdown moves at 4 Hz).
+  it("12. the run label's countdown doesn't re-type", () => {
+    const store = fakeStore(fresh);
+    mount(store);
+    store.tick(600);
+    expect(typed().textContent).toBe(SHELL);
+    const later = vi.spyOn(store, "later");
+    const label = run()!.textContent;
+    for (let i = 0; i < 4; i++) {
+      store.tick(250);
+      expect(typed().textContent).toBe(SHELL);
+    }
+    expect(run()!.textContent).not.toBe(label);
+    expect(later).not.toHaveBeenCalled();
   });
 });

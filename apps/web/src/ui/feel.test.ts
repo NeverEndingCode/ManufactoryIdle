@@ -41,7 +41,8 @@ describe("feelOf (L-3)", () => {
     expect(b.s.onAdopt).toHaveBeenCalledTimes(2);
   });
 
-  // Catches: a FakeStore whose adopt() runs the view listeners first, or whose tick() fires
+  // Catches: a FakeStore whose adopt() runs the view listeners first, or swaps the view before
+  // the adopt listeners (the real store's getView() still reads prev there), or whose tick() fires
   // later() timers out of order, early, or after their cancel.
   it("3. FakeStore mirrors onAdopt and later", () => {
     const slice = loadSlice();
@@ -50,17 +51,22 @@ describe("feelOf (L-3)", () => {
     const fake = fakeStore(s0);
     feelOf(fake);
     const seen: string[] = [];
-    fake.onAdopt((e) => seen.push(`adopt ${e.prev?.stateVersion} ${e.next.stateVersion}`));
+    // As the real store: inside an adopt listener the view still reads prev (store test 36).
+    fake.onAdopt((e) =>
+      seen.push(
+        `adopt ${e.prev?.stateVersion} ${e.next.stateVersion} seen ${fake.getView().snapshot?.stateVersion}`,
+      ),
+    );
     fake.subscribe(() => seen.push(`view ${fake.getView().snapshot!.stateVersion}`));
     const batch = { id: 7, key: "k", actions: [], label: "drawer:iron_ore:buy" };
     let settled: unknown = undefined;
     const off = fake.onAdopt((e) => (settled = e.settled));
     fake.adopt({ next: s1, settled: batch });
-    expect(seen).toEqual(["adopt 0 1", "view 1"]);
+    expect(seen).toEqual(["adopt 0 1 seen 0", "view 1"]);
     expect(settled).toBe(batch);
     off();
     fake.adopt({ prev: null, next: s0 });
-    expect(seen.at(-2)).toBe("adopt undefined 0");
+    expect(seen.at(-2)).toBe("adopt undefined 0 seen 1");
     expect(settled).toBe(batch);
 
     const fired: string[] = [];

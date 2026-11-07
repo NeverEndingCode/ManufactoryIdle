@@ -136,8 +136,9 @@ export interface FakeStore {
   onAdopt(fn: (e: AdoptEvent) => void): () => void;
   later(fn: () => void, ms: number): () => void;
   set(patch: Partial<StoreView>): void;
-  /** One adoption: the view's snapshot becomes `next`, then the adopt listeners and the view
-   * listeners run, all in one act(). `prev` defaults to the view's snapshot before. */
+  /** One adoption, in one act(): the adopt listeners run (the view still reads prev, as in
+   * the real store), then the view's snapshot becomes `next` and the view listeners run.
+   * `prev` defaults to the view's snapshot before. */
   adopt(e: { prev?: Snapshot | null; next: Snapshot; settled?: Batch | null }): void;
   /** Moves the clock on, firing the due later() timers in time order, then the tickers. */
   tick(ms: number): void;
@@ -209,9 +210,10 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
         next,
         settled: settled ?? null,
       };
-      view = { ...view, snapshot: next };
       act(() => {
+        // As the real store: the listeners see the view still at prev, then it emits.
         adoptListeners.forEach((fn) => fn(event));
+        view = { ...view, snapshot: next };
         listeners.forEach((fn) => fn());
       });
     },

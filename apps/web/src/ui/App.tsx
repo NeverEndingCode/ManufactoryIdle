@@ -584,7 +584,13 @@ export function App({ store }: { store: GameStore }) {
         command === null ? null : mode === "phone" ? (
           <CommandSplit {...command} onWhy={openWhy} />
         ) : (
-          <CommandBar {...command} onWhy={openWhy} whyOpen={whyOpen} />
+          <CommandBar
+            {...command}
+            onWhy={openWhy}
+            whyOpen={whyOpen}
+            mode={mode}
+            instant={whyOpen || helpOpen || sheet !== null}
+          />
         ),
       footer:
         game && mode !== "phone" ? (

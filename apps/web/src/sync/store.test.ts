@@ -1040,6 +1040,34 @@ describe("GameStore adoption events (U-9f, L-2)", { timeout: 60_000 }, () => {
     expect(fired).toHaveBeenCalledTimes(1);
   });
 
+  // Catches: later() timers outliving stop() (no live-id set cleared there); a later() set
+  // while stopped firing anyway (fn not skipped on #stopped); a negative ms handed to the
+  // ClientClock unclamped (FakeStore clamps it, so the two disagreed).
+  it("38. stop() cancels later() timers, and a negative ms is 0", async () => {
+    const { store, rig } = await setup();
+    const before = rig.clock.pendingTimers;
+    const live = vi.fn();
+    store.later(live, 500);
+    store.later(live, 1_000);
+    expect(rig.clock.pendingTimers).toBe(before + 2);
+    store.stop();
+    const stoppedLater = vi.fn();
+    store.later(stoppedLater, 100);
+    await rig.advance(2_000);
+    expect(live).not.toHaveBeenCalled();
+    expect(stoppedLater).not.toHaveBeenCalled();
+
+    await store.start();
+    await store.idle();
+    const set = vi.spyOn(rig.clock, "setTimeout");
+    const early = vi.fn();
+    store.later(early, -250);
+    expect(set).toHaveBeenLastCalledWith(expect.any(Function), 0);
+    await rig.advance(0);
+    expect(early).toHaveBeenCalledTimes(1);
+    store.stop();
+  });
+
   // Catches: a world change that keeps the old snapshot as prev (L-4); #arm() emitting the
   // new snapshot before the listeners, when polling turns on.
   it("37. a new factory gives prev: null", async () => {
