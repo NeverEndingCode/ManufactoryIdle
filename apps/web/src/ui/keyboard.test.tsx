@@ -137,6 +137,18 @@ describe("the keyboard (U-7)", { timeout: 60_000 }, () => {
     expect(frameless.send).not.toHaveBeenCalled();
   });
 
+  // Catches: preventDefault on Enter when the bar's run is an off placeholder (K-9): the phone's
+  // always-off "Nothing to run" is found, clicked to no effect, and the key still claimed.
+  it("3b. the phone's Nothing to run: Enter does nothing and claims nothing", () => {
+    const frameless = fakeStore(withBottleneck(fresh, FRAMELESS));
+    mount(frameless, 390);
+    const run = q("[data-command] [data-run]")!;
+    expect(run.getAttribute("aria-label")).toBe("Nothing to run");
+    expect(run.getAttribute("aria-disabled")).toBe("true");
+    expect(key("Enter")).toBe(true);
+    expect(frameless.send).not.toHaveBeenCalled();
+  });
+
   // Catches: returning focus to why (the next Enter would re-toggle the card, not buy).
   it("4. Tab at rest opens the card; Esc returns to the row list, never why", () => {
     const store = topped();

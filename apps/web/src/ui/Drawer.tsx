@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import {
@@ -41,6 +42,7 @@ import {
   splitOf,
   type RowModel,
 } from "./derive.js";
+import { trapTab } from "./dialog.js";
 import { generatorLabel, generatorRows, mwText } from "./dock-model.js";
 import styles from "./Drawer.module.css";
 import type { SectionKey } from "./keys.js";
@@ -72,6 +74,7 @@ import { LiveStock } from "./Row.js";
 import { Spoken } from "./Spoken.js";
 import { useTheme } from "./theme.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
+import { useSheetDrag } from "./use-sheet-drag.js";
 import { useTick } from "./use-tick.js";
 
 export type DrawerVerb = "buy" | "dismantle" | "upgrade" | "storage" | "qs" | "recipe" | "assign";
@@ -111,8 +114,9 @@ export interface DrawerProps {
   onClose(): void;
   /** K-15 / §13.1: a SPLIT row's tap, to the item's entry in the priority list (items only). */
   onSplit(itemId: ItemId): void;
-  /** U-5a: the desktop and tablet panel over the content row; V-19: the phone's fixed sheet.
-   * Both are non-modal: role="dialog", aria-modal="false". */
+  /** U-5a: the desktop and tablet panel over the content row, non-modal (aria-modal="false",
+   * the rows live). U-5b / K-3: the phone's fixed sheet, modal in a [data-drawer-host] backdrop
+   * over the --scrim; App inerts everything else. */
   presentation: "panel" | "sheet";
   /** Called on mount: true when the player just opened this drawer, so the title takes focus.
    * A remount for any other reason (a view switch) must not steal focus. Default: always. */
@@ -259,28 +263,71 @@ export function Drawer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== "Escape") return;
-    e.stopPropagation();
-    onClose();
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    // K-3: the sheet is modal, so Tab wraps inside it (V-12's trapTab).
+    if (sheet && box.current !== null) trapTab(e.nativeEvent, box.current);
   };
 
+  // K-20: the grip, and the head while the content is scrolled to the top, drag the sheet down.
+  // The body never starts a drag (that's a scroll), nor do the head's own buttons (the x).
+  const { grip, offset } = useSheetDrag(onClose);
+  const [atTop, setAtTop] = useState(true);
+  const fromHead = (e: PointerEvent<HTMLElement>) =>
+    !(e.target instanceof Element && e.target.closest("button") !== null) &&
+    (box.current?.scrollTop ?? 0) <= 0;
+  const head = sheet
+    ? {
+        onPointerDown: (e: PointerEvent<HTMLElement>) => {
+          if (fromHead(e)) grip.onPointerDown(e);
+        },
+        onPointerMove: grip.onPointerMove,
+        onPointerUp: grip.onPointerUp,
+        onPointerCancel: grip.onPointerCancel,
+        onLostPointerCapture: grip.onLostPointerCapture,
+      }
+    : {};
+
   const sec = model.machines;
-  return (
+  const dialog = (
     <section
       ref={box}
       id="detail"
       role="dialog"
-      aria-modal="false"
+      aria-modal={sheet ? "true" : "false"}
       aria-labelledby="drawer-title"
       data-drawer={model.kind === "item" ? model.itemId : `power:${model.machineClass}`}
       data-presentation={presentation}
+      data-dragging={offset !== null ? "" : undefined}
+      data-at-top={sheet && atTop ? "" : undefined}
       className={`${styles.drawer} ${sheet ? styles.sheet : styles.panel}`}
+      style={offset !== null ? { transform: `translateY(${offset}px)` } : undefined}
       onKeyDown={onKeyDown}
+      onScroll={sheet ? (e) => setAtTop(e.currentTarget.scrollTop <= 0) : undefined}
       onFocus={(e) => {
         lastFocused.current = e.target;
       }}
     >
-      <div className={styles.head}>
+      <div className={styles.head} {...head}>
+        {sheet && (
+          // K-20: the grip's 44 px hit area, the sheet's width; a button too, so a key or a
+          // screen reader can press it (the x stays the plain Close).
+          <button
+            type="button"
+            className={styles.grip}
+            data-grip
+            aria-label="Drag down to close"
+            onPointerDown={grip.onPointerDown}
+            onPointerMove={grip.onPointerMove}
+            onPointerUp={grip.onPointerUp}
+            onPointerCancel={grip.onPointerCancel}
+            onLostPointerCapture={grip.onLostPointerCapture}
+            onClick={grip.onClick}
+          />
+        )}
         {/* U-1h: the theme's label shown; a reader gets the content name. */}
         <h2
           id="drawer-title"
@@ -336,6 +383,19 @@ export function Drawer({
         onToggle={(s) => setPicked(shown === s ? null : s)}
       />
     </section>
+  );
+  if (!sheet) return dialog;
+  // K-3: the backdrop; a press on it (not on the sheet) closes, as Settings' and NEXT_BUY's do.
+  return (
+    <div
+      className={styles.backdrop}
+      data-drawer-host
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      {dialog}
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 /* The item drawer, on the new tokens: rows, not cards (W-17). Desktop and tablet: U-5a's panel,
    absolute in the content row over the main box's right columns, so no row moves (U-3). The
-   phone: V-19's sheet, U-5b's geometry without its modality. Both are --s1, so --t3 reads on
+   phone: U-5b's modal sheet over the --scrim (K-3). Both are --s1, so --t3 reads on
    them (U-1f). Nothing scrolls sideways at 320 px: button rows wrap, names ellipsize, numbers
    never leave the screen (W-19). */
 .drawer {
@@ -30,12 +30,19 @@
   width: clamp(360px, 100% - 300px, 560px);
 }
 
-/* V-19: fixed below the header band, over the TAP (20) and the bottom tabs; under the NEXT_BUY
-   sheet (40) and Settings (50). */
-.sheet {
+/* K-3: the sheet's backdrop, over the TAP (20) and the bottom tabs; under the phone notices (35),
+   the NEXT_BUY sheet (40) and Settings (50). The background is inert (App). */
+.backdrop {
   position: fixed;
-  inset: clamp(56px, 18dvh, 150px) 0 0 0;
+  inset: 0;
   z-index: 30;
+  background: var(--scrim);
+}
+
+/* U-5b: below the header band, in the backdrop. */
+.sheet {
+  position: absolute;
+  inset: clamp(56px, 18dvh, 150px) 0 0 0;
   padding: 12px 16px calc(18px + env(safe-area-inset-bottom, 0px));
   border-top: 2px solid var(--accent);
 }
@@ -47,6 +54,11 @@
 @media (prefers-reduced-motion: no-preference) {
   .sheet {
     animation: rise 180ms ease-out;
+  }
+
+  /* K-20: released short of 96 px, the sheet snaps back; while the finger drags it, no lag. */
+  .sheet:not([data-dragging]) {
+    transition: transform 160ms ease-out;
   }
 }
 
@@ -92,6 +104,33 @@
   z-index: 1;
   padding-bottom: 6px;
   background: var(--s1);
+}
+
+/* K-20: at the top, a vertical drag on the head is the sheet's, not a scroll. */
+.sheet[data-at-top] .head {
+  touch-action: none;
+}
+
+/* K-20: the grip, a 44 px hit area the sheet's width over its 44 x 4 bar in --t3. */
+.grip {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.grip::before {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--t3);
+  content: "";
 }
 
 .title:global(.state-bottleneck) {

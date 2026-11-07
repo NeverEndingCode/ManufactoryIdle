@@ -54,6 +54,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function mount(store: FakeStore) {
@@ -445,8 +446,9 @@ describe("Drawer", { timeout: 60_000 }, () => {
     const sheet = open("iron_ore");
     expect(sheet.dataset.presentation).toBe("sheet");
     expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(sheet.getAttribute("aria-modal")).toBe("false");
-    // The priority tab swaps the main box.
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    // The priority tab swaps the main box (once the modal sheet is closed).
+    fireEvent.keyDown(sheet, { key: "Escape" });
     fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     expect(document.querySelector('[data-item="iron_ore"]')).toBeNull();
   });
@@ -747,28 +749,238 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     expect(d.getAttribute("aria-modal")).toBe("false");
   });
 
-  it("3. the phone: a sheet on the app root; focus in, Esc out, a remount takes none", () => {
+  const host = () => document.querySelector<HTMLElement>("[data-drawer-host]");
+  const grip = () => document.querySelector<HTMLElement>("[data-drawer] [data-grip]")!;
+  const heading = (d: HTMLElement) => within(d).getByRole("heading", { level: 2 });
+  const inert = (el: Element | null) => el !== null && el.closest("[inert]") !== null;
+  /** jsdom focuses an inert element; a browser doesn't. This makes focus() refuse, as there. */
+  const honourInert = () => {
+    const focus = HTMLElement.prototype.focus;
+    vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+      this: HTMLElement,
+      opts?: FocusOptions,
+    ) {
+      if (this.closest("[inert]") === null) focus.call(this, opts);
+    });
+  };
+  const pointer = (
+    type: "pointerDown" | "pointerMove" | "pointerUp" | "pointerCancel",
+    el: HTMLElement,
+    clientY: number,
+    pointerId = 1,
+  ) => fireEvent[type](el, { pointerId, clientY, button: 0 });
+
+  // Catches (K-3): the host left out of MODAL_HOSTS (nothing goes inert), the sheet still
+  // aria-modal="false", the notices region itself inerted (W-20), or its Dismiss left live.
+  it("3. the phone: a modal sheet in a backdrop on the app root; the background is inert", () => {
+    stubWidth(390);
+    const store = fakeStore(fresh);
+    mount(store);
+    act(() => store.set({ notices: [{ kind: "rejected", text: "That didn't go through." }] }));
+    const sheet = open("iron_plate");
+    expect(sheet.dataset.presentation).toBe("sheet");
+    expect(host()!.parentElement).toBe(document.querySelector(".app"));
+    expect(sheet.parentElement).toBe(host());
+    expect(sheet.tagName).toBe("SECTION");
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    expect(document.activeElement).toBe(heading(sheet));
+    expect(inert(document.querySelector("[data-power] button[data-tap]"))).toBe(true);
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    expect(tabs.length).toBeGreaterThan(4);
+    for (const tab of tabs) expect(inert(tab), tab.textContent ?? "").toBe(true);
+    expect(inert(listbox())).toBe(true);
+    expect(inert(document.querySelector(".notices"))).toBe(false);
+    expect(inert(screen.getByRole("button", { name: "Dismiss" }))).toBe(true);
+    expect(inert(sheet)).toBe(false);
+  });
+
+  // Catches: no Tab wrap; a close path that leaves the background inert, or focus on <body>
+  // (focus sent to the row list while it's still inert, before the sheet unmounts); a mousedown on the sheet itself read as
+  // one on the backdrop.
+  it("3b. Tab wraps in the sheet; Esc, the x, the backdrop and the grip each close it, back to the row", () => {
+    stubWidth(390);
+    honourInert();
+    mount(fakeStore(fresh));
+    const sheet = open("iron_plate");
+    const tabbable = [
+      ...sheet.querySelectorAll<HTMLElement>("button, a[href], [tabindex]:not([tabindex='-1'])"),
+    ];
+    const first = tabbable[0]!;
+    const last = tabbable.at(-1)!;
+    expect(first).toBe(grip());
+    act(() => last.focus());
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    fireEvent.mouseDown(sheet);
+    fireEvent.mouseDown(heading(sheet));
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    const paths: [string, () => void][] = [
+      ["Esc", () => fireEvent.keyDown(document.activeElement!, { key: "Escape" })],
+      [
+        "the x",
+        () => fireEvent.click(within(drawer("iron_plate")!).getByRole("button", { name: "Close" })),
+      ],
+      ["the backdrop", () => fireEvent.mouseDown(host()!)],
+      ["the grip, pressed", () => fireEvent.click(grip())],
+    ];
+    for (const [name, close] of paths) {
+      if (drawer("iron_plate") === null) open("iron_plate");
+      expect(drawer("iron_plate")!.getAttribute("aria-modal"), name).toBe("true");
+      close();
+      expect(drawer("iron_plate"), name).toBeNull();
+      expect(host(), name).toBeNull();
+      expect(document.querySelector("[inert]"), name).toBeNull();
+      expectBackOn("iron_plate");
+    }
+  });
+
+  // Catches: the NEXT_BUY sheet's hand-off losing the modal (two modals, or none), or closing
+  // to <body> because the opener (the open button) is gone.
+  it("3c. opened from the NEXT_BUY sheet's open IRON_PLATE, it closes to the row list", () => {
+    stubWidth(390);
+    mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
+    fireEvent.click(document.querySelector<HTMLElement>("[data-why]")!);
+    const go = document.querySelector<HTMLElement>("[data-next-buy] [data-open-item]")!;
+    expect(go.textContent).toBe("open IRON_PLATE");
+    fireEvent.click(go);
+    expect(document.querySelector("[data-next-buy]")).toBeNull();
+    const sheet = drawer("iron_plate")!;
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    expect(document.activeElement).toBe(heading(sheet));
+    expect(inert(document.querySelector("[data-why]"))).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("iron_plate")).toBeNull();
+    expect(document.querySelector("[inert]")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches (K-12): a generator sheet closing to the row list, or focusing its opener while it's
+  // still inert (so focus falls to <body>).
+  it("3d. a generator sheet returns focus to its [data-open-generator]", () => {
+    stubWidth(390);
+    honourInert();
+    mount(fakeStore(fresh));
+    fireEvent.click(screen.getByRole("tab", { name: "power" }));
+    const gen = () =>
+      document.querySelector<HTMLElement>('button[data-open-generator="biomass_burner"]');
+    fireEvent.click(gen()!);
+    const sheet = drawer("power:biomass_burner")!;
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(inert(gen())).toBe(true);
+    fireEvent.mouseDown(host()!);
+    expect(drawer("power:biomass_burner")).toBeNull();
+    expect(document.activeElement).toBe(gen());
+    fireEvent.click(gen()!);
+    fireEvent.click(grip());
+    expect(document.activeElement).toBe(gen());
+  });
+
+  // Catches (K-20): a threshold at >= 0 (a short drag closes), a sheet left translated after a
+  // snap-back or a cancel, or a drag that doesn't follow the finger.
+  it("3e. the grip: past 96 px closes; short of it, or cancelled, it snaps back", () => {
     stubWidth(390);
     mount(fakeStore(fresh));
-    const sheet = open("iron_ore");
-    expect(sheet.dataset.presentation).toBe("sheet");
-    expect(sheet.parentElement).toBe(document.querySelector(".app"));
-    expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(sheet.getAttribute("aria-modal")).toBe("false");
-    expect(document.activeElement).toBe(within(sheet).getByRole("heading", { name: "Iron Ore" }));
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    expect(drawer("iron_ore")).toBeNull();
-    expectBackOn("iron_ore");
+    const sheet = open("iron_plate");
+    pointer("pointerDown", grip(), 100);
+    pointer("pointerMove", grip(), 180);
+    expect(sheet.style.transform).toBe("translateY(80px)");
+    expect(sheet.hasAttribute("data-dragging")).toBe(true);
+    pointer("pointerUp", grip(), 180);
+    expect(drawer("iron_plate")).toBe(sheet);
+    expect(sheet.style.transform).toBe("");
+    expect(sheet.hasAttribute("data-dragging")).toBe(false);
 
-    // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
-    open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
-    expect(drawer("iron_ore")).toBeNull();
-    const factory = screen.getByRole("tab", { name: "factory" });
-    factory.focus();
-    fireEvent.click(factory);
-    expect(drawer("iron_ore")).not.toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
+    pointer("pointerDown", grip(), 100, 2);
+    pointer("pointerMove", grip(), 300, 2);
+    pointer("pointerCancel", grip(), 300, 2);
+    expect(drawer("iron_plate")).toBe(sheet);
+    expect(sheet.style.transform).toBe("");
+
+    pointer("pointerDown", grip(), 100, 3);
+    pointer("pointerMove", grip(), 220, 3);
+    expect(sheet.style.transform).toBe("translateY(120px)");
+    pointer("pointerUp", grip(), 220, 3);
+    expect(drawer("iron_plate")).toBeNull();
+    expect(document.querySelector("[inert]")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches: a scroll of the sheet's content read as a drag; the head dragging while the content
+  // is scrolled down; the x's press swallowed by a head drag.
+  it("3f. the head drags only when the content is at the top; the body never does", () => {
+    stubWidth(390);
+    mount(fakeStore(fresh));
+    const sheet = open("iron_plate");
+    const body = sheet.querySelector<HTMLElement>("[data-body]")!;
+    pointer("pointerDown", body, 100);
+    pointer("pointerMove", body, 300);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", body, 300);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    const x = within(sheet).getByRole("button", { name: "Close" });
+    pointer("pointerDown", x, 100, 2);
+    pointer("pointerMove", x, 300, 2);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", x, 300, 2);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    let top = 40;
+    Object.defineProperty(sheet, "scrollTop", { configurable: true, get: () => top });
+    pointer("pointerDown", heading(sheet), 100, 3);
+    pointer("pointerMove", heading(sheet), 300, 3);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", heading(sheet), 300, 3);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    top = 0;
+    pointer("pointerDown", heading(sheet), 100, 4);
+    pointer("pointerMove", heading(sheet), 220, 4);
+    expect(sheet.style.transform).toBe("translateY(120px)");
+    pointer("pointerUp", heading(sheet), 220, 4);
+    expect(drawer("iron_plate")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches (U-5b): the sheet following the finger under reduced motion.
+  it("3g. reduced motion: the sheet doesn't follow, and a long drag still closes", () => {
+    stubWidth(390, { reducedMotion: true });
+    mount(fakeStore(fresh));
+    const sheet = open("iron_plate");
+    pointer("pointerDown", grip(), 100);
+    pointer("pointerMove", grip(), 220);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", grip(), 220);
+    expect(drawer("iron_plate")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches (K-17): the dispatcher acting under the phone's modal sheet (a lane switch, a row
+  // walk, a buy, or a tap through the inert TAP).
+  it("3h. the keyboard under the sheet: 1, ↓, b and t do nothing; Esc closes", () => {
+    stubWidth(390);
+    const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
+    mount(store);
+    const sheet = open("iron_plate");
+    const at = listbox().getAttribute("aria-activedescendant");
+    for (const k of ["1", "ArrowDown", "b", "t"]) {
+      expect(key(k), k).toBe(true);
+      fireEvent.keyUp(document.activeElement!, { key: k });
+      expect(drawer("iron_plate"), k).toBe(sheet);
+    }
+    expect(listbox().getAttribute("aria-activedescendant")).toBe(at);
+    expect(store.send).not.toHaveBeenCalled();
+    expect(store.pressTap).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(heading(sheet));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("iron_plate")).toBeNull();
+    expectBackOn("iron_plate");
   });
 
   it("4. the head: the label, the content name to a reader, the meta, the bottleneck's colour", () => {
@@ -817,32 +1029,61 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     return Number(decl!.value);
   };
 
-  it("5. the phone sheet sits above the floating TAP (V-19)", () => {
-    expect(z("./Drawer.module.css", ".sheet")).toBeGreaterThan(
-      z("./Power.module.css", ".floating"),
-    );
+  // Catches: the scrim (and the sheet in it) under the floating TAP, or over the NEXT_BUY sheet
+  // or Settings.
+  it("5. the phone sheet's backdrop sits above the floating TAP, under the modal sheets (V-19, K-3)", () => {
+    const backdrop = z("./Drawer.module.css", ".backdrop");
+    expect(backdrop).toBe(30);
+    expect(backdrop).toBeGreaterThan(z("./Power.module.css", ".floating"));
+    expect(backdrop).toBeLessThan(z("./NextBuy.module.css", ".backdrop"));
+    expect(backdrop).toBeLessThan(z("./Settings.module.css", ".backdrop"));
   });
 
-  // Catches: a rejection toast hidden under the open drawer sheet on the phone, or one painted
-  // over the modal NEXT_BUY sheet or Settings.
-  it("5b. on the phone the notices sit over the drawer sheet, under the modal sheets", () => {
+  // Catches: a rejection toast hidden under the scrim on the phone, or one painted over the modal
+  // NEXT_BUY sheet or Settings.
+  it("5b. on the phone the notices sit over the drawer sheet's scrim, under the modal sheets", () => {
     const notices = z("../styles/base.css", '.app[data-layout="phone"] .notices');
-    expect(notices).toBeGreaterThan(z("./Drawer.module.css", ".sheet"));
+    expect(notices).toBeGreaterThan(z("./Drawer.module.css", ".backdrop"));
     expect(notices).toBeLessThan(z("./NextBuy.module.css", ".backdrop"));
     expect(notices).toBeLessThan(z("./Settings.module.css", ".backdrop"));
     // Elsewhere they stay at 3, over the desktop panel (2).
     expect(z("../styles/base.css", ".notices")).toBe(3);
   });
 
-  it("6. the phone sheet's head is sticky on the sheet's surface, so Close never scrolls away", () => {
+  // Catches: Close scrolling away; the scrim's fill hard-coded (contrast.test can't see it per
+  // theme); the snap-back declared outside no-preference, or running while the finger drags.
+  it("6. the sheet's head is sticky; the backdrop is the --scrim; the snap-back moves with motion only", () => {
     const file = "./Drawer.module.css";
     const path = fileURLToPath(new URL(file, import.meta.url));
-    const rule = Object.fromEntries(
-      declarations(file, readFileSync(path, "utf8"))
-        .filter((x) => x.stack.length === 1 && x.stack[0] === ".sheet .head")
-        .map((x) => [x.property, x.value]),
-    );
-    expect(rule).toMatchObject({ position: "sticky", top: "0", background: "var(--s1)" });
+    const css = declarations(file, readFileSync(path, "utf8"));
+    const rule = (sel: string, media: string[] = []) =>
+      Object.fromEntries(
+        css
+          .filter((x) => x.stack.join(" > ") === [...media, sel].join(" > "))
+          .map((x) => [x.property, x.value]),
+      );
+    expect(rule(".sheet .head")).toMatchObject({
+      position: "sticky",
+      top: "0",
+      background: "var(--s1)",
+    });
+    expect(rule(".backdrop")).toMatchObject({
+      position: "fixed",
+      inset: "0",
+      "z-index": "30",
+      background: "var(--scrim)",
+    });
+    // K-20: the grip's hit area is 44 px tall and the sheet's width; its bar is 44 × 4 in --t3.
+    expect(rule(".grip")).toMatchObject({ height: "44px", "touch-action": "none" });
+    expect(rule(".grip::before")).toMatchObject({
+      width: "44px",
+      height: "4px",
+      background: "var(--t3)",
+    });
+    const snap = css.filter((x) => x.property === "transition" && x.value.includes("transform"));
+    expect(snap.map((x) => x.stack)).toEqual([
+      ["@media (prefers-reduced-motion: no-preference)", ".sheet:not([data-dragging])"],
+    ]);
   });
 });
 

@@ -130,10 +130,10 @@ export function App({ store }: { store: GameStore }) {
     helpReturn.current = true;
     setHelpOpen(false);
   };
-  // S-11 / V-12 / K-5: while a modal (Settings, the help, the phone's NEXT_BUY sheet) is open
-  // everything outside it is inert, but the live region never is (W-20: the one region keeps
-  // speaking, and the sheet's announcements land there); only its controls go inert. Every
-  // commit, undone first, since lanes and notice buttons can mount while it is open.
+  // S-11 / V-12 / K-5: while a modal (Settings, the help, the phone's NEXT_BUY or drawer sheet)
+  // is open everything outside it is inert, but the live region never is (W-20: the one region
+  // keeps speaking, and the sheet's announcements land there); only its controls go inert.
+  // Every commit, undone first, since lanes and notice buttons can mount while it is open.
   useLayoutEffect(() => {
     const app = appRef.current;
     if (app === null) return;
@@ -276,10 +276,20 @@ export function App({ store }: { store: GameStore }) {
       ? null
       : (appRef.current?.querySelector<HTMLElement>(`[data-open-generator="${cls}"]`) ?? null);
   };
+  /** K-3: where focus goes once the drawer has closed. Focus moves after the commit, since
+   * on the phone the opener is inert until the sheet's host is gone. */
+  const closeTo = useRef<HTMLElement | null | undefined>(undefined);
   const close = () => {
-    (opener() ?? rowList())?.focus();
+    closeTo.current = opener() ?? rowList();
     setOpen(null);
   };
+  // Every layout cleanup (the inert pass's undo) runs before this.
+  useLayoutEffect(() => {
+    const back = closeTo.current;
+    if (back === undefined) return;
+    closeTo.current = undefined;
+    (back !== null && back.isConnected ? back : rowList())?.focus();
+  });
   /** K-11 / Review Focus 3: a key that closed the drawer or the card under focus puts focus on
    * the row list once it's rendered (the new lane's), never leaving it on <body>. */
   const refocusRows = useRef(false);
@@ -344,9 +354,14 @@ export function App({ store }: { store: GameStore }) {
   /** Focus inside the main box goes with the view a key unmounts: back to the row list. */
   const inMain = () =>
     appRef.current?.querySelector("[data-main-box]")?.contains(document.activeElement) ?? false;
+  /** K-4 / K-9: a key clicks its target; an off one (aria-disabled, as Guarded's are, or a
+   * placeholder such as the phone's "Nothing to run") is a missing one, so the key is left
+   * alone and nothing is prevented. */
   const click = (sel: string): HTMLElement | null => {
     const el = appRef.current?.querySelector<HTMLElement>(sel) ?? null;
-    el?.click();
+    if (el === null || el.getAttribute("aria-disabled") === "true" || el.matches(":disabled"))
+      return null;
+    el.click();
     return el;
   };
   const keyActions: KeyActions = {
@@ -582,7 +597,8 @@ export function App({ store }: { store: GameStore }) {
           data-polling={view.polling ? "armed" : "off"}
         >
           {mode === "phone" ? <PhoneShell {...props} /> : <DesktopShell {...props} />}
-          {/* V-19: the phone's sheet, fixed, on the app root above the TAP and the bottom tabs. */}
+          {/* K-3: the phone's modal sheet, its backdrop on the app root over the TAP and the
+              bottom tabs (inert while it's open). */}
           {mode === "phone" && drawer}
           {command !== null && whyOpen && mode === "phone" && (
             <NextBuySheet {...command} onClose={() => closeWhy(true)} onOpenItem={openFromSheet} />

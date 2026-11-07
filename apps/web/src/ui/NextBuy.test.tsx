@@ -241,8 +241,10 @@ describe("the phone: the split bar and the sheet (U-4b, U-4c)", { timeout: 60_00
     expect(open.getAttribute("aria-label")).toBe("open Iron Plate");
     fireEvent.click(open);
     expect(sheet()).toBeNull();
-    expect(q('[data-drawer="iron_plate"]')).not.toBeNull();
-    expect(document.querySelector("[inert]")).toBeNull();
+    // K-3: the drawer sheet is the modal now, the only one; the background stays inert.
+    expect(q('[data-drawer="iron_plate"]')!.getAttribute("aria-modal")).toBe("true");
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    expect(why().closest("[inert]")).not.toBeNull();
   });
 
   // Catches: a power-lane item's "open" picking the power lane, which the phone's lane tabs
