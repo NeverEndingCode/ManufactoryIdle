@@ -81,7 +81,9 @@ function compute(s: Snapshot, actions: readonly Action[]): Preview {
     const residue = liquid(snapped, itemId);
     if (residue.lte(DECIMAL_ZERO)) continue;
     if (residue.gt(q!.cost.get(itemId)!.times(SPEND_RESIDUAL_TOLERANCE))) {
-      throw new PreviewInvariantError(`preview: "${itemId}" is left with a residue of ${residue.toString()}`);
+      throw new PreviewInvariantError(
+        `preview: "${itemId}" is left with a residue of ${residue.toString()}`,
+      );
     }
     snapped = {
       ...snapped,
@@ -149,7 +151,8 @@ function mw(n: number): string {
 
 function powerChanged(p: { before: PowerReport; after: PowerReport }): boolean {
   const { before: b, after: a } = p;
-  const moved = (x: number, y: number) => Math.abs(x - y) > RATE_TOLERANCE * Math.max(1, Math.abs(x));
+  const moved = (x: number, y: number) =>
+    Math.abs(x - y) > RATE_TOLERANCE * Math.max(1, Math.abs(x));
   return moved(b.demandMw, a.demandMw) || moved(b.supplyMw, a.supplyMw);
 }
 
@@ -166,19 +169,20 @@ export function bottleneckMoved(p: { before: Bottleneck; after: Bottleneck }): b
   return JSON.stringify(adviceOf(p.after)) !== JSON.stringify(adviceOf(p.before));
 }
 
-/** Plain lines for the drawer: "Iron Plate +0.333/s → +0.667/s", "Power 22.0 / 200 MW →
- * 26.0 / 200 MW", "Clears the bottleneck" when the bottleneck moves, or "No change to rates
- * now" (pillar 4). The lane's items first, at most four rate lines. A rejection is its reason. */
-export function previewLines(s: Snapshot, p: Preview, laneId: LaneId): string[] {
-  if (!p.ok) return [p.reason];
+/** The rate deltas a preview shows: the lane's items first, at most four (previewLines and the
+ *  drawer's themed projectionLines share this, so they can't drift). */
+export function shownDeltas(s: Snapshot, p: Preview & { ok: true }, laneId: LaneId): RateDelta[] {
   const inLane = (d: RateDelta) => s.content.items.get(d.itemId)?.lane === laneId;
-  const ordered = [...p.deltas.filter(inLane), ...p.deltas.filter((d) => !inLane(d))];
-  const lines = ordered
-    .slice(0, MAX_RATE_LINES)
-    .map(
-      (d) =>
-        `${s.content.items.get(d.itemId)?.name ?? d.itemId} ${rateText(d.before)} → ${rateText(d.after)}`,
-    );
+  return [...p.deltas.filter(inLane), ...p.deltas.filter((d) => !inLane(d))].slice(
+    0,
+    MAX_RATE_LINES,
+  );
+}
+
+/** The lines after the rates, which name no item: "Power 22.0 / 200 MW → 26.0 / 200 MW",
+ *  "Clears the bottleneck", or "No change to rates now" (pillar 4). */
+export function summaryLines(p: Preview & { ok: true }): string[] {
+  const lines: string[] = [];
   const power = powerChanged(p.power);
   if (power) {
     const { before: b, after: a } = p.power;
@@ -189,4 +193,15 @@ export function previewLines(s: Snapshot, p: Preview, laneId: LaneId): string[] 
   if (bottleneckMoved(p.bottleneck)) lines.push("Clears the bottleneck");
   if (p.deltas.length === 0 && !power) lines.push("No change to rates now");
   return lines;
+}
+
+/** Plain lines for the drawer: "Iron Plate +0.333/s → +0.667/s", then summaryLines. The
+ * lane's items first, at most four rate lines. A rejection is its reason. */
+export function previewLines(s: Snapshot, p: Preview, laneId: LaneId): string[] {
+  if (!p.ok) return [p.reason];
+  const rates = shownDeltas(s, p, laneId).map(
+    (d) =>
+      `${s.content.items.get(d.itemId)?.name ?? d.itemId} ${rateText(d.before)} → ${rateText(d.after)}`,
+  );
+  return [...rates, ...summaryLines(p)];
 }

@@ -121,6 +121,16 @@ describe("the NEXT_BUY card (U-4c, desktop)", { timeout: 60_000 }, () => {
     expect(store.send).toHaveBeenCalledWith([P3_BUY], "bottleneck buy");
   });
 
+  it("6b. Esc closes it with focus fallen to <body> (a buy unmounted the run, K-21)", () => {
+    mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
+    fireEvent.click(why());
+    expect(card()).not.toBeNull();
+    (document.activeElement as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(card()).toBeNull();
+  });
+
   it("6. focus leaving it for an outside element closes it", () => {
     mount(fakeStore(fresh));
     fireEvent.click(why());
@@ -130,6 +140,14 @@ describe("the NEXT_BUY card (U-4c, desktop)", { timeout: 60_000 }, () => {
     fireEvent.focusOut(inside, { relatedTarget: card()!.querySelector("[data-close]") });
     fireEvent.focusOut(inside, { relatedTarget: null });
     expect(card()).not.toBeNull();
+    // Into a modal (the help, opened by ?) keeps it too: it sits inert under the modal.
+    const host = document.createElement("div");
+    host.setAttribute("data-help-host", "");
+    const title = host.appendChild(document.createElement("h2"));
+    document.body.appendChild(host);
+    fireEvent.focusOut(inside, { relatedTarget: title });
+    expect(card()).not.toBeNull();
+    host.remove();
     fireEvent.focusOut(inside, { relatedTarget: outside });
     expect(card()).toBeNull();
   });
@@ -241,8 +259,10 @@ describe("the phone: the split bar and the sheet (U-4b, U-4c)", { timeout: 60_00
     expect(open.getAttribute("aria-label")).toBe("open Iron Plate");
     fireEvent.click(open);
     expect(sheet()).toBeNull();
-    expect(q('[data-drawer="iron_plate"]')).not.toBeNull();
-    expect(document.querySelector("[inert]")).toBeNull();
+    // K-3: the drawer sheet is the modal now, the only one; the background stays inert.
+    expect(q('[data-drawer="iron_plate"]')!.getAttribute("aria-modal")).toBe("true");
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    expect(why().closest("[inert]")).not.toBeNull();
   });
 
   // Catches: a power-lane item's "open" picking the power lane, which the phone's lane tabs

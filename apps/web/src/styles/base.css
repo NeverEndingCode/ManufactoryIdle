@@ -65,9 +65,33 @@ button {
   white-space: nowrap;
 }
 
-/* V-9: key hints are rendered but hidden until the keyboard lands (UI-2). */
+/* U-7e / K-7: key hints show on a fine pointer only (touch screens never see them), with a
+   one-cell gap before the label they sit in. */
 .key-hint {
   display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .key-hint {
+    display: inline;
+    margin-inline-end: 1ch;
+  }
+}
+
+/* U-8d / K-16: a coarse pointer gets 44 px targets from this one rule. Modules set their small
+   fine-pointer sizes with height, which min-height always beats; none declares a min-height or
+   min-width under 44 px outside a (pointer: fine) block (tokens.test 9a). */
+@media (pointer: coarse) {
+  /* Links too: a letter key's target may be one (the drawer's [H] handbook). min-* doesn't
+     apply to an inline link, so text links in prose are unchanged. */
+  button,
+  .btn,
+  [role="tab"],
+  [data-key],
+  a[href] {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* A status light or mark: one cell of the mono grid (U-3e). Its colour is its state class. */

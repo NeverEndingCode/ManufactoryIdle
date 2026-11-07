@@ -58,8 +58,19 @@ test("every view fits 320 px", async ({ page }) => {
     await page.locator('[role="option"][data-item="iron_plate"]').click();
     const drawer = page.locator('[data-drawer="iron_plate"]');
     await expect(drawer).toBeVisible();
+    // K-3: modal, over the scrim.
+    await expect(drawer).toHaveAttribute("aria-modal", "true");
     await expect(drawer.locator("[data-ladder]")).toBeVisible();
     await expectNoOverflow(page, "the iron plate drawer");
+    // A tap on the scrim, above the sheet's top, closes it.
+    const top = (await boxOf(drawer)).y;
+    expect(top).toBeGreaterThan(20);
+    await page.mouse.click(160, top / 2);
+    await expect(drawer).toHaveCount(0);
+    await expect(page.locator("[data-drawer-host]")).toHaveCount(0);
+    // Reopened, the x closes it.
+    await page.locator('[role="option"][data-item="iron_plate"]').click();
+    await expect(drawer).toBeVisible();
     await drawer.getByRole("button", { name: "Close" }).click();
     await expect(drawer).toHaveCount(0);
   });

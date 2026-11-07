@@ -1,6 +1,8 @@
 // The item drawer's model (Q-4, Q-6): pure, once per (snapshot, itemId). Every D.1 machine
 // verb for the lane-class of the item's active recipe, the recipe choice, and storage and QS.
-// Everything reads s.display.state, the state s.display.solution was solved from.
+// A generator recipe has no item row: drawerModel(s, { recipeId }) gives its lane-class's
+// machines alone (U-5c, K-12). Everything reads s.display.state, the state s.display.solution
+// was solved from.
 import {
   assignedTotal,
   bestUnlockedMark,
@@ -113,6 +115,7 @@ export interface RecipeChoice {
 }
 
 export interface DrawerModel {
+  kind: "item";
   itemId: ItemId;
   name: string;
   laneId: LaneId;
@@ -122,6 +125,18 @@ export interface DrawerModel {
   recipes: RecipeChoice[];
   storage: LevelSection<BuyStorage>;
   qs: LevelSection<BuyQs>;
+}
+
+/** U-5c "Generator drawers": a power recipe's lane-class, which no item row reaches. */
+export interface GeneratorModel {
+  kind: "generator";
+  recipeId: RecipeId;
+  machineClass: MachineClassId;
+  /** The class's content name. */
+  name: string;
+  /** The power lane. */
+  laneId: LaneId;
+  machines: MachineSection;
 }
 
 /** The sim's IDLE_CLOCK (apps/sim/src/policies.ts). */
@@ -198,22 +213,20 @@ function assignRows(s: Snapshot, lane: LaneId, machineClass: MachineClassId): As
       live,
       idle: assigned > 0 && (clocks.get(recipeId) ?? 0) <= IDLE_CLOCK,
       starved:
-        live &&
-        assigned === 0 &&
-        itemStateTag(s.content, state, recipe.primaryOutput) !== "FULL",
+        live && assigned === 0 && itemStateTag(s.content, state, recipe.primaryOutput) !== "FULL",
     });
   }
   return rows;
 }
 
-function machineSection(
+/** The MACHINES section over a recipe's lane-class; `recipeId` names it while it's live. */
+function machineSectionOf(
   s: Snapshot,
-  itemId: ItemId,
+  recipeId: RecipeId,
   notation: NotationMode,
 ): MachineSection | null {
-  const recipeId = activeRecipeOf(s, itemId);
-  const recipe = recipeId === undefined ? undefined : s.content.recipes.get(recipeId);
-  if (recipeId === undefined || !recipe) return null;
+  const recipe = s.content.recipes.get(recipeId);
+  if (!recipe) return null;
   const { lane, machineClass } = recipe;
   const pool = installedMachines(s.display.state, lane, machineClass);
   return {
@@ -230,6 +243,16 @@ function machineSection(
     ladder: ladderProgress(s, lane, machineClass, notation),
     assign: assignRows(s, lane, machineClass),
   };
+}
+
+/** The item's active recipe's section; null if the item has no producer. */
+function machineSection(
+  s: Snapshot,
+  itemId: ItemId,
+  notation: NotationMode,
+): MachineSection | null {
+  const recipeId = activeRecipeOf(s, itemId);
+  return recipeId === undefined ? null : machineSectionOf(s, recipeId, notation);
 }
 
 function recipeChoices(s: Snapshot, itemId: ItemId): RecipeChoice[] {
@@ -297,25 +320,43 @@ function qsSection(s: Snapshot, itemId: ItemId, lane: LaneId): LevelSection<BuyQ
   );
 }
 
-/** Per snapshot, then per (notation, item): the sections carry formatted text (S-11). */
-const memo = new WeakMap<Snapshot, Map<string, DrawerModel>>();
+/** Per snapshot, then per (notation, item) or (notation, recipe): the sections carry formatted
+ * text (S-11). */
+const memo = new WeakMap<Snapshot, Map<string, DrawerModel | GeneratorModel>>();
 
+export function drawerModel(s: Snapshot, itemId: ItemId, notation?: NotationMode): DrawerModel;
 export function drawerModel(
   s: Snapshot,
-  itemId: ItemId,
+  target: { recipeId: RecipeId },
+  notation?: NotationMode,
+): GeneratorModel;
+export function drawerModel(
+  s: Snapshot,
+  target: ItemId | { recipeId: RecipeId },
   notation: NotationMode = currentNotation(),
-): DrawerModel {
+): DrawerModel | GeneratorModel {
   let bySnapshot = memo.get(s);
   if (bySnapshot === undefined) {
     bySnapshot = new Map();
     memo.set(s, bySnapshot);
   }
-  const key = `${notation}:${itemId}`;
+  const key =
+    typeof target === "string" ? `${notation}:${target}` : `recipe:${notation}:${target.recipeId}`;
   const hit = bySnapshot.get(key);
   if (hit !== undefined) return hit;
+  const m =
+    typeof target === "string"
+      ? itemModel(s, target, notation)
+      : generatorModel(s, target.recipeId, notation);
+  bySnapshot.set(key, m);
+  return m;
+}
+
+function itemModel(s: Snapshot, itemId: ItemId, notation: NotationMode): DrawerModel {
   const item = s.content.items.get(itemId);
   if (!item) throw new Error(`drawerModel: unknown item "${itemId}"`);
-  const m: DrawerModel = {
+  return {
+    kind: "item",
     itemId,
     name: item.name,
     laneId: item.lane,
@@ -324,8 +365,22 @@ export function drawerModel(
     storage: storageSection(s, itemId),
     qs: qsSection(s, itemId, item.lane),
   };
-  bySnapshot.set(key, m);
-  return m;
+}
+
+function generatorModel(s: Snapshot, recipeId: RecipeId, notation: NotationMode): GeneratorModel {
+  const recipe = s.content.recipes.get(recipeId);
+  if (!recipe || !(recipe.def.powerOutput > 0))
+    throw new Error(`drawerModel: "${recipeId}" is not a generator recipe`);
+  // Safe: machineSectionOf is null only for an unknown recipe, and the guard above found it.
+  const machines = machineSectionOf(s, recipeId, notation)!;
+  return {
+    kind: "generator",
+    recipeId,
+    machineClass: recipe.machineClass,
+    name: machines.className,
+    laneId: recipe.lane,
+    machines,
+  };
 }
 
 /** BUY_MACHINE for this section, naming its recipe while that recipe is live. */

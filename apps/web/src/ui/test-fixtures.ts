@@ -44,6 +44,24 @@ export function loadSlice(): Slice {
   return { content: indexContent(bundle as ContentBundle), checksum: bundleChecksum(bundle) };
 }
 
+/**
+ * The slice with a Biomass Burner Mk.2 (rate 2, unlocked from tier 0), in memory only: the slice
+ * has no generator with a second mark, so a generator's UPGRADE_MARK needs one (K-12, U-5c).
+ */
+export function burnerMk2Slice(): Slice {
+  const bundle = loadBundleDir(SLICE_DIR);
+  const burner = bundle.machineClasses.find((c) => c.id === "biomass_burner")!;
+  const mk1 = burner.marks[0]!;
+  burner.marks.push({
+    ...mk1,
+    mark: 2,
+    name: "Biomass Burner Mk.2",
+    rateMultiplier: 2,
+    buildCostMultiplier: 2,
+  });
+  return { content: indexContent(bundle as ContentBundle), checksum: bundleChecksum(bundle) };
+}
+
 /** The real worldView shape: the serialized state and the engine's schedule of it. */
 export function snapshotOf(
   slice: Slice,

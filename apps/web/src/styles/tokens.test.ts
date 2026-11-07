@@ -432,15 +432,58 @@ describe("the CSS source", () => {
     expect(heights.map((d) => d.value)).toEqual(heights.map(() => "var(--row-h)"));
   });
 
-  it("9a. a segmented button is a 44 px target both ways (W-20)", () => {
-    // The 320 px e2e found the drawer's "×1" at 38.8 px wide: short labels need a min-width.
-    const segs = all.filter((d) => d.stack.at(-1) === ".segBtn");
-    expect(segs.length).toBeGreaterThan(0);
-    const byFile = new Map<string, Record<string, string>>();
-    for (const d of segs) byFile.set(d.file, { ...byFile.get(d.file), [d.property]: d.value });
-    for (const [file, rule] of byFile) {
-      expect(rule["min-height"], file).toBe("44px");
-      expect(rule["min-width"], file).toBe("44px");
+  // Catches: a hint shown unconditionally (a touch screen would see keys it has no way to press),
+  // or shown under some other query.
+  it("11a. key hints show only on a fine pointer (U-7e, K-7)", () => {
+    const FINE = "@media (hover: hover) and (pointer: fine)";
+    const hints = all.filter(
+      (d) =>
+        d.property === "display" &&
+        /\.key-hint\b/.test(d.stack.filter((s) => !s.startsWith("@")).at(-1) ?? ""),
+    );
+    const shown = hints.map((d) => `${d.stack.join(" > ")} { display: ${d.value} }`);
+    expect(shown).toEqual([
+      ".key-hint { display: none }",
+      `${FINE} > .key-hint { display: inline }`,
+    ]);
+    for (const d of hints) {
+      if (d.value === "none") expect(d.stack, shown.join("; ")).toEqual([".key-hint"]);
+      else expect(d.stack, shown.join("; ")).toEqual([FINE, ".key-hint"]);
     }
+  });
+
+  // U-8d / K-16. Catches: a module min-height under 44 px, which beats the coarse rule's
+  // element selector on specificity and leaves a touch target short.
+  it("9a. a coarse pointer gets 44 px targets from one rule, and nothing undercuts it", () => {
+    const coarse = all.filter(
+      (d) =>
+        d.file === "styles/base.css" &&
+        d.stack.length === 2 &&
+        d.stack[0] === "@media (pointer: coarse)" &&
+        d.stack[1]!.split(",")
+          .map((x) => x.trim())
+          .includes("button"),
+    );
+    // A letter key's target can be a link (the drawer's [H] handbook): links are covered too.
+    expect(coarse[0]!.stack[1]!.split(",").map((x) => x.trim())).toEqual(
+      expect.arrayContaining(["button", ".btn", '[role="tab"]', "[data-key]", "a[href]"]),
+    );
+    expect(Object.fromEntries(coarse.map((d) => [d.property, d.value]))).toMatchObject({
+      "min-height": "44px",
+      "min-width": "44px",
+    });
+    const fine = (d: (typeof all)[number]) => d.stack.some((s) => /pointer:\s*fine/.test(s));
+    const under = all.filter((d) => {
+      if (d.property !== "min-height" && d.property !== "min-width") return false;
+      // px, or rem/em at the 16 px root (2.5rem is 40 px).
+      const m = /^(\d+(?:\.\d+)?)(px|rem|em)$/.exec(d.value);
+      if (m === null || fine(d)) return false;
+      return Number(m[1]) * (m[2] === "px" ? 1 : 16) < 44;
+    });
+    expect(
+      under.map((d) => `${d.file}: ${d.stack.join(" > ")} { ${d.property}: ${d.value} }`),
+    ).toEqual([]);
+    // The segmented tabs are gone (U-5c).
+    expect(all.filter((d) => d.stack.some((s) => s.includes(".segBtn")))).toEqual([]);
   });
 });

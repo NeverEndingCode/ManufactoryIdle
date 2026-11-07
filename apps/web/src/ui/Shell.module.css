@@ -29,6 +29,44 @@
   flex: 1;
 }
 
+/* The chip, the panel tabs, ? and cfg: one group, so a header too narrow for one line wraps
+   them together (below). */
+.nav {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 20px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+/* K-25 (U-2c amendment): below 1040 px the header always takes two lines, the group on the
+   second, right-aligned, and the tier readout fills the first (a zero basis, then it grows and
+   ellipsizes). By width alone, never by content, so the save chip appearing mid-session can't
+   change the header's height. 1040 is at or above the widest one-line header, chip included,
+   in the widest theme: Clean at the desktop title size needs 1028 px of viewport (terminal
+   892 px of header). The phone has its own header. */
+@media (max-width: 1039px) {
+  :global(.app:not([data-layout="phone"])) .header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  :global(.app:not([data-layout="phone"])) .header > :global(.tier-readout) {
+    flex: 1 1 0;
+  }
+
+  :global(.app:not([data-layout="phone"])) .spacer {
+    display: none;
+  }
+
+  :global(.app:not([data-layout="phone"])) .nav {
+    flex-basis: 100%;
+  }
+}
+
 /* S-12's chip: 36 px, --t1 on an --accent border. */
 .chip {
   flex: none;
@@ -69,6 +107,21 @@
 
 .cfg {
   flex: none;
+}
+
+/* U-7e: the help button, 36 tall and 44 wide, beside cfg (desktop and tablet only, K-17). */
+.helpButton {
+  flex: none;
+  width: 44px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  cursor: pointer;
 }
 
 .panel.on {

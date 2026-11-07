@@ -1,6 +1,6 @@
 /* The item drawer, on the new tokens: rows, not cards (W-17). Desktop and tablet: U-5a's panel,
    absolute in the content row over the main box's right columns, so no row moves (U-3). The
-   phone: V-19's sheet, U-5b's geometry without its modality. Both are --s1, so --t3 reads on
+   phone: U-5b's modal sheet over the --scrim (K-3). Both are --s1, so --t3 reads on
    them (U-1f). Nothing scrolls sideways at 320 px: button rows wrap, names ellipsize, numbers
    never leave the screen (W-19). */
 .drawer {
@@ -12,6 +12,8 @@
   padding: 12px 16px;
   overflow-y: auto;
   background: var(--s1);
+  /* A size container: a mark row's layout follows the drawer's width (below). */
+  container: drawer / inline-size;
 }
 
 /* U-5a: top, right and bottom 0 in .contentRow, above the main box, under the notices. */
@@ -30,12 +32,19 @@
   width: clamp(360px, 100% - 300px, 560px);
 }
 
-/* V-19: fixed below the header band, over the TAP (20) and the bottom tabs; under the NEXT_BUY
-   sheet (40) and Settings (50). */
-.sheet {
+/* K-3: the sheet's backdrop, over the TAP (20) and the bottom tabs; under the phone notices (35),
+   the NEXT_BUY sheet (40) and Settings (50). The background is inert (App). */
+.backdrop {
   position: fixed;
-  inset: clamp(56px, 18dvh, 150px) 0 0 0;
+  inset: 0;
   z-index: 30;
+  background: var(--scrim);
+}
+
+/* U-5b: below the header band, in the backdrop. */
+.sheet {
+  position: absolute;
+  inset: clamp(56px, 18dvh, 150px) 0 0 0;
   padding: 12px 16px calc(18px + env(safe-area-inset-bottom, 0px));
   border-top: 2px solid var(--accent);
 }
@@ -47,6 +56,11 @@
 @media (prefers-reduced-motion: no-preference) {
   .sheet {
     animation: rise 180ms ease-out;
+  }
+
+  /* K-20: released short of 96 px, the sheet snaps back; while the finger drags it, no lag. */
+  .sheet:not([data-dragging]) {
+    transition: transform 160ms ease-out;
   }
 }
 
@@ -94,6 +108,30 @@
   background: var(--s1);
 }
 
+/* K-20: at the top, a vertical drag on the head is the sheet's, not a scroll. */
+.sheet[data-at-top] .head {
+  touch-action: none;
+}
+
+/* K-20: the grip, a 44 px hit area the sheet's width over its 44 x 4 bar in --t3. */
+.grip {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.grip::before {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--t3);
+  content: "";
+}
+
 .title:global(.state-bottleneck) {
   color: var(--state-bottleneck);
 }
@@ -113,7 +151,7 @@
   white-space: nowrap;
 }
 
-/* U-5a's hint, 12 px --t3 on --s1; .key-hint hides it until UI-2 (V-9). */
+/* U-5a's hint, 12 px --t3 on --s1; .key-hint shows it on a fine pointer only (U-7e). */
 .hint {
   flex-basis: 100%;
   color: var(--t3);
@@ -121,22 +159,11 @@
   white-space: pre;
 }
 
-/* §13.1's split bar, moved from the row (V-18): a button to the priority entry. */
-.splitButton {
-  display: block;
-  width: 100%;
-  min-height: 44px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.splitWrap {
-  margin-top: 8px;
+/* K-15: SPLIT, the bar (decoration) over one button per part. */
+.splitSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .split {
@@ -148,6 +175,40 @@
 
 .split > div {
   flex-basis: 0;
+}
+
+.splitList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.splitRow {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 1px var(--rule) var(--line-soft);
+  background: none;
+  color: var(--t2);
+  font: inherit;
+  font-size: var(--fs-label);
+  text-align: left;
+  cursor: pointer;
+}
+
+.splitList li:last-child .splitRow {
+  border-bottom: 0;
+}
+
+.swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
 }
 
 .toneA {
@@ -162,56 +223,241 @@
   background: var(--line);
 }
 
-.splitLabels {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 10px;
-  margin-top: 5px;
-  color: var(--t2);
-  font-size: var(--fs-small);
-}
-
-/* "Handbook entry": a link dressed as the secondary button, never underlined. */
-.handbookLink {
-  display: inline-flex;
-  box-sizing: border-box;
-  align-items: center;
-  text-decoration: none;
-}
-
-/* The segmented tabs, kept in UI-1 (U-5c replaces them in UI-2). */
-.seg {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.segBtn {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 6px 11px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--t2);
-  font-family: var(--font-ui);
-  font-size: var(--fs-label);
-  cursor: pointer;
-}
-
-.segBtn.on {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-
-.body {
+/* The body: MACHINES, or the open section in its place (U-5c). */
+.body,
+.stack {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+}
+
+/* A section's heading: MACHINES, SPLIT, MORE, UPGRADE …, 12 px --t2. */
+.h3 {
+  margin: 0;
+  color: var(--t2);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+/* U-5c: MACHINES, a --line box of 44 px rows with a --line-soft rule between them. */
+.marks {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  list-style: none;
+}
+
+.mark {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 4px 12px;
+  height: 44px;
+  padding: 0 10px;
+  border-bottom: 1px var(--rule) var(--line-soft);
+}
+
+.mark:last-child {
+  border-bottom: 0;
+}
+
+/* 150 px, shrinking first on a narrow panel (the 360 px tablet clamp), so nothing scrolls
+   sideways. */
+.markName {
+  overflow: hidden;
+  flex: 0 1 150px;
+  min-width: 0;
+  color: var(--t1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owned {
+  flex: none;
+  width: 50px;
+}
+
+.each {
+  overflow: hidden;
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--t2);
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Buy 1 is short: the bottleneck colour, a state class (W-17). */
+.each:global(.state-bottleneck) {
+  color: var(--state-bottleneck);
+}
+
+.locked {
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--t3);
+  font-size: var(--fs-small);
+}
+
+.markBtns {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+/* The final review's item 6: on a narrow drawer (the 360 px tablet clamp, the phone sheet) a
+   buyable mark's buttons go to a second line under its name, count and cost, so the name keeps
+   its width (CONSTRUCTOR_MK1 whole, not "CON…") and nothing scrolls sideways. 480 px is where
+   a full name, the count and the three buttons stop fitting on one line. */
+@container drawer (max-width: 479px) {
+  .buyable {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+
+  .buyable .markName {
+    flex: 0 1 auto;
+  }
+
+  .buyable .markBtns {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+}
+
+/* x10 and max: 36 px, outlined. A fine-pointer size, set with height: on a coarse pointer the
+   base rule's min-height lifts it to 44 px (K-16). */
+.markBtn {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--s1);
+  color: var(--t-body);
+  font-family: var(--font-ui);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* buy 1: the --accent fill. */
+.markBtn.buy {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.markBtn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The IF YOU BUY line, 12 px --t3: the projection's caption (K-13). */
+.follow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.followLine {
+  margin: 0;
+  color: var(--t3);
+  font-size: var(--fs-small);
+}
+
+/* U-5c: the MORE buttons, 36 px outlined, in a wrapping row. */
+.more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.more > .h3 {
+  flex-basis: 100%;
+}
+
+.moreBtn {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--s1);
+  color: var(--t-body);
+  font-family: var(--font-ui);
+  font-size: var(--fs-small);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.moreBtn[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* U-5b: the sheet's 44 × 44 x. */
+.x {
+  width: 44px;
+  height: 44px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--t1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+/* U-5b: on the phone the mark rows wrap, their buttons a row of 48 px below; MORE is a
+   2-column grid of 48 px buttons at the sheet's bottom. */
+.sheet .mark {
+  flex-wrap: wrap;
+  height: auto;
+  padding: 6px 10px;
+}
+
+.sheet .markName {
+  flex: 1 1 0;
+}
+
+.sheet .each {
+  flex-basis: 100%;
+  order: 1;
+}
+
+.sheet .markBtns {
+  flex-basis: 100%;
+  order: 2;
+}
+
+.sheet .markBtn {
+  flex: 1 1 0;
+  height: 48px;
+}
+
+.sheet .more {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: auto;
+}
+
+.sheet .moreBtn {
+  justify-content: center;
+  height: 48px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
 }
 
 .kv {
@@ -222,17 +468,6 @@
   gap: 4px 10px;
   color: var(--t2);
   font-size: var(--fs-label);
-}
-
-.select {
-  min-height: 44px;
-  max-width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--t1);
-  font: inherit;
 }
 
 .ladder {
@@ -310,7 +545,7 @@
 
 /* Short: the bottleneck colour (a state class, W-17) plus the countdown's words, never colour
    alone (W-20). */
-.cost li.state-bottleneck {
+.cost li:global(.state-bottleneck) {
   color: var(--state-bottleneck);
 }
 
@@ -369,7 +604,7 @@
   padding: 8px 0;
 }
 
-/* The projection (Projection.tsx): a --rule box in --line, 13 px. */
+/* The projection (Projection.tsx): a --rule box in --line, 13 px, line-height 1.8 (U-5c). */
 .preview {
   padding: 8px 10px;
   border: 1px var(--rule) var(--line);
@@ -389,5 +624,12 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  line-height: 1.8;
   overflow-wrap: anywhere;
+}
+
+/* K-14: an input the action draws harder, in --advice. It marks any falling rate (a dismantle's
+   own item too); K-14 uses it for a buy's draining inputs. */
+.drain {
+  color: var(--advice);
 }

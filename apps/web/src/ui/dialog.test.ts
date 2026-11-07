@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // V-12: one inert pass for every modal; the live region is never inert, its controls are.
 import { afterEach, describe, expect, it } from "vitest";
-import { inertOutside, trapTab } from "./dialog.js";
+import { inertOutside, MODAL_HOSTS, openModal, trapTab } from "./dialog.js";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -75,5 +75,32 @@ describe("trapTab", () => {
     const mid = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, cancelable: true });
     trapTab(mid, d);
     expect(mid.defaultPrevented).toBe(false);
+  });
+});
+
+// K-5: one modal at a time, and the inert pass finds whichever it is.
+// Catches: an order that lets the NEXT_BUY sheet or help win over Settings, or a host left out.
+describe("openModal (K-5)", () => {
+  it("picks Settings over help over the NEXT_BUY sheet, and null with none open", () => {
+    document.body.innerHTML = `
+      <div id="app">
+        <div data-next-buy-host id="sheet"></div>
+        <div data-help-host id="help"></div>
+        <div><div data-settings-host id="settings"></div></div>
+      </div>`;
+    const app = document.getElementById("app")!;
+    const $ = (id: string) => document.getElementById(id)!;
+    expect(MODAL_HOSTS.slice(0, 3)).toEqual([
+      "[data-settings-host]",
+      "[data-help-host]",
+      "[data-next-buy-host]",
+    ]);
+    expect(openModal(app)).toBe($("settings"));
+    $("settings").remove();
+    expect(openModal(app)).toBe($("help"));
+    $("help").remove();
+    expect(openModal(app)).toBe($("sheet"));
+    $("sheet").remove();
+    expect(openModal(app)).toBeNull();
   });
 });

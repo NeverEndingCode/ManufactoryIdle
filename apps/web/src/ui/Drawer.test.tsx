@@ -3,7 +3,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { D, liquidCap, withInstalled, type Bottleneck, type WorldState } from "@manufactory/engine";
+import {
+  D,
+  liquidCap,
+  withInstalled,
+  type Action,
+  type Bottleneck,
+  type WorldState,
+} from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Outcome } from "../sync/errors.js";
 import type { Batch } from "../sync/outbox.js";
@@ -11,8 +18,15 @@ import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { declarations } from "../styles/css-walk.js";
 import { App } from "./App.js";
-import { bottleneckRow } from "./derive.js";
-import { drawerLabel } from "./Drawer.js";
+import { bottleneckRow, splitOf } from "./derive.js";
+import { drawerLabel, sectionsOf } from "./Drawer.js";
+import { buyAction, drawerModel } from "./machines.js";
+import { fmt } from "./notation.js";
+import { preview } from "./preview.js";
+import { projectionLines } from "./Projection.js";
+import { quote } from "./quote.js";
+import { routePath } from "./route.js";
+import { themeDef } from "./theme.js";
 import {
   CLIENT_T0,
   fakeStore,
@@ -40,6 +54,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function mount(store: FakeStore) {
@@ -71,9 +86,44 @@ function open(item: string): HTMLElement {
   return d!;
 }
 
+/** U-5c: a MORE button opens its section in place of MACHINES. */
 function pick(d: HTMLElement, verb: string) {
-  fireEvent.click(within(d).getByRole("button", { name: verb, pressed: false }));
+  const toggle = d.querySelector<HTMLElement>(`[data-section="${verb.toLowerCase()}"]`);
+  expect(toggle, `[data-section] ${verb}`).not.toBeNull();
+  expect(toggle!.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(toggle!);
 }
+
+/** K-13: a mark row's buy, ×1, ×10 or max. */
+const markBuy = (d: HTMLElement, mark: number, count: "1" | "10" | "max") =>
+  d.querySelector<HTMLElement>(`[data-mark-buy="${mark}"][data-count="${count}"]`);
+const bodyOf = (d: HTMLElement) => d.querySelector<HTMLElement>("[data-body]")!.dataset.body;
+const followOf = (d: HTMLElement) => d.querySelector<HTMLElement>("[data-follow]")!;
+/** keydown on the focused element; true when nothing called preventDefault. */
+const key = (k: string) => fireEvent.keyDown(document.activeElement ?? document.body, { key: k });
+/** What a projection line's li reads: the shown text, then a reader's copy when they differ. */
+const lineText = (l: { shown: string; said: string }) =>
+  l.shown === l.said ? l.shown : `${l.shown}${l.said}`;
+
+const BUY_PLATE: Action = {
+  type: "BUY_MACHINE",
+  lane: "iron",
+  machineClass: "constructor",
+  mark: 1,
+  count: 1,
+  recipeId: "make_iron_plate",
+};
+
+/** jsdom focuses an inert element; a browser doesn't. This makes focus() refuse, as there. */
+const honourInert = () => {
+  const focus = HTMLElement.prototype.focus;
+  vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+    this: HTMLElement,
+    opts?: FocusOptions,
+  ) {
+    if (this.closest("[inert]") === null) focus.call(this, opts);
+  });
+};
 
 const batch = (label: string, id = 1): Batch => ({ id, key: `k${id}`, actions: [], label });
 
@@ -87,7 +137,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(d.id).toBe("detail");
     expect(d.getAttribute("aria-labelledby")).toBe("drawer-title");
     expect(document.activeElement).toBe(document.getElementById("drawer-title"));
-    expect(within(d).getByText("Miner")).toBeTruthy();
+    expect(within(d).getByText("Miner Mk.1")).toBeTruthy();
     expect(within(d).getByText("8 more Miners → ×1.50")).toBeTruthy();
 
     // U-7c: back to the list, with that row active.
@@ -111,7 +161,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
   it("2. the projection shows the selected action's effect before purchase", () => {
     mount(fakeStore(fresh));
     const d = open("iron_plate");
-    expect(within(d).getByRole("button", { name: "×1" }).getAttribute("aria-pressed")).toBe("true");
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 1(?!\d)/);
     const p = d.querySelector<HTMLElement>("[data-preview]")!;
     expect(p.getAttribute("aria-live")).toBe("off");
     expect(p.textContent).toContain("Iron Plate");
@@ -119,52 +169,23 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(within(p).getByText(/^Power /)).toBeTruthy();
   });
 
-  it("3. Buy is pessimistic and exact", () => {
-    const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
-    mount(store);
-    const d = open("iron_plate");
-    const owned = () => d.querySelector("[data-owned]")!.textContent;
-    expect(owned()).toBe("1 owned");
-    const buy = within(d).getByRole("button", { name: /^Buy 1 Constructor$/ });
-    expect((buy as HTMLButtonElement).getAttribute("aria-disabled") === "true").toBe(false);
-    fireEvent.click(buy);
-    expect(store.send).toHaveBeenCalledTimes(1);
-    expect(store.send).toHaveBeenCalledWith(
-      [
-        {
-          type: "BUY_MACHINE",
-          lane: "iron",
-          machineClass: "constructor",
-          mark: 1,
-          count: 1,
-          recipeId: "make_iron_plate",
-        },
-      ],
-      "drawer:iron_plate:buy",
-    );
-    expect(owned()).toBe("1 owned");
-
-    store.set({ pending: [batch(drawerLabel("iron_plate", "buy"))] });
-    const busy = within(d).getByRole("button", { name: /^Buy 1 Constructor$/ });
-    expect((busy as HTMLButtonElement).getAttribute("aria-disabled") === "true").toBe(true);
-    expect(busy.getAttribute("aria-busy")).toBe("true");
-    expect(owned()).toBe("1 owned");
-
-    // Only the snapshot moves the count.
-    const after = snapshotOf(slice, withInstalled(fresh.state, "iron", "constructor", 1, 2), {
-      stateVersion: 1,
-    });
-    store.set({ pending: [], snapshot: after });
-    expect(drawer("iron_plate")!.querySelector("[data-owned]")!.textContent).toBe("2 owned");
-  });
-
   it("3b. before it is affordable: disabled, the short cost red, a countdown", () => {
     mount(fakeStore(fresh));
     const d = open("iron_plate");
-    const buy = within(d).getByRole("button", { name: /^Buy 1 Constructor$/ });
-    expect((buy as HTMLButtonElement).getAttribute("aria-disabled") === "true").toBe(true);
-    expect(d.querySelector('[data-cost="iron_ingot"]')!.hasAttribute("data-short")).toBe(true);
-    expect(d.querySelector("[data-countdown]")!.textContent).toMatch(/^affordable in 4[2-4]s$/);
+    const buy = markBuy(d, 1, "1")!;
+    expect(buy.getAttribute("aria-disabled")).toBe("true");
+    expect(buy.getAttribute("aria-label")).toMatch(
+      /^Buy 1 Constructor Mk\.1, affordable in 4[2-4] seconds$/,
+    );
+    const follow = followOf(d);
+    expect(follow.querySelector('[data-cost="iron_ingot"]')!.hasAttribute("data-short")).toBe(true);
+    expect(follow.querySelector("[data-countdown]")!.textContent).toMatch(
+      /^affordable in 4[2-4]s$/,
+    );
+    // The mark row's own cost reads short too (U-5c).
+    expect(
+      d.querySelector('[data-mark="1"] [data-each]')!.classList.contains("state-bottleneck"),
+    ).toBe(true);
   });
 
   it("4. tier 8: upgrade with its consolidation, and dismantle with its refund", () => {
@@ -436,65 +457,22 @@ describe("Drawer", { timeout: 60_000 }, () => {
     const sheet = open("iron_ore");
     expect(sheet.dataset.presentation).toBe("sheet");
     expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(sheet.getAttribute("aria-modal")).toBe("false");
-    // The priority tab swaps the main box.
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    // The priority tab swaps the main box (once the modal sheet is closed).
+    fireEvent.keyDown(sheet, { key: "Escape" });
     fireEvent.click(screen.getByRole("tab", { name: "priority" }));
     expect(document.querySelector('[data-item="iron_ore"]')).toBeNull();
-  });
-
-  it("9. a cost is red exactly when its button is off for lack of that item", () => {
-    const cases: [Snapshot, number, string, string][] = [
-      [fresh, CLIENT_T0, "iron_plate", "Buy"],
-      [fresh, CLIENT_T0 + 60_000, "iron_plate", "Buy"],
-      [tier8, CLIENT_T0, "iron_plate", "Upgrade"],
-      [tier8, CLIENT_T0 + 60_000, "iron_plate", "Upgrade"],
-      [fresh, CLIENT_T0 + 60_000, "iron_plate", "Storage"],
-    ];
-    let reds = 0;
-    let clear = 0;
-    for (const [snap, now, item, verb] of cases) {
-      mount(fakeStore(snap, { now }));
-      const d = open(item);
-      if (verb !== "Buy") pick(d, verb);
-      for (const cost of d.querySelectorAll<HTMLElement>('ul[aria-label="Cost"]')) {
-        const block = cost.parentElement!;
-        const button = block.querySelector("button")!;
-        const short = cost.querySelectorAll("[data-short]").length > 0;
-        expect(button.getAttribute("aria-disabled")).toBe(String(short));
-        if (short) reds += 1;
-        else clear += 1;
-      }
-      cleanup();
-    }
-    // Per item, not per list: a two-item cost with one item short (tier 8's Reinforced Iron
-    // Plate at Mk1 costs iron plate and iron rod; no plate, rod at its cap).
-    const t8 = fixtureState("slice-tier-8.world.json");
-    const mixed = topped({ ...t8, stored: { ...t8.stored, iron_plate: D(0) } }, ["iron_rod"]);
-    mount(fakeStore(snapshotOf(slice, mixed)));
-    const d = open("reinforced_iron_plate");
-    fireEvent.change(within(d).getByLabelText("Mark"), { target: { value: "1" } });
-    expect(d.querySelector('[data-cost="iron_plate"]')!.hasAttribute("data-short")).toBe(true);
-    expect(d.querySelector('[data-cost="iron_rod"]')!.hasAttribute("data-short")).toBe(false);
-    expect(
-      within(d)
-        .getByRole("button", { name: /^Buy 1 / })
-        .getAttribute("aria-disabled"),
-    ).toBe("true");
-    cleanup();
-    // Both sides of the rule are exercised.
-    expect(reds).toBeGreaterThan(0);
-    expect(clear).toBeGreaterThan(0);
   });
 
   it("10. Escape still closes while a focused spend is busy", () => {
     const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
     mount(store);
     const d = open("iron_plate");
-    const buy = within(d).getByRole("button", { name: /^Buy 1 Constructor$/ });
+    const buy = markBuy(d, 1, "1")!;
     buy.focus();
     fireEvent.click(buy);
     store.set({ pending: [batch(drawerLabel("iron_plate", "buy"))] });
-    const busy = within(drawer("iron_plate")!).getByRole("button", { name: /^Buy 1 Constructor$/ });
+    const busy = markBuy(drawer("iron_plate")!, 1, "1")!;
     expect(busy.getAttribute("aria-busy")).toBe("true");
     expect(document.activeElement).toBe(busy);
     // Off by aria-disabled, never the native disabled: a focused disabled button loses its
@@ -572,7 +550,9 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expectBackOn("iron_ore");
   });
 
-  it("13. a layout change re-lays out and never steals focus", () => {
+  // Catches: a panel remount stealing focus, or a modal sheet remount leaving focus behind the
+  // inert background (Esc would then do nothing).
+  it("13. a layout change re-lays out; a panel never steals focus, the modal sheet takes it", () => {
     const media = stubWidth(800);
     const r = mount(fakeStore(fresh));
     const app = () => r.container.querySelector<HTMLElement>(".app")!;
@@ -585,12 +565,15 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(app().dataset.layout).toBe("desktop");
     expect(drawer("iron_ore")).toBe(d);
     expect(document.activeElement).toBe(lane);
-    // The phone is its own tree: the drawer is a dialog sheet now, and it takes no focus.
+    // The phone is its own tree: the drawer is the modal sheet now, and a modal always takes
+    // focus (K-3), or it would be stranded on the inert background (<body> in a browser).
+    honourInert();
     media.resize(400);
     expect(app().dataset.layout).toBe("phone");
     const sheet = drawer("iron_ore")!;
     expect(sheet.dataset.presentation).toBe("sheet");
-    expect(sheet.contains(document.activeElement)).toBe(false);
+    expect(document.activeElement).toBe(document.getElementById("drawer-title"));
+    expect(sheet.contains(document.activeElement)).toBe(true);
     media.resize(1200);
     expect(app().dataset.layout).toBe("desktop");
     expect(drawer("iron_ore")!.dataset.presentation).toBe("panel");
@@ -714,7 +697,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
     expect(store.send).toHaveBeenCalledTimes(2);
   });
 
-  it("18. a held recipe survives an action-tab switch and a drawer close (Q-10)", async () => {
+  it("18. a held recipe survives a section switch and a drawer close (Q-10)", async () => {
     const t8 = fakeStore(tier8);
     let settle!: (o: Outcome) => void;
     t8.send.mockImplementationOnce(() => new Promise<Outcome>((r) => (settle = r)));
@@ -729,7 +712,7 @@ describe("Drawer", { timeout: 60_000 }, () => {
           name: /^Residual Plastic/,
         }) as HTMLInputElement
       ).checked;
-    // Another action tab, then back: the radio still holds.
+    // Another section, then back: the radio still holds.
     pick(p, "Storage");
     pick(drawer("plastic")!, "Recipe");
     expect(residual()).toBe(true);
@@ -782,28 +765,245 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     expect(d.getAttribute("aria-modal")).toBe("false");
   });
 
-  it("3. the phone: a sheet on the app root; focus in, Esc out, a remount takes none", () => {
+  const host = () => document.querySelector<HTMLElement>("[data-drawer-host]");
+  const grip = () => document.querySelector<HTMLElement>("[data-drawer] [data-grip]")!;
+  const heading = (d: HTMLElement) => within(d).getByRole("heading", { level: 2 });
+  const inert = (el: Element | null) => el !== null && el.closest("[inert]") !== null;
+  const pointer = (
+    type: "pointerDown" | "pointerMove" | "pointerUp" | "pointerCancel",
+    el: HTMLElement,
+    clientY: number,
+    pointerId = 1,
+  ) => fireEvent[type](el, { pointerId, clientY, button: 0 });
+
+  // Catches (K-3): the host left out of MODAL_HOSTS (nothing goes inert), the sheet still
+  // aria-modal="false", the notices region itself inerted (W-20), or its Dismiss left live.
+  it("3. the phone: a modal sheet in a backdrop on the app root; the background is inert", () => {
+    stubWidth(390);
+    const store = fakeStore(fresh);
+    mount(store);
+    act(() => store.set({ notices: [{ kind: "rejected", text: "That didn't go through." }] }));
+    const sheet = open("iron_plate");
+    expect(sheet.dataset.presentation).toBe("sheet");
+    expect(host()!.parentElement).toBe(document.querySelector(".app"));
+    expect(sheet.parentElement).toBe(host());
+    expect(sheet.tagName).toBe("SECTION");
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    expect(document.activeElement).toBe(heading(sheet));
+    expect(inert(document.querySelector("[data-power] button[data-tap]"))).toBe(true);
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    expect(tabs.length).toBeGreaterThan(4);
+    for (const tab of tabs) expect(inert(tab), tab.textContent ?? "").toBe(true);
+    expect(inert(listbox())).toBe(true);
+    expect(inert(document.querySelector(".notices"))).toBe(false);
+    expect(inert(screen.getByRole("button", { name: "Dismiss" }))).toBe(true);
+    expect(inert(sheet)).toBe(false);
+  });
+
+  // Catches: no Tab wrap; a close path that leaves the background inert, or focus on <body>
+  // (focus sent to the row list while it's still inert, before the sheet unmounts); a mousedown on the sheet itself read as
+  // one on the backdrop.
+  it("3b. Tab wraps in the sheet, the x first; Esc, the x and the backdrop each close it, back to the row", () => {
+    stubWidth(390);
+    honourInert();
+    mount(fakeStore(fresh));
+    const sheet = open("iron_plate");
+    const tabbable = [
+      ...sheet.querySelectorAll<HTMLElement>(
+        "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])",
+      ),
+    ].filter((el) => el.tabIndex >= 0);
+    const first = tabbable[0]!;
+    const last = tabbable.at(-1)!;
+    // K-20: the grip is pointer-only, hidden from assistive tech and never a Tab stop; the x is.
+    expect(grip().tagName).toBe("DIV");
+    expect(grip().getAttribute("aria-hidden")).toBe("true");
+    expect(grip().tabIndex).toBe(-1);
+    expect(grip().hasAttribute("aria-label")).toBe(false);
+    expect(tabbable).not.toContain(grip());
+    expect(first).toBe(within(sheet).getByRole("button", { name: "Close" }));
+    act(() => last.focus());
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    fireEvent.mouseDown(sheet);
+    fireEvent.mouseDown(heading(sheet));
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    const paths: [string, () => void][] = [
+      ["Esc", () => fireEvent.keyDown(document.activeElement!, { key: "Escape" })],
+      [
+        "the x",
+        () => fireEvent.click(within(drawer("iron_plate")!).getByRole("button", { name: "Close" })),
+      ],
+      ["the backdrop", () => fireEvent.mouseDown(host()!)],
+    ];
+    for (const [name, close] of paths) {
+      if (drawer("iron_plate") === null) open("iron_plate");
+      expect(drawer("iron_plate")!.getAttribute("aria-modal"), name).toBe("true");
+      close();
+      expect(drawer("iron_plate"), name).toBeNull();
+      expect(host(), name).toBeNull();
+      expect(document.querySelector("[inert]"), name).toBeNull();
+      expectBackOn("iron_plate");
+    }
+  });
+
+  // Catches: the NEXT_BUY sheet's hand-off losing the modal (two modals, or none), or closing
+  // to <body> because the opener (the open button) is gone.
+  it("3c. opened from the NEXT_BUY sheet's open IRON_PLATE, it closes to the row list", () => {
+    stubWidth(390);
+    honourInert();
+    mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
+    fireEvent.click(document.querySelector<HTMLElement>("[data-why]")!);
+    const go = document.querySelector<HTMLElement>("[data-next-buy] [data-open-item]")!;
+    expect(go.textContent).toBe("open IRON_PLATE");
+    fireEvent.click(go);
+    expect(document.querySelector("[data-next-buy]")).toBeNull();
+    const sheet = drawer("iron_plate")!;
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    expect(document.activeElement).toBe(heading(sheet));
+    expect(inert(document.querySelector("[data-why]"))).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("iron_plate")).toBeNull();
+    expect(document.querySelector("[inert]")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches (K-12): a generator sheet closing to the row list, or focusing its opener while it's
+  // still inert (so focus falls to <body>).
+  it("3d. a generator sheet returns focus to its [data-open-generator]", () => {
+    stubWidth(390);
+    honourInert();
+    mount(fakeStore(fresh));
+    fireEvent.click(screen.getByRole("tab", { name: "power" }));
+    const gen = () =>
+      document.querySelector<HTMLElement>('button[data-open-generator="biomass_burner"]');
+    fireEvent.click(gen()!);
+    const sheet = drawer("power:biomass_burner")!;
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(inert(gen())).toBe(true);
+    fireEvent.mouseDown(host()!);
+    expect(drawer("power:biomass_burner")).toBeNull();
+    expect(document.activeElement).toBe(gen());
+    fireEvent.click(gen()!);
+    pointer("pointerDown", grip(), 100);
+    pointer("pointerUp", grip(), 220);
+    expect(drawer("power:biomass_burner")).toBeNull();
+    expect(document.activeElement).toBe(gen());
+  });
+
+  // Catches (K-20): a threshold at >= 0 (a short drag closes), a sheet left translated after a
+  // snap-back or a cancel, or a drag that doesn't follow the finger.
+  it("3e. the grip: past 96 px closes; short of it, or cancelled, it snaps back", () => {
     stubWidth(390);
     mount(fakeStore(fresh));
-    const sheet = open("iron_ore");
-    expect(sheet.dataset.presentation).toBe("sheet");
-    expect(sheet.parentElement).toBe(document.querySelector(".app"));
-    expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(sheet.getAttribute("aria-modal")).toBe("false");
-    expect(document.activeElement).toBe(within(sheet).getByRole("heading", { name: "Iron Ore" }));
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    expect(drawer("iron_ore")).toBeNull();
-    expectBackOn("iron_ore");
+    const sheet = open("iron_plate");
+    pointer("pointerDown", grip(), 100);
+    pointer("pointerMove", grip(), 180);
+    expect(sheet.style.transform).toBe("translateY(80px)");
+    expect(sheet.hasAttribute("data-dragging")).toBe(true);
+    pointer("pointerUp", grip(), 180);
+    expect(drawer("iron_plate")).toBe(sheet);
+    expect(sheet.style.transform).toBe("");
+    expect(sheet.hasAttribute("data-dragging")).toBe(false);
 
-    // Priority, then Factory again: the sheet comes back (a remount) without taking focus.
-    open("iron_ore");
-    fireEvent.click(screen.getByRole("tab", { name: "priority" }));
-    expect(drawer("iron_ore")).toBeNull();
-    const factory = screen.getByRole("tab", { name: "factory" });
-    factory.focus();
-    fireEvent.click(factory);
-    expect(drawer("iron_ore")).not.toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "factory" }));
+    pointer("pointerDown", grip(), 100, 2);
+    pointer("pointerMove", grip(), 300, 2);
+    pointer("pointerCancel", grip(), 300, 2);
+    expect(drawer("iron_plate")).toBe(sheet);
+    expect(sheet.style.transform).toBe("");
+
+    pointer("pointerDown", grip(), 100, 3);
+    pointer("pointerMove", grip(), 220, 3);
+    expect(sheet.style.transform).toBe("translateY(120px)");
+    pointer("pointerUp", grip(), 220, 3);
+    expect(drawer("iron_plate")).toBeNull();
+    expect(document.querySelector("[inert]")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches: a scroll of the sheet's content read as a drag; the head dragging while the content
+  // is scrolled down; the x's press swallowed by a head drag.
+  it("3f. the head drags only when the content is at the top; the body never does", () => {
+    stubWidth(390);
+    mount(fakeStore(fresh));
+    const sheet = open("iron_plate");
+    const body = sheet.querySelector<HTMLElement>("[data-body]")!;
+    pointer("pointerDown", body, 100);
+    pointer("pointerMove", body, 300);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", body, 300);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    const x = within(sheet).getByRole("button", { name: "Close" });
+    pointer("pointerDown", x, 100, 2);
+    pointer("pointerMove", x, 300, 2);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", x, 300, 2);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    let top = 40;
+    Object.defineProperty(sheet, "scrollTop", { configurable: true, get: () => top });
+    pointer("pointerDown", heading(sheet), 100, 3);
+    pointer("pointerMove", heading(sheet), 300, 3);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", heading(sheet), 300, 3);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    // The grip drags wherever the content is scrolled.
+    pointer("pointerDown", grip(), 100, 5);
+    pointer("pointerMove", grip(), 150, 5);
+    expect(sheet.style.transform).toBe("translateY(50px)");
+    pointer("pointerUp", grip(), 150, 5);
+    expect(drawer("iron_plate")).toBe(sheet);
+
+    top = 0;
+    pointer("pointerDown", heading(sheet), 100, 4);
+    pointer("pointerMove", heading(sheet), 220, 4);
+    expect(sheet.style.transform).toBe("translateY(120px)");
+    pointer("pointerUp", heading(sheet), 220, 4);
+    expect(drawer("iron_plate")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches (U-5b): the sheet following the finger under reduced motion.
+  it("3g. reduced motion: the sheet doesn't follow, and a long drag still closes", () => {
+    stubWidth(390, { reducedMotion: true });
+    mount(fakeStore(fresh));
+    const sheet = open("iron_plate");
+    pointer("pointerDown", grip(), 100);
+    pointer("pointerMove", grip(), 220);
+    expect(sheet.style.transform).toBe("");
+    pointer("pointerUp", grip(), 220);
+    expect(drawer("iron_plate")).toBeNull();
+    expectBackOn("iron_plate");
+  });
+
+  // Catches (K-17): the dispatcher acting under the phone's modal sheet (a lane switch, a row
+  // walk, a buy, or a tap through the inert TAP).
+  it("3h. the keyboard under the sheet: 1, ↓, b and t do nothing; Esc closes", () => {
+    stubWidth(390);
+    const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
+    mount(store);
+    const sheet = open("iron_plate");
+    const at = listbox().getAttribute("aria-activedescendant");
+    for (const k of ["1", "ArrowDown", "b", "t"]) {
+      expect(key(k), k).toBe(true);
+      fireEvent.keyUp(document.activeElement!, { key: k });
+      expect(drawer("iron_plate"), k).toBe(sheet);
+    }
+    expect(listbox().getAttribute("aria-activedescendant")).toBe(at);
+    expect(store.send).not.toHaveBeenCalled();
+    expect(store.pressTap).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(heading(sheet));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("iron_plate")).toBeNull();
+    expectBackOn("iron_plate");
   });
 
   it("4. the head: the label, the content name to a reader, the meta, the bottleneck's colour", () => {
@@ -852,31 +1052,477 @@ describe("the drawer's place (U-5a, V-19)", { timeout: 60_000 }, () => {
     return Number(decl!.value);
   };
 
-  it("5. the phone sheet sits above the floating TAP (V-19)", () => {
-    expect(z("./Drawer.module.css", ".sheet")).toBeGreaterThan(
-      z("./Power.module.css", ".floating"),
-    );
+  // Catches: SPLIT on the phone keeping the drawer open behind the priority view, so the factory
+  // tab remounts the modal sheet with focus left on the (now inert) tab: <body> in a browser,
+  // and Esc does nothing.
+  it("3i. SPLIT → priority → factory: the remounted sheet takes focus, and Esc closes it", () => {
+    stubWidth(390);
+    honourInert();
+    mount(fakeStore(snapshotOf(slice, fixtureState("slice-tier-8-reinforced-full.world.json"))));
+    fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
+    open("screw");
+    const split = document.querySelector<HTMLElement>("[data-drawer] button[data-split]")!;
+    expect(split).not.toBeNull();
+    fireEvent.click(split);
+    expect(document.getElementById("view-priority")).not.toBeNull();
+    expect(drawer("screw")).toBeNull();
+    const factory = screen.getByRole("tab", { name: "factory" });
+    act(() => factory.focus());
+    fireEvent.click(factory);
+    const sheet = drawer("screw")!;
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(document.activeElement).toBe(heading(sheet));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(drawer("screw")).toBeNull();
+    expectBackOn("screw");
   });
 
-  // Catches: a rejection toast hidden under the open drawer sheet on the phone, or one painted
-  // over the modal NEXT_BUY sheet or Settings.
-  it("5b. on the phone the notices sit over the drawer sheet, under the modal sheets", () => {
+  // Catches: the scrim (and the sheet in it) under the floating TAP, or over the NEXT_BUY sheet
+  // or Settings.
+  it("5. the phone sheet's backdrop sits above the floating TAP, under the modal sheets (V-19, K-3)", () => {
+    const backdrop = z("./Drawer.module.css", ".backdrop");
+    expect(backdrop).toBe(30);
+    expect(backdrop).toBeGreaterThan(z("./Power.module.css", ".floating"));
+    expect(backdrop).toBeLessThan(z("./NextBuy.module.css", ".backdrop"));
+    expect(backdrop).toBeLessThan(z("./Settings.module.css", ".backdrop"));
+  });
+
+  // Catches: a rejection toast hidden under the scrim on the phone, or one painted over the modal
+  // NEXT_BUY sheet or Settings.
+  it("5b. on the phone the notices sit over the drawer sheet's scrim, under the modal sheets", () => {
     const notices = z("../styles/base.css", '.app[data-layout="phone"] .notices');
-    expect(notices).toBeGreaterThan(z("./Drawer.module.css", ".sheet"));
+    expect(notices).toBeGreaterThan(z("./Drawer.module.css", ".backdrop"));
     expect(notices).toBeLessThan(z("./NextBuy.module.css", ".backdrop"));
     expect(notices).toBeLessThan(z("./Settings.module.css", ".backdrop"));
     // Elsewhere they stay at 3, over the desktop panel (2).
     expect(z("../styles/base.css", ".notices")).toBe(3);
   });
 
-  it("6. the phone sheet's head is sticky on the sheet's surface, so Close never scrolls away", () => {
+  // Catches: Close scrolling away; the scrim's fill hard-coded (contrast.test can't see it per
+  // theme); the snap-back declared outside no-preference, or running while the finger drags.
+  it("6. the sheet's head is sticky; the backdrop is the --scrim; the snap-back moves with motion only", () => {
     const file = "./Drawer.module.css";
     const path = fileURLToPath(new URL(file, import.meta.url));
-    const rule = Object.fromEntries(
-      declarations(file, readFileSync(path, "utf8"))
-        .filter((x) => x.stack.length === 1 && x.stack[0] === ".sheet .head")
-        .map((x) => [x.property, x.value]),
+    const css = declarations(file, readFileSync(path, "utf8"));
+    const rule = (sel: string, media: string[] = []) =>
+      Object.fromEntries(
+        css
+          .filter((x) => x.stack.join(" > ") === [...media, sel].join(" > "))
+          .map((x) => [x.property, x.value]),
+      );
+    expect(rule(".sheet .head")).toMatchObject({
+      position: "sticky",
+      top: "0",
+      background: "var(--s1)",
+    });
+    expect(rule(".backdrop")).toMatchObject({
+      position: "fixed",
+      inset: "0",
+      "z-index": "30",
+      background: "var(--scrim)",
+    });
+    // K-20: the grip's hit area is 44 px tall and the sheet's width; its bar is 44 × 4 in --t3.
+    expect(rule(".grip")).toMatchObject({ height: "44px", "touch-action": "none" });
+    expect(rule(".grip::before")).toMatchObject({
+      width: "44px",
+      height: "4px",
+      background: "var(--t3)",
+    });
+    const snap = css.filter((x) => x.property === "transition" && x.value.includes("transform"));
+    expect(snap.map((x) => x.stack)).toEqual([
+      ["@media (prefers-reduced-motion: no-preference)", ".sheet:not([data-dragging])"],
+    ]);
+  });
+});
+
+describe("MACHINES and the sections (U-5c, K-9, K-11, K-13 – K-15)", { timeout: 60_000 }, () => {
+  // Catches: the segmented tabs kept, a locked mark with buttons, the owned count unformatted.
+  it("1. MACHINES by default: a row per mark, locked marks without buttons", () => {
+    mount(fakeStore(fresh));
+    const d = open("iron_ore");
+    expect(bodyOf(d)).toBe("machines");
+    expect(within(d).getByRole("heading", { level: 3, name: "MACHINES" })).toBeTruthy();
+    const mk1 = d.querySelector<HTMLElement>('li[data-mark="1"]')!;
+    expect(mk1.hasAttribute("data-locked")).toBe(false);
+    expect(mk1.querySelector("[data-owned]")!.textContent).toBe("x2");
+    // Seen in the theme's voice, heard by its content name (U-1h).
+    expect(mk1.querySelector("[data-each]")!.textContent).toMatch(
+      /^[\d.]+ IRON_ORE each[\d.]+ Iron Ore each$/,
     );
-    expect(rule).toMatchObject({ position: "sticky", top: "0", background: "var(--s1)" });
+    expect(mk1.querySelectorAll("button")).toHaveLength(3);
+    expect([...mk1.querySelectorAll("button")].map((b) => b.getAttribute("data-count"))).toEqual([
+      "1",
+      "10",
+      "max",
+    ]);
+    for (const [mark, tier] of [
+      [2, 3],
+      [3, 6],
+    ] as const) {
+      const row = d.querySelector<HTMLElement>(`li[data-mark="${mark}"]`)!;
+      expect(row.hasAttribute("data-locked")).toBe(true);
+      expect(row.textContent).toContain(`locked · tier ${tier}`);
+      expect(row.querySelectorAll("button")).toHaveLength(0);
+    }
+    expect(document.querySelector('[role="group"][aria-label="Action"]')).toBeNull();
+    expect(document.querySelector('[class*="segBtn"]')).toBeNull();
+  });
+
+  // Catches: a [U] with no consolidation, a recipe toggle on a one-recipe item, a section that
+  // spends when opened, a toggle that doesn't return.
+  it("2. the sections: only what the model offers, in U R A S D order; a toggle returns", () => {
+    const store = fakeStore(fresh);
+    mount(store);
+    let d = open("iron_plate");
+    expect(d.querySelector('[data-section="upgrade"]')).toBeNull();
+    expect(d.querySelector('[data-section="recipe"]')).toBeNull();
+    const storage = d.querySelector<HTMLElement>('[data-section="storage"]')!;
+    const cost = quote(fresh.content, fresh.state, {
+      type: "BUY_STORAGE",
+      itemId: "iron_plate",
+      levels: 1,
+    }).cost.get("iron_plate")!;
+    expect(storage.textContent).toBe(`[S]storage · next ${fmt(cost)} IRON_PLATE`);
+    expect(storage.getAttribute("aria-label")).toBe(`Storage, next ${fmt(cost)} Iron Plate`);
+    expect(storage.getAttribute("data-key")).toBe("S");
+    fireEvent.click(storage);
+    expect(bodyOf(d)).toBe("storage");
+    expect(storage.getAttribute("aria-pressed")).toBe("true");
+    expect(within(d).getByRole("heading", { level: 3, name: "STORAGE" })).toBeTruthy();
+    expect(store.send).not.toHaveBeenCalled();
+    fireEvent.click(storage);
+    expect(bodyOf(d)).toBe("machines");
+    expect(storage.getAttribute("aria-pressed")).toBe("false");
+    // The handbook link carries H, and keeps its name (Handbook.test 3b).
+    const link = d.querySelector<HTMLElement>("a[data-handbook-link]")!;
+    expect(link.getAttribute("data-key")).toBe("H");
+    expect(link.getAttribute("aria-label")).toBe("Handbook entry");
+    cleanup();
+
+    // Nothing owned: no dismantle (a fresh Biomass Collector).
+    mount(fakeStore(fresh));
+    fireEvent.click(screen.getByRole("tab", { name: /^Power/ }));
+    d = open("biomass");
+    expect(d.querySelector('[data-section="dismantle"]')).toBeNull();
+    cleanup();
+
+    // Tier 8: everything, in order.
+    mount(fakeStore(tier8));
+    d = open("iron_rod");
+    const order = [...d.querySelectorAll<HTMLElement>("[data-section]")].map(
+      (b) => b.dataset.section,
+    );
+    expect(order).toEqual(["upgrade", "recipe", "assign", "storage", "dismantle"]);
+    expect(order).toEqual(sectionsOf(drawerModel(tier8, "iron_rod")));
+    expect(
+      [...d.querySelectorAll<HTMLElement>("[data-section]")].map((b) => [
+        b.dataset.key,
+        b.getAttribute("aria-label"),
+      ]),
+    ).toEqual([
+      ["U", "Upgrade"],
+      ["R", "Recipe"],
+      ["A", "Assign"],
+      ["S", expect.stringMatching(/^Storage, /)],
+      ["D", "Dismantle"],
+    ]);
+    expect(d.querySelector('[data-section="upgrade"]')!.textContent).toBe("[U]upgrade");
+    cleanup();
+
+    // A recipe toggle only with two recipes: tier 8's plastic has one, its iron ore none.
+    mount(fakeStore(tier8));
+    expect(open("iron_ore").querySelector('[data-section="recipe"]')).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /Oil/ }));
+    expect(open("plastic").querySelector('[data-section="recipe"]')).not.toBeNull();
+  });
+
+  // Catches: a follow line stuck on ×1, a projection of the wrong count or mark, an untinted
+  // draining input.
+  it("3. IF YOU BUY follows the hovered or focused count; a draining input is drawn as such", () => {
+    mount(fakeStore(fresh));
+    const d = open("iron_plate");
+    const theme = themeDef("terminal");
+    const lines = (actions: Action[]) =>
+      projectionLines(fresh, preview(fresh, actions), "iron", theme).map(lineText);
+    const shown = () =>
+      [...d.querySelectorAll<HTMLElement>("[data-preview] li")].map((li) => li.textContent);
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 1(?!\d)/);
+    expect(shown()).toEqual(lines([BUY_PLATE]));
+    // K-14: buying a Constructor draws more ingots: drawn in --advice, "(still …)".
+    const drain = d.querySelector<HTMLElement>("[data-preview] li[data-drain]");
+    expect(drain).not.toBeNull();
+    expect(drain!.textContent).toMatch(/^IRON_INGOT [−-][\d.]+\/s \(still [+−-]?[\d.]+\/s\)/);
+
+    act(() => markBuy(d, 1, "10")!.focus());
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 10(?!\d)/);
+    expect(shown()).toEqual(lines([{ ...BUY_PLATE, count: 10 }]));
+    // The final review's item 7: it never sticks. Focus moving within the buttons keeps
+    // following; focus leaving them, or the pointer leaving them, goes back to the default ×1.
+    act(() => markBuy(d, 1, "max")!.focus());
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY max|^IF YOU BUY \d/);
+    act(() => d.querySelector<HTMLElement>("#drawer-title")!.focus());
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 1(?!\d)/);
+    expect(shown()).toEqual(lines([BUY_PLATE]));
+    const ten = markBuy(d, 1, "10")!;
+    fireEvent.mouseEnter(ten);
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 10(?!\d)/);
+    fireEvent.mouseLeave(ten.parentElement!);
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 1(?!\d)/);
+    cleanup();
+
+    // Tier 8: hovering mark 2's buy follows mark 2.
+    mount(fakeStore(tier8));
+    const t = open("iron_ore");
+    fireEvent.mouseEnter(markBuy(t, 2, "1")!);
+    expect(followOf(t).textContent).toMatch(/^IF YOU BUY 1(?!\d)/);
+    const buy2 = buyAction(drawerModel(tier8, "iron_ore").machines!, 2, 1);
+    expect(
+      [...t.querySelectorAll<HTMLElement>("[data-preview] li")].map((li) => li.textContent),
+    ).toEqual(projectionLines(tier8, preview(tier8, [buy2]), "iron", theme).map(lineText));
+  });
+
+  // Catches: an optimistic count, a busy button that still sends, max not maxAffordableCount.
+  it("4. buy is pessimistic and exact", () => {
+    const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
+    mount(store);
+    const d = open("iron_plate");
+    const owned = () => drawer("iron_plate")!.querySelector('[data-mark="1"] [data-owned]')!;
+    expect(owned().textContent).toBe("x1");
+    const buy = markBuy(d, 1, "1")!;
+    expect(buy.getAttribute("aria-label")).toBe("Buy 1 Constructor Mk.1");
+    expect(buy.getAttribute("data-key")).toBe("B");
+    expect(buy.getAttribute("aria-disabled")).toBe("false");
+    fireEvent.click(buy);
+    expect(store.send).toHaveBeenCalledTimes(1);
+    expect(store.send).toHaveBeenCalledWith([BUY_PLATE], "drawer:iron_plate:buy");
+    expect(owned().textContent).toBe("x1");
+
+    store.set({ pending: [batch(drawerLabel("iron_plate", "buy"))] });
+    const busy = markBuy(drawer("iron_plate")!, 1, "1")!;
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    // Busy, so no countdown in its name.
+    expect(busy.getAttribute("aria-label")).toBe("Buy 1 Constructor Mk.1");
+    fireEvent.click(busy);
+    expect(markBuy(drawer("iron_plate")!, 1, "max")!.getAttribute("aria-busy")).toBe("true");
+    expect(store.send).toHaveBeenCalledTimes(1);
+
+    // Only the snapshot moves the count.
+    const after = snapshotOf(slice, withInstalled(fresh.state, "iron", "constructor", 1, 2), {
+      stateVersion: 1,
+    });
+    store.set({ pending: [], snapshot: after });
+    expect(owned().textContent).toBe("x2");
+    cleanup();
+
+    // max: maxAffordableCount, on a rich world.
+    const rich = snapshotOf(slice, topped(freshState(slice), ["iron_ingot"]));
+    const r = fakeStore(rich);
+    mount(r);
+    const max = markBuy(open("iron_plate"), 1, "max")!;
+    const n = Number(/^Buy max \((\d+)\) /.exec(max.getAttribute("aria-label")!)![1]);
+    expect(n).toBeGreaterThan(1);
+    fireEvent.click(max);
+    expect(r.send).toHaveBeenCalledWith([{ ...BUY_PLATE, count: n }], "drawer:iron_plate:buy");
+  });
+
+  // Catches: a red cost while its button is on, or the reverse (the old test 9, on [data-follow]).
+  it("5. a cost is red exactly when its button is off for lack of that item", () => {
+    const cases: [Snapshot, number, string, string][] = [
+      [fresh, CLIENT_T0, "iron_plate", "Buy"],
+      [fresh, CLIENT_T0 + 60_000, "iron_plate", "Buy"],
+      [tier8, CLIENT_T0, "iron_plate", "Upgrade"],
+      [tier8, CLIENT_T0 + 60_000, "iron_plate", "Upgrade"],
+      [fresh, CLIENT_T0 + 60_000, "iron_plate", "Storage"],
+    ];
+    let reds = 0;
+    let clear = 0;
+    for (const [snap, now, item, verb] of cases) {
+      mount(fakeStore(snap, { now }));
+      const d = open(item);
+      if (verb !== "Buy") pick(d, verb);
+      for (const cost of d.querySelectorAll<HTMLElement>('ul[aria-label="Cost"]')) {
+        const block = cost.parentElement!;
+        // The follow line's cost is the followed button's: by default the best mark's buy 1.
+        const button = block.hasAttribute("data-follow")
+          ? d.querySelector('[data-key="B"]')!
+          : block.querySelector("button")!;
+        const short = cost.querySelectorAll("[data-short]").length > 0;
+        expect(button.getAttribute("aria-disabled")).toBe(String(short));
+        if (short) reds += 1;
+        else clear += 1;
+      }
+      cleanup();
+    }
+    // Per item, not per list: a two-item cost with one item short (tier 8's Reinforced Iron
+    // Plate at Mk1 costs iron plate and iron rod; no plate, rod at its cap).
+    const t8 = fixtureState("slice-tier-8.world.json");
+    const mixed = topped({ ...t8, stored: { ...t8.stored, iron_plate: D(0) } }, ["iron_rod"]);
+    mount(fakeStore(snapshotOf(slice, mixed)));
+    const d = open("reinforced_iron_plate");
+    act(() => markBuy(d, 1, "1")!.focus());
+    const follow = followOf(d);
+    expect(follow.querySelector('[data-cost="iron_plate"]')!.hasAttribute("data-short")).toBe(true);
+    expect(follow.querySelector('[data-cost="iron_rod"]')!.hasAttribute("data-short")).toBe(false);
+    expect(markBuy(d, 1, "1")!.getAttribute("aria-disabled")).toBe("true");
+    cleanup();
+    // Both sides of the rule are exercised.
+    expect(reds).toBeGreaterThan(0);
+    expect(clear).toBeGreaterThan(0);
+  });
+
+  // Catches: a letter that sends on its own (a second path past Guarded), a key that acts with
+  // its target hidden, a toggle that doesn't take focus (K-4, K-9, K-11).
+  it("6. the letter keys click the drawer's own buttons", () => {
+    const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
+    mount(store);
+    open("iron_plate");
+    act(() => listbox().focus());
+    expect(key("b")).toBe(false);
+    expect(store.send).toHaveBeenCalledTimes(1);
+    expect(store.send).toHaveBeenCalledWith([BUY_PLATE], "drawer:iron_plate:buy");
+    store.set({ pending: [batch(drawerLabel("iron_plate", "buy"))] });
+    key("b");
+    expect(store.send).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    // Fresh iron rod: two recipes, no consolidation.
+    const s = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
+    mount(s);
+    const d = open("iron_rod");
+    act(() => listbox().focus());
+    expect(key("r")).toBe(false);
+    expect(bodyOf(d)).toBe("recipe");
+    expect(document.activeElement).toBe(d.querySelector('[data-section="recipe"]'));
+    expect(key("s")).toBe(false);
+    expect(bodyOf(d)).toBe("storage");
+    expect(document.activeElement).toBe(d.querySelector('[data-section="storage"]'));
+    // No upgrade to make: nothing happens, and the key is left alone.
+    expect(key("u")).toBe(true);
+    expect(bodyOf(d)).toBe("storage");
+    // B's target is MACHINES' buy 1: hidden under another section, so B does nothing (K-9).
+    expect(key("b")).toBe(true);
+    expect(s.send).not.toHaveBeenCalled();
+    // Its key again returns to MACHINES.
+    expect(key("s")).toBe(false);
+    expect(bodyOf(d)).toBe("machines");
+    key("h");
+    expect(location.pathname).toBe(routePath({ kind: "handbook", itemId: "iron_rod" }));
+    history.replaceState(null, "", "/");
+  });
+
+  // Catches: focus dropped to <body> when its element goes (K-11), or a drawer that pulls focus
+  // back from a click on blank space.
+  it("7. focus never falls to body from the drawer", () => {
+    const store = fakeStore(tier8);
+    mount(store);
+    const d = open("iron_plate");
+    pick(d, "Dismantle");
+    const row = d.querySelector<HTMLElement>('[data-dismantle="3"]')!;
+    const all = within(row).getByRole("button", { name: "Dismantle all 17 Mk3" });
+    act(() => all.focus());
+    fireEvent.click(all);
+    expect(store.send).toHaveBeenCalledWith(
+      [{ type: "DISMANTLE", lane: "iron", machineClass: "constructor", mark: 3, count: 17 }],
+      "drawer:iron_plate:dismantle",
+    );
+    const after = snapshotOf(slice, withInstalled(tier8.state, "iron", "constructor", 3, 0), {
+      stateVersion: 1,
+    });
+    store.set({ pending: [], snapshot: after });
+    expect(d.querySelector('[data-dismantle="3"]')).toBeNull();
+    expect(drawer("iron_plate")).toBe(d);
+    expect(document.activeElement).toBe(document.getElementById("drawer-title"));
+
+    // A click on blank space: the element is still there, so focus stays where the click put it.
+    const toggle = d.querySelector<HTMLElement>('[data-section="storage"]')!;
+    act(() => toggle.focus());
+    act(() => toggle.blur());
+    expect(document.activeElement).toBe(document.body);
+    store.set({ snapshot: { ...after } });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  // Catches: the split as one opaque bar, a part that isn't a button, a part to the wrong entry.
+  it("8. SPLIT: one button per part, to the item's priority entry (K-15)", () => {
+    const full = snapshotOf(slice, fixtureState("slice-tier-8-reinforced-full.world.json"));
+    mount(fakeStore(full));
+    fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
+    const d = open("screw");
+    expect(within(d).getByRole("heading", { level: 3, name: "SPLIT" })).toBeTruthy();
+    const parts = splitOf(full, "screw")!;
+    const buttons = [...d.querySelectorAll<HTMLButtonElement>("button[data-split]")];
+    expect(buttons).toHaveLength(parts.length);
+    buttons.forEach((b, i) => {
+      const pct = `${Math.round(parts[i]!.share * 100)}%`;
+      expect(b.getAttribute("aria-label")).toBe(
+        `${pct} ${parts[i]!.label}: show Screw in the priority list`,
+      );
+      expect(b.textContent!.startsWith(`${pct} `)).toBe(true);
+    });
+    Element.prototype.scrollIntoView = vi.fn();
+    fireEvent.click(buttons.at(-1)!);
+    expect(document.activeElement?.getAttribute("data-entry")).toBe("item:screw");
+  });
+
+  // Catches: the phone's section buttons in a desktop row, or under 48 px.
+  // Catches: a drawer control the coarse-pointer rule doesn't reach (K-16), such as the
+  // handbook link styled as a 36 px button.
+  it("9b. every drawer control is a coarse 44 px target: base.css's coarse rule matches it", () => {
+    const file = "../styles/base.css";
+    const css = declarations(
+      file,
+      readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8"),
+    );
+    const coarse = css.find(
+      (x) => x.stack[0] === "@media (pointer: coarse)" && x.property === "min-height",
+    )!;
+    expect(coarse.value).toBe("44px");
+    const selector = coarse.stack[1]!;
+    for (const width of [1280, 390]) {
+      stubWidth(width);
+      mount(fakeStore(tier8));
+      const d = open("iron_rod");
+      const controls = [...d.querySelectorAll<HTMLElement>("button, a[href]")];
+      expect(controls.length).toBeGreaterThan(5);
+      for (const el of controls) expect(el.matches(selector), el.outerHTML.slice(0, 80)).toBe(true);
+      expect(d.querySelector("a[data-handbook-link]")!.matches(selector)).toBe(true);
+      cleanup();
+    }
+  });
+
+  it("9. the phone sheet: MORE is a 2-column grid of 48 px buttons at the bottom (U-5b)", () => {
+    stubWidth(390);
+    mount(fakeStore(fresh));
+    const d = open("iron_ore");
+    expect(d.dataset.presentation).toBe("sheet");
+    const more = d.querySelector<HTMLElement>("[data-more]")!;
+    expect(more).toBe(d.lastElementChild);
+    expect(more.querySelector("h3")).toBeNull();
+    expect(more.querySelectorAll("button, a").length).toBeGreaterThan(1);
+    // The phone has no hints (U-7e).
+    expect(d.querySelectorAll(".key-hint")).toHaveLength(0);
+    expect(within(d).getByRole("button", { name: "Close" }).textContent).toBe("x");
+
+    const file = "./Drawer.module.css";
+    const css = declarations(
+      file,
+      readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8"),
+    );
+    const rule = (sel: string) =>
+      Object.fromEntries(
+        css
+          .filter((x) => x.stack.length === 1 && x.stack[0] === sel)
+          .map((x) => [x.property, x.value]),
+      );
+    expect(rule(".sheet .more")).toMatchObject({
+      display: "grid",
+      "grid-template-columns": "1fr 1fr",
+    });
+    expect(rule(".sheet .moreBtn")).toMatchObject({ height: "48px" });
+    expect(rule(".sheet .markBtn")).toMatchObject({ height: "48px" });
+    // Desktop: 36 px, by height, so the coarse rule's min-height still wins (K-16).
+    expect(rule(".markBtn")).toMatchObject({ height: "36px" });
+    expect(rule(".moreBtn")).toMatchObject({ height: "36px" });
   });
 });

@@ -56,7 +56,8 @@ describe("preview invariant", () => {
     );
     const p = document.querySelector<HTMLElement>("[data-drawer] [data-preview]")!;
     expect(p.textContent).toContain(PREVIEW_UNAVAILABLE);
-    expect(screen.getByRole("button", { name: /^Buy 1 Constructor$/ })).toBeTruthy();
+    // MACHINES' buy 1 is still there (K-13's name, with its countdown while short).
+    expect(screen.getByRole("button", { name: /^Buy 1 Constructor Mk\.1(,|$)/ })).toBeTruthy();
     err.mockRestore();
   });
 });

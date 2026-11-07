@@ -62,10 +62,10 @@
   flex: 1;
 }
 
-/* [TAB] why: a real button, 12 px --advice-dim text, at least 36 px tall. */
+/* [TAB] why: a real button, 12 px --advice-dim text, 36 px tall (44 on a coarse pointer, K-16). */
 .why {
   flex: none;
-  min-height: 36px;
+  height: 36px;
   padding: 0 8px;
   border: 0;
   background: transparent;

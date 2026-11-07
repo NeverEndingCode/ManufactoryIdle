@@ -20,12 +20,12 @@
   font-weight: 600;
 }
 
-.seg {
+.views {
   display: flex;
   gap: 4px;
 }
 
-.segBtn {
+.viewBtn {
   min-width: 44px;
   min-height: 44px;
   padding: 6px 11px;
@@ -37,7 +37,7 @@
   cursor: pointer;
 }
 
-.segBtn.on {
+.viewBtn.on {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);

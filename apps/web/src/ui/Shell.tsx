@@ -35,8 +35,12 @@ export interface ShellProps {
   laneId: LaneId | null;
   onLane(id: LaneId): void;
   bottleneck: BottleneckModel | null;
+  /** The NEXT_BUY card is open: its `1` buys one, so the first lane tab's hint steps aside (K-7). */
+  cardOpen?: boolean;
   onSettings(opener: HTMLElement): void;
   onSaveChip(opener: HTMLElement): void;
+  /** U-7e: the header's `?` (desktop and tablet; K-17). */
+  onHelp(opener: HTMLElement): void;
   /** Filled by later tasks: the main box content, the overlays, the command line, the footer/TAP. */
   slots: {
     main: ReactNode;
@@ -183,7 +187,9 @@ function LaneTabs({ p, s, phone }: { p: ShellProps; s: Snapshot; phone: boolean 
                   ●
                 </span>
               )}
-              {!phone && (
+              {/* K-7: a hint only where its digit works (U-7a): never on a locked lane, and
+                  not on lane 1 while the card's `1` buys one. */}
+              {!phone && !t.locked && !(p.cardOpen === true && t.key === 1) && (
                 <span className="key-hint" aria-hidden="true">
                   {t.key}
                 </span>
@@ -303,19 +309,32 @@ export function DesktopShell(p: ShellProps) {
         </h1>
         {s !== null && <TierReadout snapshot={s} now={() => p.store.now()} />}
         <span className={css.spacer} />
-        {s !== null && showsChip(p.view) && (
+        {/* The right-hand group wraps as one onto a second line on a narrow tablet (U-2c). */}
+        <div className={css.nav}>
+          {s !== null && showsChip(p.view) && (
+            <button
+              type="button"
+              className={css.chip}
+              data-save-chip
+              aria-label="Save your factory"
+              onClick={(e) => p.onSaveChip(e.currentTarget)}
+            >
+              {shell ? "> save_factory" : "Save your factory"}
+            </button>
+          )}
+          {s !== null && <PanelTabs p={p} views={DESKTOP_VIEWS} phone={false} />}
           <button
             type="button"
-            className={css.chip}
-            data-save-chip
-            aria-label="Save your factory"
-            onClick={(e) => p.onSaveChip(e.currentTarget)}
+            className={css.helpButton}
+            data-open-help
+            aria-haspopup="dialog"
+            aria-label="Keyboard shortcuts"
+            onClick={(e) => p.onHelp(e.currentTarget)}
           >
-            {shell ? "> save_factory" : "Save your factory"}
+            ?
           </button>
-        )}
-        {s !== null && <PanelTabs p={p} views={DESKTOP_VIEWS} phone={false} />}
-        <SettingsButton p={p} label={shell ? "cfg" : "Settings"} className={css.cfg} />
+          <SettingsButton p={p} label={shell ? "cfg" : "Settings"} className={css.cfg} />
+        </div>
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone={false} />}
       <ContentRow p={p} />

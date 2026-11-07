@@ -337,13 +337,13 @@ export function PriorityList({ store, snapshot, focusEntry = null, onFocused }: 
         <h2 id={`${warnId}-title`} className={styles.title}>
           Priority
         </h2>
-        <div role="group" aria-label="Priority view" className={styles.seg}>
+        <div role="group" aria-label="Priority view" className={styles.views}>
           {(["simple", "advanced"] as const).map((v) => (
             <button
               key={v}
               type="button"
               aria-pressed={view === v}
-              className={view === v ? `${styles.segBtn} ${styles.on}` : styles.segBtn}
+              className={view === v ? `${styles.viewBtn} ${styles.on}` : styles.viewBtn}
               onClick={() => setView(v)}
             >
               {v === "simple" ? "Simple" : "Advanced"}

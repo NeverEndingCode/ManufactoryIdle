@@ -45,10 +45,18 @@ names as `IRON_PLATE`. Settings → Theme also offers Clean (Dark), Clean (OLED 
 later release. The factory is Layout C: fixed one-line rows in a listbox, and under them a
 command line that spells out the next buy (`buy 1 constructor_mk1 --lane iron --for
 iron_plate`) with a run button; `why` opens the NEXT_BUY card (a bottom sheet on a phone)
-with the reasoning. Clicking a row opens its drawer beside the list, without moving a row.
-On a desktop the footer carries power (PWR, the grid, the tap kick and TAP); below 600 px the
-bottom tabs are factory, power, priority and handbook, the power tab holds the grid and the
-generators, and a floating TAP sits on every tab. The handbook is every item's recipe, what it
+with the reasoning. Clicking a row opens its drawer beside the list, without moving a row;
+inside it, B buys one of the best machine, U, R, A, S and D open its upgrade, recipe, assign,
+storage and dismantle sections, and H its handbook entry. The power panel's generator rows open
+generator drawers, whose buy is the panel's own `+1`. On a phone the drawer is a modal bottom
+sheet over a scrim, closed by its `x`, Esc, the scrim or a drag down on its grip. The whole
+game plays from the keyboard: Enter runs the advice, Tab opens why, `1`–`5` switch lanes,
+F1–F3 (or F, P and H, which the browser can't take) switch views, ↑/↓ move through the rows
+(an open drawer follows), → or Space opens one, a held T taps, and `?` lists every key; keys
+never fire while you type, and their hints show on a fine pointer only. On a desktop the
+footer carries power (PWR, the grid, the tap kick and TAP); below 600 px the bottom tabs
+are factory, power, priority and handbook, the power tab holds the grid and the generators,
+and a floating TAP sits on every tab. The handbook is every item's recipe, what it
 traces back to and what it is used in, computed from the live recipes, plus a glossary.
 Settings holds the number notation, the theme, the account and About: the game is free
 software under the GPL-3.0, with links to the source at the exact commit the build was made

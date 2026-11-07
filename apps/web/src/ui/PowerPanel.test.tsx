@@ -2,7 +2,7 @@
 // U-6: the power panel (generator +1, load, FUEL, BIGGEST USERS, the kick line), the PWR footer
 // and the floating TAP, and where each shows. PowerDock.test.tsx's hold tests (1, 2) moved here
 // and run on both TAP buttons; its readout tests (3 to 5) became 4, 5 and 9.
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { liquidCap, type WorldState } from "@manufactory/engine";
 import type { ReactNode } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -11,12 +11,21 @@ import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore, StoreView } from "../sync/store.js";
 import { App } from "./App.js";
-import { bottleneckRow, powerLaneId } from "./derive.js";
-import { dockModel, generatorLabel, mwText, nextMachineDrawMw, powerByLane } from "./dock-model.js";
+import { bottleneckRow, laneItemIds, powerLaneId } from "./derive.js";
+import {
+  dockModel,
+  generatorLabel,
+  generatorRows,
+  mwText,
+  nextMachineDrawMw,
+  powerByLane,
+} from "./dock-model.js";
+import { generatorVerbLabel } from "./Drawer.js";
 import { FloatingTap } from "./FloatingTap.js";
 import { PowerFooter } from "./PowerFooter.js";
 import { PowerPanel } from "./PowerPanel.js";
 import {
+  burnerMk2Slice,
   CLIENT_T0,
   fakeStore,
   fixtureState,
@@ -43,6 +52,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  history.replaceState(null, "", "/");
 });
 
 /** Every stock item's liquid stock at its cap, so a spend on it is affordable. */
@@ -70,6 +80,8 @@ function panel(s: Snapshot, store: FakeStore = fakeStore(s)) {
       onSelect={() => {}}
       onOpen={() => {}}
       openItem={null}
+      onOpenGenerator={() => {}}
+      openGenerator={null}
       mode="desktop"
     />
   );
@@ -155,7 +167,7 @@ describe("PowerPanel, PowerFooter and FloatingTap (U-6)", { timeout: 60_000 }, (
     expect(within(coal).queryByRole("button")).toBeNull();
     const fuel = gens.querySelector<HTMLElement>('[data-generator="fuel_generator"]')!;
     expect(seen(fuel)).toBe("FUEL_GENERATOR x0 · unlocks at tier 7");
-    expect(gens.querySelectorAll("button")).toHaveLength(1);
+    expect(gens.querySelectorAll("button[data-generator-buy]")).toHaveLength(1);
   });
 
   // Catches: an unaffordable +1 that sends, or a countdown frozen between ticks.
@@ -436,5 +448,160 @@ describe("PowerPanel, PowerFooter and FloatingTap (U-6)", { timeout: 60_000 }, (
       ],
     });
     expect(footer.dataset.stacks).toBe("3");
+  });
+});
+
+const GEN = "power:biomass_burner";
+const genDrawer = () => document.querySelector<HTMLElement>(`[data-drawer="${GEN}"]`);
+const opener = () =>
+  document.querySelector<HTMLElement>('button[data-open-generator="biomass_burner"]');
+const genPlus = () => document.querySelector<HTMLElement>('[data-generator-buy="biomass_burner"]')!;
+const keyOn = (k: string) => fireEvent.keyDown(document.activeElement ?? document.body, { key: k });
+
+/** The App at this width on the power view (the 5 POWER tab, or the phone's ~ power), with the
+ *  burner's drawer opened from its generator row. */
+function openGen(s: Snapshot, width = 1280): FakeStore {
+  const store = mount(s, width);
+  if (width < 600) fireEvent.click(screen.getByRole("tab", { name: "power" }));
+  else fireEvent.click(document.querySelector<HTMLElement>('[role="tab"][data-lane="power"]')!);
+  fireEvent.click(opener()!);
+  expect(genDrawer()).not.toBeNull();
+  return store;
+}
+
+describe("generator drawers (U-5c, K-12)", { timeout: 60_000 }, () => {
+  // Catches: a generator row that opens nothing, the wrong data-drawer, focus not on the title,
+  // an item's head (meta, [↑↓]) on a generator, or a locked class that opens.
+  it("2. the row opens the drawer at 1280 px, focus on its title; locked classes don't open", () => {
+    openGen(fresh);
+    const d = genDrawer()!;
+    const title = document.getElementById("drawer-title")!;
+    expect(d.contains(title)).toBe(true);
+    expect(document.activeElement).toBe(title);
+    expect(title.textContent).toBe("BIOMASS_BURNER");
+    expect(title.getAttribute("aria-label")).toBe("Biomass Burner");
+    expect(d.getAttribute("data-presentation")).toBe("panel");
+    const row = generatorRows(fresh).find((r) => r.machineClass === "biomass_burner")!;
+    expect(d.querySelector("[data-meta]")!.textContent).toBe(
+      `POWER lane · x${row.owned} · ${mwText(row.mwNow)} MW now`,
+    );
+    expect([...d.querySelectorAll(".key-hint")].map((h) => h.textContent)).not.toContain(
+      "[↑↓] row  [ESC] close",
+    );
+    expect(d.textContent).toContain("[ESC] close");
+    // MACHINES' [B], and MORE has nothing on a fresh world (none owned, no consolidation: no
+    // [U] or [D]); never R, A, S, H or SPLIT.
+    expect(d.querySelector("[data-mark-buy='1'][data-count='1']")).not.toBeNull();
+    expect([...d.querySelectorAll("[data-key]")].map((b) => b.getAttribute("data-key"))).toEqual([
+      "B",
+    ]);
+    expect(d.querySelector("[data-handbook-link]")).toBeNull();
+    // Nothing behind MORE: no bare MORE heading either.
+    expect(d.querySelector("[data-more]")).toBeNull();
+    expect(d.querySelector("[data-split]")).toBeNull();
+    expect(d.textContent).not.toContain("SPLIT");
+    // The row's button says it's open; locked classes have no opener.
+    expect(opener()!.getAttribute("aria-expanded")).toBe("true");
+    const gens = document.querySelector<HTMLElement>('[aria-label="Generators"]')!;
+    expect(
+      gens.querySelector('[data-generator="coal_generator"] [data-open-generator]'),
+    ).toBeNull();
+    expect(
+      gens.querySelector('[data-generator="fuel_generator"] [data-open-generator]'),
+    ).toBeNull();
+  });
+
+  // Catches: the generator drawer missing from the phone's power view, or not the sheet there.
+  it("2. at 390 px on ~ power it's the sheet", () => {
+    openGen(fresh, 390);
+    expect(genDrawer()!.getAttribute("data-presentation")).toBe("sheet");
+    // The phone sheet has no hints (K-17).
+    expect(genDrawer()!.querySelector(".key-hint")).toBeNull();
+  });
+
+  // Catches (K-12): the drawer's buy under another label (drawer:power:buy), so the panel's +1
+  // isn't busy with it; or a batch other than the +1's.
+  it("3. buy 1 sends the +1's batch under its label; both are busy while it's pending", () => {
+    const s = snapshotOf(slice, topped(freshState(slice)));
+    const store = openGen(s);
+    const buy1 = () =>
+      genDrawer()!.querySelector<HTMLElement>('[data-mark-buy="1"][data-count="1"]')!;
+    expect(buy1().getAttribute("aria-disabled")).toBe("false");
+    fireEvent.click(buy1());
+    expect(store.send).toHaveBeenCalledTimes(1);
+    const row = generatorRows(s).find((r) => r.machineClass === "biomass_burner")!;
+    expect(store.send).toHaveBeenCalledWith([row.buy], generatorLabel("biomass_burner"));
+    expect(generatorVerbLabel("biomass_burner", "buy")).toBe(generatorLabel("biomass_burner"));
+    store.set({
+      pending: [{ id: 1, key: "k", label: generatorLabel("biomass_burner"), actions: [row.buy!] }],
+    });
+    expect(buy1().getAttribute("aria-busy")).toBe("true");
+    expect(genPlus().getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(genPlus());
+    fireEvent.click(buy1());
+    expect(store.send).toHaveBeenCalledTimes(1);
+  });
+
+  // Catches: a generator dismantle or upgrade under drawer:<item>:<verb>, or [U] shown without a
+  // consolidation (a hint for a key that does nothing).
+  it("3. tier 8: [D] dismantles ×1 under power:<class>:dismantle; [U] exactly with a consolidation", () => {
+    const s = snapshotOf(slice, fixtureState("slice-tier-8.world.json"));
+    const store = openGen(s);
+    const d = genDrawer()!;
+    expect([...d.querySelectorAll("[data-key]")].map((b) => b.getAttribute("data-key"))).toEqual([
+      "B",
+      "D",
+    ]);
+    fireEvent.click(d.querySelector<HTMLElement>('[data-key="D"]')!);
+    fireEvent.click(within(genDrawer()!).getByRole("button", { name: "Dismantle ×1 Mk1" }));
+    expect(store.send).toHaveBeenCalledWith(
+      [{ type: "DISMANTLE", lane: "power", machineClass: "biomass_burner", mark: 1, count: 1 }],
+      "power:biomass_burner:dismantle",
+    );
+    cleanup();
+
+    // With a Mk.2 there's a consolidation: [U] appears and upgrades under power:<class>:upgrade.
+    const mk2 = burnerMk2Slice();
+    const t = fixtureState("slice-tier-8.world.json");
+    const stored = { ...t.stored };
+    for (const id of mk2.content.stockItemIds) stored[id] = liquidCap(mk2.content, t, id);
+    const up = openGen(snapshotOf(mk2, { ...t, stored }));
+    fireEvent.click(genDrawer()!.querySelector<HTMLElement>('[data-key="U"]')!);
+    fireEvent.click(within(genDrawer()!).getByRole("button", { name: "Upgrade 20 Mk1 → 10 Mk2" }));
+    expect(up.send).toHaveBeenCalledWith(
+      [{ type: "UPGRADE_MARK", lane: "power", machineClass: "biomass_burner", fromMark: 1 }],
+      "power:biomass_burner:upgrade",
+    );
+  });
+
+  // Catches: Esc returning focus to the row list (not the opener), a generator drawer that
+  // follows ↓ (re-keying onto a FUEL row), or h going to an item's entry.
+  it("4. Esc returns to the opener; ↓ moves the FUEL selection and the drawer stays; h is the index", () => {
+    openGen(fresh);
+    fireEvent.keyDown(genDrawer()!, { key: "Escape" });
+    expect(genDrawer()).toBeNull();
+    expect(document.activeElement).toBe(opener());
+    expect(opener()!.getAttribute("aria-expanded")).toBe("false");
+
+    // ↓ from the FUEL list with the drawer open.
+    fireEvent.click(opener()!);
+    const list = document.querySelector<HTMLElement>('ul[role="listbox"][data-rows]')!;
+    act(() => list.focus());
+    const ids = laneItemIds(fresh, "power");
+    keyOn("ArrowDown");
+    expect(list.getAttribute("aria-activedescendant")).toBe(
+      `row-${ids[Math.min(1, ids.length - 1)]}`,
+    );
+    expect(genDrawer()).not.toBeNull();
+    expect(document.querySelectorAll("[data-drawer]")).toHaveLength(1);
+    // And from the drawer's own title.
+    act(() => document.getElementById("drawer-title")!.focus());
+    keyOn("ArrowDown");
+    expect(genDrawer()).not.toBeNull();
+
+    // h: the handbook's index, the drawer closed.
+    keyOn("h");
+    expect(location.pathname).toBe("/handbook");
+    expect(document.querySelector("[data-drawer]")).toBeNull();
   });
 });

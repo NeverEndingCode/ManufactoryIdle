@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// U-3 / U-7d / V-10: the fixed rows, the listbox, the SAT cell and the Bar. The App-level tests
+// U-3 / U-7d: the fixed rows, the listbox, the SAT cell and the Bar. The App-level tests
 // that LaneView.test.tsx held (meters, the plateau, the root mirror, the region, the tween and
 // the announcements) moved here with their selectors updated.
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -92,7 +92,9 @@ describe("RowList: fixed rows (U-3a)", { timeout: 60_000 }, () => {
     // Seven cells, the storage cell holding the bar.
     expect(option("iron_ore").children).toHaveLength(7);
 
-    // Selected (the default is the framed row) and unselected, through the keys.
+    // Selected (the default is the framed row) and unselected, through the keys (the
+    // dispatcher's Home, on the focused list: K-8).
+    act(() => listbox().focus());
     fireEvent.keyDown(listbox(), { key: "Home" });
     expect(option("iron_ore").getAttribute("aria-selected")).toBe("true");
     expect(framed()).toBe(tree);
@@ -185,6 +187,7 @@ describe("RowList: SAT, names and selection (U-3b, U-7d)", { timeout: 60_000 }, 
     fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
     const iron = laneRows(tier8, "iron");
     expect(active()).toBe(`row-${iron[0]!.itemId}`);
+    act(() => listbox().focus());
     fireEvent.keyDown(listbox(), { key: "End" });
     const last = iron.at(-1)!.itemId;
     expect(active()).toBe(`row-${last}`);
@@ -213,66 +216,6 @@ describe("RowList: SAT, names and selection (U-3b, U-7d)", { timeout: 60_000 }, 
     expect(option("iron_plate").getAttribute("aria-selected")).toBe("false");
     expect(drawer("iron_ore")).not.toBeNull();
     expect(document.activeElement).toBe(document.getElementById("drawer-title"));
-  });
-});
-
-describe("RowList: the listbox keys (V-10)", { timeout: 60_000 }, () => {
-  it("5. arrows, Home and End move; right arrow and Space open; Enter and Alt+arrow don't", () => {
-    const store = fakeStore(fresh);
-    mount(store);
-    const box = listbox();
-    expect(box.tagName).toBe("UL");
-    expect(box.getAttribute("aria-label")).toBe("Iron lane");
-    expect(box.tabIndex).toBe(0);
-    const ids = laneRows(fresh, "iron").map((r) => `row-${r.itemId}`);
-    const at = ids.indexOf("row-iron_plate");
-    expect(at).toBeGreaterThan(0);
-    expect(active()).toBe("row-iron_plate");
-    // A row holds nothing focusable (U-7d).
-    expect(box.querySelectorAll("button, a, input, [tabindex]")).toHaveLength(0);
-    // Every option is in the list, by id.
-    for (const id of ids) expect(document.getElementById(id)?.getAttribute("role")).toBe("option");
-
-    act(() => box.focus());
-    fireEvent.keyDown(box, { key: "ArrowDown" });
-    expect(active()).toBe(ids[at + 1]);
-    fireEvent.keyDown(box, { key: "ArrowUp" });
-    fireEvent.keyDown(box, { key: "ArrowUp" });
-    expect(active()).toBe(ids[at - 1]);
-    fireEvent.keyDown(box, { key: "Home" });
-    expect(active()).toBe(ids[0]);
-    fireEvent.keyDown(box, { key: "ArrowUp" });
-    expect(active()).toBe(ids[0]);
-    fireEvent.keyDown(box, { key: "End" });
-    expect(active()).toBe(ids.at(-1));
-    fireEvent.keyDown(box, { key: "ArrowDown" });
-    expect(active()).toBe(ids.at(-1));
-
-    // Modified keys are the browser's.
-    fireEvent.keyDown(box, { key: "Home" });
-    fireEvent.keyDown(box, { key: "ArrowDown", altKey: true });
-    expect(active()).toBe(ids[0]);
-    // Enter is left for UI-2's dispatcher.
-    fireEvent.keyDown(box, { key: "Enter" });
-    expect(document.querySelector("[data-drawer]")).toBeNull();
-    expect(store.send).not.toHaveBeenCalled();
-
-    // Right arrow opens the active row's drawer; Esc comes back to the list, the row still active.
-    fireEvent.keyDown(box, { key: "ArrowRight" });
-    expect(drawer(ids[0]!.slice(4))).not.toBeNull();
-    expect(document.activeElement).toBe(document.getElementById("drawer-title"));
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    expect(document.querySelector("[data-drawer]")).toBeNull();
-    expect(document.activeElement).toBe(listbox());
-    expect(active()).toBe(ids[0]);
-
-    // Space opens too.
-    fireEvent.keyDown(listbox(), { key: "ArrowDown" });
-    fireEvent.keyDown(listbox(), { key: " " });
-    expect(drawer(ids[1]!.slice(4))).not.toBeNull();
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    expect(document.activeElement).toBe(listbox());
-    expect(active()).toBe(ids[1]);
   });
 });
 
@@ -438,10 +381,16 @@ describe("RowList: what moved into the drawer (V-18)", { timeout: 60_000 }, () =
     fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
     expect(option("screw").textContent).toContain(" · split");
     fireEvent.click(option("screw"));
-    const split = drawer("screw")!.querySelector<HTMLButtonElement>("button[data-split]");
-    expect(split).not.toBeNull();
-    expect(split!.getAttribute("aria-label")).toBe("Screw split: show in the priority list");
-    expect(split!.textContent).toMatch(/\d+% Reinforced Iron Plate/);
+    // SPLIT (K-15): a button per part, each to screw's priority entry.
+    const parts = [...drawer("screw")!.querySelectorAll<HTMLButtonElement>("button[data-split]")];
+    expect(parts.length).toBeGreaterThanOrEqual(2);
+    expect(
+      parts.some((b) =>
+        /^\d+% Reinforced Iron Plate: show Screw in the priority list$/.test(
+          b.getAttribute("aria-label")!,
+        ),
+      ),
+    ).toBe(true);
   });
 });
 
