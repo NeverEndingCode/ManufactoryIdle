@@ -71,6 +71,21 @@
   flex: none;
 }
 
+/* U-7e: the help button, 36 tall and 44 wide, beside cfg (desktop and tablet only, K-17). */
+.helpButton {
+  flex: none;
+  width: 44px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+
 .panel.on {
   border-color: var(--accent);
   background: var(--accent);

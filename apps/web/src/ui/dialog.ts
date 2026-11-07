@@ -1,5 +1,22 @@
-// V-12: one inert pass for every modal (the settings sheet, later the phone NEXT_BUY sheet),
+// V-12 / K-5: one inert pass for every modal (Settings, the help, the phone NEXT_BUY sheet),
 // and the Tab wrap they share. React 18 has no prop for inert, so it's set on the DOM.
+
+/** K-5: every modal's host, topmost first. Only one is ever open (each opener sits behind the
+ * others' inert), so the order only settles a test's fixture tree. */
+export const MODAL_HOSTS: readonly string[] = [
+  "[data-settings-host]",
+  "[data-help-host]",
+  "[data-next-buy-host]",
+];
+
+/** The open modal's host under `app`: the first of MODAL_HOSTS present, or null. */
+export function openModal(app: HTMLElement): Element | null {
+  for (const sel of MODAL_HOSTS) {
+    const host = app.querySelector(sel);
+    if (host !== null) return host;
+  }
+  return null;
+}
 
 /** What goes inert inside the notices while a modal is open; the region itself never does. */
 export const NOTICE_CONTROLS = "button, a, input, select, textarea, [tabindex]";

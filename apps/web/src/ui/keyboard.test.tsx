@@ -171,6 +171,46 @@ describe("the keyboard (U-7)", { timeout: 60_000 }, () => {
     expect(card()).toBeNull();
   });
 
+  // Catches (Task 2 review): a Tab-opened card's K-6 return outliving the card, so closing it
+  // with a click on why (or Enter on the focused why) threw focus off why onto the row list.
+  it("4b. a Tab-opened card closed from why leaves focus on why", () => {
+    mount(topped());
+    key("Tab");
+    expect(card()).not.toBeNull();
+    const why = q("[data-why]")!;
+    focus(why);
+    expect(card()).not.toBeNull();
+    fireEvent.click(why);
+    expect(card()).toBeNull();
+    expect(document.activeElement).toBe(why);
+  });
+
+  // Catches (Task 2 review): a digit or F1 that unmounts the view holding focus, leaving it on
+  // <body>.
+  it("4c. a key that leaves F2 or F3 from inside the view lands focus on the row list", () => {
+    mount(fakeStore(fresh));
+    for (const [to, back] of [
+      ["F2", "1"],
+      ["F2", "F1"],
+      ["F3", "1"],
+      ["h", "f"],
+    ] as const) {
+      key(to);
+      const inside = q<HTMLElement>("[data-main-box] button, [data-main-box] a[href]")!;
+      expect(inside, to).not.toBeNull();
+      focus(inside);
+      expect(key(back), back).toBe(false);
+      expect(document.getElementById("view-factory"), back).not.toBeNull();
+      expect(document.activeElement, `${to} then ${back}`).toBe(listbox());
+    }
+    // Focus outside the main box stays where it is.
+    key("F2");
+    const tab = document.getElementById("panel-tab-priority")!;
+    focus(tab);
+    key("1");
+    expect(document.activeElement).toBe(tab);
+  });
+
   it("5. ↑/↓, Home/End, → and Space on the listbox (the old RowList test 5)", () => {
     const store = fakeStore(fresh);
     mount(store);

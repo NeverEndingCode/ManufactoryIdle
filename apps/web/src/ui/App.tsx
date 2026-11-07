@@ -15,10 +15,11 @@ import {
   powerLaneId,
   type BottleneckModel,
 } from "./derive.js";
-import { inertOutside } from "./dialog.js";
+import { inertOutside, openModal } from "./dialog.js";
 import { focusKind, isRowList, scopeOf, type KeyContext, type SectionKey } from "./keys.js";
 import { Drawer } from "./Drawer.js";
 import { Handbook } from "./Handbook.js";
+import { Help } from "./Help.js";
 import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
 import { capabilities } from "./capabilities.js";
 import { CommandBar, CommandSplit } from "./CommandBar.js";
@@ -102,6 +103,9 @@ export function App({ store }: { store: GameStore }) {
   /** The why button toggles: a second press closes the card, focus staying on it. */
   const openWhy = (opener: HTMLElement | null, byKey = false) => {
     if (whyOpen) {
+      // A toggle from why returns to why: a card opened by Tab (K-6) gives up its opener.
+      whyOpener.current = opener;
+      whyByKey.current = byKey;
       whyReturn.current = true;
       setWhyOpen(false);
       return;
@@ -114,19 +118,28 @@ export function App({ store }: { store: GameStore }) {
     whyReturn.current = returnFocus;
     setWhyOpen(false);
   };
-  // S-11 / V-12: while a modal (the settings sheet, the phone's NEXT_BUY sheet) is open
+  /** U-7e: the help overlay, the control that opened it (K-6), and whether to return there. */
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpOpener = useRef<HTMLElement | null>(null);
+  const helpReturn = useRef(false);
+  const openHelp = (opener: HTMLElement | null) => {
+    helpOpener.current = opener;
+    setHelpOpen(true);
+  };
+  const closeHelp = () => {
+    helpReturn.current = true;
+    setHelpOpen(false);
+  };
+  // S-11 / V-12 / K-5: while a modal (Settings, the help, the phone's NEXT_BUY sheet) is open
   // everything outside it is inert, but the live region never is (W-20: the one region keeps
   // speaking, and the sheet's announcements land there); only its controls go inert. Every
   // commit, undone first, since lanes and notice buttons can mount while it is open.
   useLayoutEffect(() => {
     const app = appRef.current;
     if (app === null) return;
-    const host =
-      sheet !== null
-        ? app.querySelector("[data-settings-host]")
-        : app.querySelector("[data-next-buy-host]");
-    if (sheet === null && host === null) return;
-    return inertOutside(app, host === null ? [] : [host], app.querySelector(".notices"));
+    const host = openModal(app);
+    if (host === null) return;
+    return inertOutside(app, [host], app.querySelector(".notices"));
   });
   // Focus returns once inert is gone (every layout cleanup runs before any layout effect).
   useLayoutEffect(() => {
@@ -156,6 +169,15 @@ export function App({ store }: { store: GameStore }) {
       ? back
       : appRef.current?.querySelector<HTMLElement>("[data-why]")
     )?.focus();
+  });
+  // The help closed: focus goes back to its opener (K-6), once inert is gone; with none (a key
+  // from <body> off the row views), it stays on <body>.
+  useLayoutEffect(() => {
+    if (helpOpen || !helpReturn.current) return;
+    helpReturn.current = false;
+    const back = helpOpener.current;
+    helpOpener.current = null;
+    if (back !== null && back.isConnected) back.focus();
   });
   const ticks = useMemo(() => createTickSource(store), [store]);
   const announcer = useMemo(() => createAnnouncer(), []);
@@ -291,6 +313,16 @@ export function App({ store }: { store: GameStore }) {
   const listIds = () => (s === null || listLane === null ? [] : laneItemIds(s, listLane));
   const listCurrent = () =>
     listLane === null ? null : currentRow(listIds(), selection.get(listLane) ?? null, bottleneck);
+  /** K-6: the opener of a keyboard-opened card or help: what had focus; from <body>, the shown
+   * row list (or none off the row views). */
+  const keyOpener = (): HTMLElement | null => {
+    const at = document.activeElement;
+    if (at instanceof HTMLElement && at !== document.body) return at;
+    return shown === "factory" || shown === "power" ? rowList() : null;
+  };
+  /** Focus inside the main box goes with the view a key unmounts: back to the row list. */
+  const inMain = () =>
+    appRef.current?.querySelector("[data-main-box]")?.contains(document.activeElement) ?? false;
   const click = (sel: string): HTMLElement | null => {
     const el = appRef.current?.querySelector<HTMLElement>(sel) ?? null;
     el?.click();
@@ -302,7 +334,7 @@ export function App({ store }: { store: GameStore }) {
       const why = appRef.current?.querySelector("[data-why]") ?? null;
       return {
         scope: scopeOf({
-          help: false,
+          help: helpOpen,
           settings: sheet !== null,
           phone: mode === "phone",
           why: whyOpen,
@@ -320,20 +352,13 @@ export function App({ store }: { store: GameStore }) {
     runOne: () => click("[data-next-buy] [data-run-one]") !== null,
     why() {
       if (appRef.current?.querySelector("[data-why]") == null) return false;
-      // K-6: the opener is what had focus; from <body>, the shown row list (or none).
-      const at = document.activeElement;
-      const opener =
-        at instanceof HTMLElement && at !== document.body
-          ? at
-          : shown === "factory" || shown === "power"
-            ? rowList()
-            : null;
-      openWhy(opener, true);
+      openWhy(keyOpener(), true);
       return true;
     },
     lane(n, closeDrawer) {
       const tab = lanes.find((t) => t.key === n);
       if (tab === undefined || tab.locked) return false;
+      if (inMain()) refocusRows.current = true;
       selectView("factory");
       onLane(tab.id);
       if (closeDrawer && drawerItem !== null) {
@@ -347,6 +372,7 @@ export function App({ store }: { store: GameStore }) {
         refocusRows.current = true;
         closeWhy(false);
       }
+      if (v === "factory" && inMain()) refocusRows.current = true;
       // selectView reads openItem before it's cleared: H opens the drawer's item's entry (K-10).
       selectView(v);
       if (closeDrawer && drawerItem !== null) {
@@ -379,6 +405,11 @@ export function App({ store }: { store: GameStore }) {
     },
     close() {
       close();
+      return true;
+    },
+    help() {
+      if (helpOpen) closeHelp();
+      else openHelp(keyOpener());
       return true;
     },
     section(k: SectionKey) {
@@ -481,6 +512,7 @@ export function App({ store }: { store: GameStore }) {
     cardOpen: card !== null,
     onSettings: (opener) => openSheet({}, opener),
     onSaveChip: (opener) => openSheet({ section: "account" }, opener),
+    onHelp: openHelp,
     slots: {
       main,
       overlays: (
@@ -531,6 +563,7 @@ export function App({ store }: { store: GameStore }) {
           {command !== null && whyOpen && mode === "phone" && (
             <NextBuySheet {...command} onClose={() => closeWhy(true)} onOpenItem={openFromSheet} />
           )}
+          {helpOpen && <Help snapshot={s} onClose={closeHelp} />}
           {sheet !== null && <Settings store={store} view={view} {...sheet} onClose={closeSheet} />}
         </div>
       </TickContext.Provider>

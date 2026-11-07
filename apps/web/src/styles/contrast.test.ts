@@ -76,6 +76,8 @@ const ON_SURFACE: Record<string, string> = {
   // Task 7: the priority list's reset confirmation and the account forms' error box.
   confirm: "s2",
   formError: "s2",
+  // UI-2 Task 3: the help overlay's panel.
+  help: "s2",
 };
 const ON_SURFACE_ATTRS = [/\[aria-selected="?true"?\]/, /\[aria-current/];
 

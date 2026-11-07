@@ -39,6 +39,8 @@ export interface ShellProps {
   cardOpen?: boolean;
   onSettings(opener: HTMLElement): void;
   onSaveChip(opener: HTMLElement): void;
+  /** U-7e: the header's `?` (desktop and tablet; K-17). */
+  onHelp(opener: HTMLElement): void;
   /** Filled by later tasks: the main box content, the overlays, the command line, the footer/TAP. */
   slots: {
     main: ReactNode;
@@ -319,6 +321,16 @@ export function DesktopShell(p: ShellProps) {
           </button>
         )}
         {s !== null && <PanelTabs p={p} views={DESKTOP_VIEWS} phone={false} />}
+        <button
+          type="button"
+          className={css.helpButton}
+          data-open-help
+          aria-haspopup="dialog"
+          aria-label="Keyboard shortcuts"
+          onClick={(e) => p.onHelp(e.currentTarget)}
+        >
+          ?
+        </button>
         <SettingsButton p={p} label={shell ? "cfg" : "Settings"} className={css.cfg} />
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone={false} />}
