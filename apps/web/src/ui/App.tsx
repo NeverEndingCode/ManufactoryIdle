@@ -9,6 +9,7 @@ import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
 import {
+  bottleneckKey,
   bottleneckRow,
   laneItemIds,
   laneTabs,
@@ -41,12 +42,6 @@ import { useLayoutMode } from "./use-layout-mode.js";
 import { createTickSource, TickContext } from "./use-tick.js";
 
 type SheetAt = Pick<SettingsProps, "section">;
-
-/** What the bottleneck announcement keys on: the framed item, a frameless one, or none. */
-function bottleneckKey(b: BottleneckModel | null): string | null {
-  if (b === null) return null;
-  return b.itemId === null ? "\u0000frameless" : `item:${b.itemId}`;
-}
 
 /**
  * S-15 / W-20: "Bottleneck: <advice>" when the framed item changes between adopted snapshots,

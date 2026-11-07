@@ -3,6 +3,9 @@
 // can't subscribe twice or miss the first adoption. App hands it down through FeelContext.
 import { createContext, useContext } from "react";
 import type { AdoptEvent, GameStore } from "../sync/store.js";
+import { createFactoryLog, type FactoryLogBook } from "./factory-log.js";
+
+export type { FactoryLogBook };
 
 export type FeelStore = Pick<GameStore, "onAdopt" | "later" | "now">;
 
@@ -11,8 +14,7 @@ export interface Book {
   record(e: AdoptEvent): void;
 }
 
-// Minimal books until Task 3 (factory-log.ts) and Task 5 (trend.ts) fill them in.
-export type FactoryLogBook = Book;
+// A minimal book until Task 5 (trend.ts) fills it in.
 export type TrendBook = Book;
 
 export interface Feel {
@@ -32,7 +34,8 @@ const feels = new WeakMap<object, Feel>();
 export function feelOf(store: FeelStore): Feel {
   let feel = feels.get(store);
   if (feel === undefined) {
-    feel = { log: stubBook(), trend: stubBook() };
+    // The log's windows run on the store's monotonic clock (L-8).
+    feel = { log: createFactoryLog({ now: () => store.now() }), trend: stubBook() };
     const { log, trend } = feel;
     store.onAdopt((e) => log.record(e));
     store.onAdopt((e) => trend.record(e));

@@ -84,4 +84,25 @@ describe("feelOf (L-3)", () => {
     expect(fired).toEqual(["a 100", "c 250", "b 300"]);
     expect(fake.now() - t0).toBe(300);
   });
+
+  // Catches: feelOf still handing out a stub log, or not feeding it the store's adoptions.
+  it("4. the log book is the factory log, fed by the store's adoptions", () => {
+    const slice = loadSlice();
+    const s0 = snapshotOf(slice, freshState(slice));
+    const fake = fakeStore(s0);
+    const { log } = feelOf(fake);
+    const buy = {
+      id: 1,
+      key: "k",
+      actions: [
+        { type: "BUY_MACHINE" as const, lane: "iron", machineClass: "miner", mark: 1, count: 1 },
+      ],
+      label: "drawer:iron_ore:buy",
+    };
+    fake.adopt({ next: snapshotOf(slice, freshState(slice), { stateVersion: 1 }), settled: buy });
+    expect(log.entries().map((e) => e.key)).toEqual(["buy:1"]);
+    // A world change: the next adoption has prev null, and the log empties.
+    fake.adopt({ prev: null, next: s0 });
+    expect(log.entries()).toEqual([]);
+  });
 });

@@ -277,6 +277,13 @@ function shownAsRow(s: Snapshot, m: BottleneckModel): BottleneckModel {
   return isShownItem(s, m.itemId) ? m : { ...m, laneId: null, itemId: null, action: null };
 }
 
+/** What the bottleneck announcement and the factory log key on (L-7): the framed item, a
+ *  frameless one, or none. */
+export function bottleneckKey(b: BottleneckModel | null): string | null {
+  if (b === null) return null;
+  return b.itemId === null ? "\u0000frameless" : `item:${b.itemId}`;
+}
+
 /** P-2: the one framed row in the whole factory, from the display solve's bottleneck. */
 export function bottleneckRow(s: Snapshot): BottleneckModel | null {
   const m = bottleneckModel(s);
