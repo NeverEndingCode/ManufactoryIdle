@@ -29,6 +29,36 @@
   flex: 1;
 }
 
+/* The chip, the panel tabs, ? and cfg: one group, so a header too narrow for one line wraps
+   them together (below). */
+.nav {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 20px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+/* U-2c: from 600 px up to where the title, the tabs, ? and cfg fit on one line (about 700 px
+   in the terminal, 780 px in Clean), the group goes to a second line, right-aligned, and the
+   tier readout fills the first: a zero basis, so it never forces the wrap, then grows and
+   ellipsizes. */
+:global(.app[data-layout="tablet"]) .header {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+:global(.app[data-layout="tablet"]) .header > :global(.tier-readout) {
+  flex: 1 1 0;
+}
+
+:global(.app[data-layout="tablet"]) .spacer {
+  display: none;
+}
+
 /* S-12's chip: 36 px, --t1 on an --accent border. */
 .chip {
   flex: none;

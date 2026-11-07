@@ -109,6 +109,59 @@ export async function expectNoOverflow(page: Page, label: string): Promise<void>
   expect.soft(report.small, `${label}: targets under 44 × 44 px`).toEqual([]);
 }
 
+/**
+ * K-16 / U-8d's 9a in a browser: on a coarse pointer, every visible button, [role=tab],
+ * [data-key] and block link (a[href] not laid out inline) inside `scopes` is a 44 × 44 px
+ * target. expectNoOverflow covers buttons and links page-wide; this adds the tabs and letter-key
+ * targets that are neither, and names the scope each small one sits in.
+ */
+export async function expectCoarseTargets(
+  page: Page,
+  label: string,
+  scopes: readonly string[],
+): Promise<void> {
+  const small = await page.evaluate((sels: readonly string[]) => {
+    const out: string[] = [];
+    const seen = new Set<Element>();
+    for (const sel of sels)
+      for (const scope of document.querySelectorAll(sel))
+        for (const el of scope.querySelectorAll('button, [role="tab"], [data-key], a[href]')) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          const cs = getComputedStyle(el);
+          if (el.tagName === "A" && cs.display === "inline") continue;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0 || cs.visibility === "hidden") continue;
+          if (r.width < 43.5 || r.height < 43.5) {
+            const text = (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 30);
+            const w = Math.round(r.width * 10) / 10;
+            const h = Math.round(r.height * 10) / 10;
+            out.push(`${sel} <${el.tagName.toLowerCase()}> "${text}" is ${w} × ${h}`);
+          }
+        }
+    return out;
+  }, scopes);
+  expect.soft(small, `${label}: coarse targets under 44 × 44 px`).toEqual([]);
+}
+
+/** No sideways scroll on the page or the body (base.css's overflow-x: hidden lifted). */
+export async function expectNoSidewaysScroll(page: Page, label: string): Promise<void> {
+  const r = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const body = document.body;
+    const before = body.style.overflowX;
+    body.style.overflowX = "visible";
+    const out = {
+      page: [doc.scrollWidth, doc.clientWidth],
+      body: [body.scrollWidth, body.clientWidth],
+    };
+    body.style.overflowX = before;
+    return out;
+  });
+  expect.soft(r.page[0]!, `${label}: the page scrolls sideways`).toBeLessThanOrEqual(r.page[1]!);
+  expect.soft(r.body[0]!, `${label}: the body overflows`).toBeLessThanOrEqual(r.body[1]!);
+}
+
 /** The fake provider's display names (the client's PROVIDER_NAMES). */
 const PROVIDER_NAME = { discord: "Discord", github: "GitHub" } as const;
 

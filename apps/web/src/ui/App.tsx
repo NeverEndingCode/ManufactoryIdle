@@ -603,7 +603,7 @@ export function App({ store }: { store: GameStore }) {
           {command !== null && whyOpen && mode === "phone" && (
             <NextBuySheet {...command} onClose={() => closeWhy(true)} onOpenItem={openFromSheet} />
           )}
-          {helpOpen && <Help snapshot={s} onClose={closeHelp} />}
+          {helpOpen && <Help onClose={closeHelp} />}
           {sheet !== null && <Settings store={store} view={view} {...sheet} onClose={closeSheet} />}
         </div>
       </TickContext.Provider>

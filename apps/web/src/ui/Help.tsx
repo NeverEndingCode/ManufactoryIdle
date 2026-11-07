@@ -6,7 +6,6 @@
 // (through the dispatcher's help scope), Close or the backdrop closes it. Tab wraps inside it.
 // App makes the background inert (K-5) and returns focus to the opener (K-6).
 import { Fragment, useEffect, useId, useRef, type KeyboardEvent } from "react";
-import type { Snapshot } from "../sync/snapshot.js";
 import { trapTab } from "./dialog.js";
 import styles from "./Help.module.css";
 import { KEYMAP, type KeyRow } from "./keys.js";
@@ -57,7 +56,7 @@ function Caps({ caps }: { caps: KeyRow["caps"] }) {
   );
 }
 
-export function Help({ onClose }: { onClose(): void; snapshot: Snapshot | null }) {
+export function Help({ onClose }: { onClose(): void }) {
   const titleId = useId();
   const title = useRef<HTMLHeadingElement>(null);
   const dialog = useRef<HTMLDivElement>(null);

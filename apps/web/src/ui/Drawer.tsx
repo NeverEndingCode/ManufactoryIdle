@@ -481,6 +481,8 @@ function MoreBar({
     const words = costWords(ctx, quote(s.content, s.state, storage.buy));
     return { shown: `storage · next ${words.shown}`, said: `Storage, next ${words.said}` };
   };
+  // A generator with no section to offer has no handbook entry either: no bare MORE heading.
+  if (sections.length === 0 && item === null) return null;
   return (
     <div className={styles.more} data-more>
       {!sheet && <h3 className={styles.h3}>MORE</h3>}

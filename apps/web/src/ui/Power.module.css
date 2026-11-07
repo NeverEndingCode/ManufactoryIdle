@@ -245,7 +245,7 @@
 }
 
 /* The row's text is the button that opens its generator drawer (K-12): the row's look, no
-   chrome; the focus ring is the global one. */
+   chrome; the focus ring is the global one, drawn inside (below). */
 .genText {
   display: flex;
   flex: 1;
@@ -263,6 +263,13 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/* .gen's overflow: hidden would clip the global ring (offset 2px outside): the row's button
+   fills the row's height from its left edge, and the +1 ends at its right edge. Inside, then. */
+.genText:focus-visible,
+.plus:focus-visible {
+  outline-offset: -2px;
 }
 
 .genText:hover .genName,

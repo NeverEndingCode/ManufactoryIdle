@@ -371,6 +371,7 @@ function generatorModel(s: Snapshot, recipeId: RecipeId, notation: NotationMode)
   const recipe = s.content.recipes.get(recipeId);
   if (!recipe || !(recipe.def.powerOutput > 0))
     throw new Error(`drawerModel: "${recipeId}" is not a generator recipe`);
+  // Safe: machineSectionOf is null only for an unknown recipe, and the guard above found it.
   const machines = machineSectionOf(s, recipeId, notation)!;
   return {
     kind: "generator",

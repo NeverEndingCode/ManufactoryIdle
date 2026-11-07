@@ -496,6 +496,8 @@ describe("generator drawers (U-5c, K-12)", { timeout: 60_000 }, () => {
       "B",
     ]);
     expect(d.querySelector("[data-handbook-link]")).toBeNull();
+    // Nothing behind MORE: no bare MORE heading either.
+    expect(d.querySelector("[data-more]")).toBeNull();
     expect(d.querySelector("[data-split]")).toBeNull();
     expect(d.textContent).not.toContain("SPLIT");
     // The row's button says it's open; locked classes have no opener.

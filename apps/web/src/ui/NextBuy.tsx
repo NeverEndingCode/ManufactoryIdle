@@ -16,7 +16,7 @@ import type { ItemId } from "@manufactory/engine";
 import { serverNow } from "../sync/snapshot.js";
 import { commandText, machineEffect, nextBuyModel, PLAIN, type NextBuyModel } from "./command.js";
 import { Run, type CommandProps } from "./CommandBar.js";
-import { trapTab } from "./dialog.js";
+import { MODAL_HOSTS, trapTab } from "./dialog.js";
 import { itemName, useNames } from "./names.js";
 import css from "./NextBuy.module.css";
 import { Spoken } from "./Spoken.js";
@@ -152,13 +152,33 @@ export function NextBuyCard(p: CommandProps & { onClose(returnFocus: boolean): v
     e.stopPropagation();
     p.onClose(true);
   };
+  // Esc from rest too: a buy that swaps the advice unmounts the focused run, and focus falls to
+  // <body> with the card still open (K-21). The dispatcher leaves Esc to the card, so the card
+  // listens on the document, as the help does; never over a modal, whose own Esc wins.
+  const close = useRef(p.onClose);
+  close.current = p.onClose;
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const at = document.activeElement;
+      if (at !== null && at !== document.body) return;
+      if (MODAL_HOSTS.some((sel) => document.querySelector(sel) !== null)) return;
+      e.preventDefault();
+      close.current(true);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   // Focus leaving for another element closes it; focus lost to nowhere (a run button that
   // unmounts when the next advice has none) keeps it. Focus going to the why button keeps it
   // too: that click toggles it closed, and closing here first would make the click reopen it.
+  // Focus going into a modal (`?`'s help over the card) keeps it, inert underneath, so the
+  // modal's close can return focus to the control in the card that opened it (K-6).
   const onBlur = (e: FocusEvent<HTMLElement>) => {
     const to = e.relatedTarget;
     if (!(to instanceof Element) || e.currentTarget.contains(to)) return;
     if (to.closest("[data-why]") !== null) return;
+    if (to.closest(MODAL_HOSTS.join(", ")) !== null) return;
     p.onClose(false);
   };
   return (

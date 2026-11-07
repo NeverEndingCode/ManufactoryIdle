@@ -309,29 +309,32 @@ export function DesktopShell(p: ShellProps) {
         </h1>
         {s !== null && <TierReadout snapshot={s} now={() => p.store.now()} />}
         <span className={css.spacer} />
-        {s !== null && showsChip(p.view) && (
+        {/* The right-hand group wraps as one onto a second line on a narrow tablet (U-2c). */}
+        <div className={css.nav}>
+          {s !== null && showsChip(p.view) && (
+            <button
+              type="button"
+              className={css.chip}
+              data-save-chip
+              aria-label="Save your factory"
+              onClick={(e) => p.onSaveChip(e.currentTarget)}
+            >
+              {shell ? "> save_factory" : "Save your factory"}
+            </button>
+          )}
+          {s !== null && <PanelTabs p={p} views={DESKTOP_VIEWS} phone={false} />}
           <button
             type="button"
-            className={css.chip}
-            data-save-chip
-            aria-label="Save your factory"
-            onClick={(e) => p.onSaveChip(e.currentTarget)}
+            className={css.helpButton}
+            data-open-help
+            aria-haspopup="dialog"
+            aria-label="Keyboard shortcuts"
+            onClick={(e) => p.onHelp(e.currentTarget)}
           >
-            {shell ? "> save_factory" : "Save your factory"}
+            ?
           </button>
-        )}
-        {s !== null && <PanelTabs p={p} views={DESKTOP_VIEWS} phone={false} />}
-        <button
-          type="button"
-          className={css.helpButton}
-          data-open-help
-          aria-haspopup="dialog"
-          aria-label="Keyboard shortcuts"
-          onClick={(e) => p.onHelp(e.currentTarget)}
-        >
-          ?
-        </button>
-        <SettingsButton p={p} label={shell ? "cfg" : "Settings"} className={css.cfg} />
+          <SettingsButton p={p} label={shell ? "cfg" : "Settings"} className={css.cfg} />
+        </div>
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone={false} />}
       <ContentRow p={p} />
