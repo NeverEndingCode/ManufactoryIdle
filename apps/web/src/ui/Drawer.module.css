@@ -568,7 +568,8 @@
   overflow-wrap: anywhere;
 }
 
-/* K-14: an input the action draws harder, in --advice. */
+/* K-14: an input the action draws harder, in --advice. It marks any falling rate (a dismantle's
+   own item too); K-14 uses it for a buy's draining inputs. */
 .drain {
   color: var(--advice);
 }

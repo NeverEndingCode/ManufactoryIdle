@@ -194,7 +194,8 @@ export function Drawer({
   // K-11: the drawer never drops focus to <body>. After every commit: when the last element
   // focused inside it has gone (a section swap, a dismantle-all's row, a mark row) and focus
   // fell to the body, the title takes it. A click on blank space leaves that element in place,
-  // so it never pulls focus back.
+  // so it never pulls focus back. It runs on the Drawer's own commits only; that's enough,
+  // because its elements only disappear when a new snapshot (or its own state) re-renders it.
   const lastFocused = useRef<Element | null>(null);
   useLayoutEffect(() => {
     const el = lastFocused.current;

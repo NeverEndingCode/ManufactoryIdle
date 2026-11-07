@@ -82,9 +82,13 @@ button {
    fine-pointer sizes with height, which min-height always beats; none declares a min-height or
    min-width under 44 px outside a (pointer: fine) block (tokens.test 9a). */
 @media (pointer: coarse) {
+  /* Links too: a letter key's target may be one (the drawer's [H] handbook). min-* doesn't
+     apply to an inline link, so text links in prose are unchanged. */
   button,
   .btn,
-  [role="tab"] {
+  [role="tab"],
+  [data-key],
+  a[href] {
     min-width: 44px;
     min-height: 44px;
   }

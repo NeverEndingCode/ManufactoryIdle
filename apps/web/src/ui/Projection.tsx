@@ -6,7 +6,7 @@ import type { Snapshot } from "../sync/snapshot.js";
 import { rateText } from "./derive.js";
 import styles from "./Drawer.module.css";
 import { itemLabel, itemName } from "./names.js";
-import { preview, previewLines, type Preview, type RateDelta } from "./preview.js";
+import { preview, shownDeltas, summaryLines, type Preview, type RateDelta } from "./preview.js";
 import { Spoken } from "./Spoken.js";
 import { useTheme, type ThemeDef } from "./theme.js";
 
@@ -17,9 +17,6 @@ export interface ProjectionLine {
   said: string;
   drain: boolean;
 }
-
-/** previewLines' own cap on rate lines. */
-const MAX_RATE_LINES = 4;
 
 /** "+0.4" from "+0.4/s": the before half of "ROTOR +0.4 → +0.6/s". */
 const bare = (n: number) => rateText(n).replace(/\/s$/, "");
@@ -34,8 +31,7 @@ function rateLine(d: RateDelta, name: string): string {
 /**
  * K-14: preview()'s deltas, themed. "IRON_PLATE -0.8/s (still +11.2/s)" when a rate falls
  * (drain), else "ROTOR +0.4 → +0.6/s"; a reader hears the content names. The lane's items first,
- * at most four rate lines, then previewLines' own power, bottleneck and no-change lines, which
- * carry no names. A rejection is its reason.
+ * at most four rate lines (shownDeltas), then summaryLines, which carry no names. A rejection is its reason.
  */
 export function projectionLines(
   s: Snapshot,
@@ -43,22 +39,14 @@ export function projectionLines(
   laneId: LaneId,
   theme: ThemeDef,
 ): ProjectionLine[] {
-  const plain = previewLines(s, p, laneId);
-  if (!p.ok) return plain.map((line) => ({ shown: line, said: line, drain: false }));
-  const inLane = (d: RateDelta) => s.content.items.get(d.itemId)?.lane === laneId;
-  const ordered = [...p.deltas.filter(inLane), ...p.deltas.filter((d) => !inLane(d))].slice(
-    0,
-    MAX_RATE_LINES,
-  );
-  const rates = ordered.map((d) => ({
+  if (!p.ok) return [{ shown: p.reason, said: p.reason, drain: false }];
+  const rates = shownDeltas(s, p, laneId).map((d) => ({
     shown: rateLine(d, itemLabel(s, d.itemId, theme)),
     said: rateLine(d, itemName(s, d.itemId)),
+    // Any falling rate is drawn as a drain (K-14): in a buy's preview that's an input.
     drain: d.after < d.before,
   }));
-  // previewLines' rate lines come first, one per delta shown; the rest are name-free.
-  const rest = plain
-    .slice(ordered.length)
-    .map((line) => ({ shown: line, said: line, drain: false }));
+  const rest = summaryLines(p).map((line) => ({ shown: line, said: line, drain: false }));
   return [...rates, ...rest];
 }
 

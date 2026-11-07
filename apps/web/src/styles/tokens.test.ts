@@ -464,6 +464,10 @@ describe("the CSS source", () => {
           .map((x) => x.trim())
           .includes("button"),
     );
+    // A letter key's target can be a link (the drawer's [H] handbook): links are covered too.
+    expect(coarse[0]!.stack[1]!.split(",").map((x) => x.trim())).toEqual(
+      expect.arrayContaining(["button", ".btn", '[role="tab"]', "[data-key]", "a[href]"]),
+    );
     expect(Object.fromEntries(coarse.map((d) => [d.property, d.value]))).toMatchObject({
       "min-height": "44px",
       "min-width": "44px",
@@ -471,8 +475,10 @@ describe("the CSS source", () => {
     const fine = (d: (typeof all)[number]) => d.stack.some((s) => /pointer:\s*fine/.test(s));
     const under = all.filter((d) => {
       if (d.property !== "min-height" && d.property !== "min-width") return false;
-      const px = /^(\d+(?:\.\d+)?)px$/.exec(d.value);
-      return px !== null && Number(px[1]) < 44 && !fine(d);
+      // px, or rem/em at the 16 px root (2.5rem is 40 px).
+      const m = /^(\d+(?:\.\d+)?)(px|rem|em)$/.exec(d.value);
+      if (m === null || fine(d)) return false;
+      return Number(m[1]) * (m[2] === "px" ? 1 : 16) < 44;
     });
     expect(
       under.map((d) => `${d.file}: ${d.stack.join(" > ")} { ${d.property}: ${d.value} }`),

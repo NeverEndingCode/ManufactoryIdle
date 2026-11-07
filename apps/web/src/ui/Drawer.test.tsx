@@ -1165,6 +1165,31 @@ describe("MACHINES and the sections (U-5c, K-9, K-11, K-13 – K-15)", { timeout
   });
 
   // Catches: the phone's section buttons in a desktop row, or under 48 px.
+  // Catches: a drawer control the coarse-pointer rule doesn't reach (K-16), such as the
+  // handbook link styled as a 36 px button.
+  it("9b. every drawer control is a coarse 44 px target: base.css's coarse rule matches it", () => {
+    const file = "../styles/base.css";
+    const css = declarations(
+      file,
+      readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8"),
+    );
+    const coarse = css.find(
+      (x) => x.stack[0] === "@media (pointer: coarse)" && x.property === "min-height",
+    )!;
+    expect(coarse.value).toBe("44px");
+    const selector = coarse.stack[1]!;
+    for (const width of [1280, 390]) {
+      stubWidth(width);
+      mount(fakeStore(tier8));
+      const d = open("iron_rod");
+      const controls = [...d.querySelectorAll<HTMLElement>("button, a[href]")];
+      expect(controls.length).toBeGreaterThan(5);
+      for (const el of controls) expect(el.matches(selector), el.outerHTML.slice(0, 80)).toBe(true);
+      expect(d.querySelector("a[data-handbook-link]")!.matches(selector)).toBe(true);
+      cleanup();
+    }
+  });
+
   it("9. the phone sheet: MORE is a 2-column grid of 48 px buttons at the bottom (U-5b)", () => {
     stubWidth(390);
     mount(fakeStore(fresh));
