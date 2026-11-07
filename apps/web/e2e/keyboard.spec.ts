@@ -8,10 +8,11 @@ import { actionPosts, startGuest } from "./helpers.js";
 test.use({ viewport: { width: 1280, height: 820 } });
 
 const focused = (page: Page) => page.locator("*:focus");
+const search = (page: Page) => page.locator("[data-handbook-search]");
 
 test.describe("the keyboard", () => {
   // Two real-time waits for affordability (120 s and 60 s) on top of the steps.
-  test.describe.configure({ timeout: 300_000 });
+  test.describe.configure({ timeout: 200_000 });
   test("every key does what the help says, and typing triggers nothing", async ({ page }) => {
     const posts = actionPosts(page);
     const { root } = await startGuest(page);
@@ -138,12 +139,12 @@ test.describe("the keyboard", () => {
 
     await test.step("typing in the handbook search triggers nothing (K-2, K-19)", async () => {
       await page.keyboard.press("F3");
-      const search = page.locator("[data-handbook-search]");
-      await expect(search).toBeVisible();
+      const box = search(page);
+      await expect(box).toBeVisible();
       const before = await root.getAttribute("data-state-version");
-      await search.focus();
+      await box.focus();
       await page.keyboard.type("1pt?");
-      await expect(search).toHaveValue("1pt?");
+      await expect(box).toHaveValue("1pt?");
       await expect(page.locator("[data-route]")).toHaveAttribute("data-route", "handbook");
       await expect(page.locator("[data-help]")).toHaveCount(0);
       await expect(root).toHaveAttribute("data-state-version", before!);
@@ -180,5 +181,3 @@ test.describe("the keyboard", () => {
     });
   });
 });
-
-const search = (page: Page) => page.locator("[data-handbook-search]");

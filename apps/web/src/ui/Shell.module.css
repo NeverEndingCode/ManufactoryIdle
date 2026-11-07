@@ -42,21 +42,29 @@
   margin-left: auto;
 }
 
-/* U-2c: from 600 px up to where the title, the tabs, ? and cfg fit on one line (about 700 px
-   in the terminal, 780 px in Clean), the group goes to a second line, right-aligned, and the
-   tier readout fills the first: a zero basis, so it never forces the wrap, then grows and
-   ellipsizes. */
-:global(.app[data-layout="tablet"]) .header {
-  flex-wrap: wrap;
-  row-gap: 8px;
-}
+/* K-25 (U-2c amendment): below 1040 px the header always takes two lines, the group on the
+   second, right-aligned, and the tier readout fills the first (a zero basis, then it grows and
+   ellipsizes). By width alone, never by content, so the save chip appearing mid-session can't
+   change the header's height. 1040 is at or above the widest one-line header, chip included,
+   in the widest theme: Clean at the desktop title size needs 1028 px of viewport (terminal
+   892 px of header). The phone has its own header. */
+@media (max-width: 1039px) {
+  :global(.app:not([data-layout="phone"])) .header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
 
-:global(.app[data-layout="tablet"]) .header > :global(.tier-readout) {
-  flex: 1 1 0;
-}
+  :global(.app:not([data-layout="phone"])) .header > :global(.tier-readout) {
+    flex: 1 1 0;
+  }
 
-:global(.app[data-layout="tablet"]) .spacer {
-  display: none;
+  :global(.app:not([data-layout="phone"])) .spacer {
+    display: none;
+  }
+
+  :global(.app:not([data-layout="phone"])) .nav {
+    flex-basis: 100%;
+  }
 }
 
 /* S-12's chip: 36 px, --t1 on an --accent border. */

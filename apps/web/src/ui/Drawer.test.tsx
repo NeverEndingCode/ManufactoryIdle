@@ -1256,6 +1256,18 @@ describe("MACHINES and the sections (U-5c, K-9, K-11, K-13 – K-15)", { timeout
     act(() => markBuy(d, 1, "10")!.focus());
     expect(followOf(d).textContent).toMatch(/^IF YOU BUY 10(?!\d)/);
     expect(shown()).toEqual(lines([{ ...BUY_PLATE, count: 10 }]));
+    // The final review's item 7: it never sticks. Focus moving within the buttons keeps
+    // following; focus leaving them, or the pointer leaving them, goes back to the default ×1.
+    act(() => markBuy(d, 1, "max")!.focus());
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY max|^IF YOU BUY \d/);
+    act(() => d.querySelector<HTMLElement>("#drawer-title")!.focus());
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 1(?!\d)/);
+    expect(shown()).toEqual(lines([BUY_PLATE]));
+    const ten = markBuy(d, 1, "10")!;
+    fireEvent.mouseEnter(ten);
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 10(?!\d)/);
+    fireEvent.mouseLeave(ten.parentElement!);
+    expect(followOf(d).textContent).toMatch(/^IF YOU BUY 1(?!\d)/);
     cleanup();
 
     // Tier 8: hovering mark 2's buy follows mark 2.

@@ -111,19 +111,22 @@ export async function expectNoOverflow(page: Page, label: string): Promise<void>
 
 /**
  * K-16 / U-8d's 9a in a browser: on a coarse pointer, every visible button, [role=tab],
- * [data-key] and block link (a[href] not laid out inline) inside `scopes` is a 44 × 44 px
+ * [data-key] and block link (a[href] not laid out inline) inside each scope is a 44 × 44 px
  * target. expectNoOverflow covers buttons and links page-wide; this adds the tabs and letter-key
- * targets that are neither, and names the scope each small one sits in.
+ * targets that are neither, and names the scope each small one sits in. Each scope maps to the
+ * fewest targets it must have checked, so a missing scope or an empty one can't pass vacuously.
  */
 export async function expectCoarseTargets(
   page: Page,
   label: string,
-  scopes: readonly string[],
+  scopes: Readonly<Record<string, number>>,
 ): Promise<void> {
-  const small = await page.evaluate((sels: readonly string[]) => {
-    const out: string[] = [];
+  const r = await page.evaluate((sels: readonly string[]) => {
+    const small: string[] = [];
+    const checked: Record<string, number> = {};
     const seen = new Set<Element>();
-    for (const sel of sels)
+    for (const sel of sels) {
+      checked[sel] = 0;
       for (const scope of document.querySelectorAll(sel))
         for (const el of scope.querySelectorAll('button, [role="tab"], [data-key], a[href]')) {
           if (seen.has(el)) continue;
@@ -132,16 +135,22 @@ export async function expectCoarseTargets(
           if (el.tagName === "A" && cs.display === "inline") continue;
           const r = el.getBoundingClientRect();
           if (r.width === 0 || r.height === 0 || cs.visibility === "hidden") continue;
+          checked[sel]! += 1;
           if (r.width < 43.5 || r.height < 43.5) {
             const text = (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 30);
             const w = Math.round(r.width * 10) / 10;
             const h = Math.round(r.height * 10) / 10;
-            out.push(`${sel} <${el.tagName.toLowerCase()}> "${text}" is ${w} × ${h}`);
+            small.push(`${sel} <${el.tagName.toLowerCase()}> "${text}" is ${w} × ${h}`);
           }
         }
-    return out;
-  }, scopes);
-  expect.soft(small, `${label}: coarse targets under 44 × 44 px`).toEqual([]);
+    }
+    return { small, checked };
+  }, Object.keys(scopes));
+  for (const [sel, min] of Object.entries(scopes))
+    expect
+      .soft(r.checked[sel] ?? 0, `${label}: targets checked in ${sel}`)
+      .toBeGreaterThanOrEqual(min);
+  expect.soft(r.small, `${label}: coarse targets under 44 × 44 px`).toEqual([]);
 }
 
 /** No sideways scroll on the page or the body (base.css's overflow-x: hidden lifted). */

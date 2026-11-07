@@ -58,12 +58,14 @@ test("a held T taps like the button", async ({ page }) => {
   // At rest: nothing focused, so the key is the dispatcher's.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 
+  let upAt = 0;
   await test.step("T down holds and flushes; T up releases with one more", async () => {
     const first = tapPost();
     await page.keyboard.down("t");
     await expect(footer).toHaveAttribute("data-holding", "");
     await first;
     const last = tapPost();
+    upAt = Date.now();
     await page.keyboard.up("t");
     await expect(footer).not.toHaveAttribute("data-holding");
     await last;
@@ -74,5 +76,7 @@ test("a held T taps like the button", async ({ page }) => {
     // At least the first and the release flush; a slow runner may hold past a second.
     expect(taps.length).toBeGreaterThanOrEqual(2);
     for (const p of taps) expect(p.body.actions).toHaveLength(1);
+    // The release's own flush: the last one is seen after the keyup.
+    expect(taps.at(-1)!.at).toBeGreaterThanOrEqual(upAt);
   });
 });

@@ -248,6 +248,14 @@ export function App({ store }: { store: GameStore }) {
     (shown === "factory" && openLane === laneId) || (shown === "power" && openLane === powerId)
       ? open
       : null;
+  /** The final review's item 2: on the phone only one sheet can be modal. A layout that becomes
+   * the phone with the card and a drawer both open keeps the drawer (the more specific
+   * context) and closes the card, focus staying with the drawer sheet. The render below never
+   * shows the NEXT_BUY sheet over a drawer either, so not even one frame has two. */
+  const sheetClash = mode === "phone" && whyOpen && drawerTarget !== null;
+  useEffect(() => {
+    if (sheetClash) closeWhy(false);
+  });
   /** A lane tab: the drawer of another lane closes, so it never covers the new lane's rows.
    * Focus stays on the tab that was pressed. */
   const onLane = (lane: LaneId) => {
@@ -290,14 +298,24 @@ export function App({ store }: { store: GameStore }) {
     closeTo.current = undefined;
     (back !== null && back.isConnected ? back : rowList())?.focus();
   });
-  /** K-11 / Review Focus 3: a key that closed the drawer or the card under focus puts focus on
-   * the row list once it's rendered (the new lane's), never leaving it on <body>. */
+  /** K-11 / Review Focus 3: a key that closed the drawer or the card under focus, or unmounted
+   * the focused view, puts focus on the shown view's own target once it's rendered, never
+   * leaving it on <body>: the row list (the new lane's), the priority list's first row, or the
+   * handbook's heading (never its search, where the next letter would type). */
   const refocusRows = useRef(false);
   useLayoutEffect(() => {
     if (!refocusRows.current) return;
     refocusRows.current = false;
     const at = document.activeElement;
-    if (at === null || at === document.body) rowList()?.focus();
+    if (at !== null && at !== document.body) return;
+    const app = appRef.current;
+    const target =
+      shown === "priority"
+        ? app?.querySelector<HTMLElement>("#view-priority li[data-entry]")
+        : shown === "handbook"
+          ? app?.querySelector<HTMLElement>("[data-handbook] h2")
+          : rowList();
+    target?.focus();
   });
 
   /** §13.1 / V-18: the drawer's split bar goes to its item's entry in the priority list. */
@@ -409,7 +427,7 @@ export function App({ store }: { store: GameStore }) {
         refocusRows.current = true;
         closeWhy(false);
       }
-      if (v === "factory" && inMain()) refocusRows.current = true;
+      if (inMain()) refocusRows.current = true;
       // selectView reads openItem before it's cleared: H opens the drawer's item's entry (K-10).
       selectView(v);
       if (closeDrawer && drawerTarget !== null) {
@@ -527,6 +545,7 @@ export function App({ store }: { store: GameStore }) {
         presentation={mode === "phone" ? "sheet" : "panel"}
         claimFocus={claimFocus}
         onLeaveFocused={() => (leftFocused.current = true)}
+        cardOpen={whyOpen && mode !== "phone"}
       />
     ) : null;
 
@@ -600,7 +619,7 @@ export function App({ store }: { store: GameStore }) {
           {/* K-3: the phone's modal sheet, its backdrop on the app root over the TAP and the
               bottom tabs (inert while it's open). */}
           {mode === "phone" && drawer}
-          {command !== null && whyOpen && mode === "phone" && (
+          {command !== null && whyOpen && mode === "phone" && drawerTarget === null && (
             <NextBuySheet {...command} onClose={() => closeWhy(true)} onOpenItem={openFromSheet} />
           )}
           {helpOpen && <Help onClose={closeHelp} />}

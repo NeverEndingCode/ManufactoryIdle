@@ -124,6 +124,9 @@ export interface DrawerProps {
   /** Called when the drawer unmounts while it holds focus (a remount across 600 px drops it to
    * the body): App hands the next mount's claimFocus a true, once. */
   onLeaveFocused?: () => void;
+  /** The desktop NEXT_BUY card is open: its scope outranks the drawer's (U-7a), so the drawer's
+   * keys are dead and their hints go (K-7), as Shell's lane hints do. */
+  cardOpen?: boolean;
 }
 
 /** U-5c: the sections behind MORE; MACHINES is the body when none is open. */
@@ -198,6 +201,7 @@ export function Drawer({
   presentation,
   claimFocus,
   onLeaveFocused,
+  cardOpen = false,
 }: DrawerProps) {
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
   const [notation] = useNotation();
@@ -266,7 +270,7 @@ export function Drawer({
     busy: (verb) => pending.some((b) => b.label === labelOf(model, verb)),
     send: (actions, verb) => store.send(actions, labelOf(model, verb)),
     owner: store,
-    hints: !sheet,
+    hints: !sheet && !cardOpen,
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -357,7 +361,7 @@ export function Drawer({
         )}
         {/* U-5a's hint, fine pointer only (U-7e). No ↑/↓ on the phone, nor from a generator
             drawer, which ↑/↓ don't follow (K-12). */}
-        {!sheet && (
+        {ctx.hints && (
           <span className={`key-hint ${styles.hint}`} aria-hidden="true">
             {item !== null ? "[↑↓] row  [ESC] close" : "[ESC] close"}
           </span>
@@ -800,7 +804,7 @@ function MachinesBody({
           const one = spendState(ctx, buyAction(sec, r.mark, 1), "buy", atMs);
           const each = one.q === null ? null : costWords(ctx, one.q);
           return (
-            <li key={r.mark} data-mark={r.mark} className={styles.mark}>
+            <li key={r.mark} data-mark={r.mark} className={`${styles.mark} ${styles.buyable}`}>
               {name}
               <span data-owned className={`${styles.owned} num`}>{`x${r.owned}`}</span>
               <span
@@ -813,7 +817,16 @@ function MachinesBody({
                   <Spoken shown={`${each.shown} each`} said={`${each.said} each`} />
                 )}
               </span>
-              <span className={styles.markBtns}>
+              {/* The final review's item 7: IF YOU BUY never sticks to the last hover. The pointer
+                  leaving the buttons, or focus leaving them, returns it to the default ×1. */}
+              <span
+                className={styles.markBtns}
+                onMouseLeave={() => setFollow(null)}
+                onBlur={(e) => {
+                  const to = e.relatedTarget;
+                  if (!(to instanceof Node) || !e.currentTarget.contains(to)) setFollow(null);
+                }}
+              >
                 {COUNTS.map((c) => {
                   const n = countOf(r.mark, c);
                   const action = buyAction(sec, r.mark, n);

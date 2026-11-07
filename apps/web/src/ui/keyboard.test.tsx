@@ -566,6 +566,59 @@ describe("the keyboard (U-7)", { timeout: 60_000 }, () => {
     checkHints("sheet", "factory", 0);
   });
 
+  // Catches: a drawer hint advertising a key the card's scope swallows (the final review's
+  // item 1): with the card open, B/U/R/A/S/D, [↑↓] row and [ESC] close are all dead.
+  it("10c. with the card and a drawer both open, the drawer shows no hint", () => {
+    mount(topped());
+    fireEvent.click(option("iron_ore"));
+    expect(drawer()!.querySelectorAll(".key-hint").length).toBeGreaterThan(0);
+    fireEvent.click(q("[data-why]")!);
+    expect(card()).not.toBeNull();
+    expect(drawer()).not.toBeNull();
+    expect(drawer()!.querySelectorAll(".key-hint")).toHaveLength(0);
+    checkHints("card");
+  });
+
+  // Catches (the final review's item 2): a resize below 600 px with the card and a drawer both
+  // open rendering two modal sheets, focus stranded outside both.
+  it("10d. resized to a phone with the card and a drawer open: one modal sheet, focus in it", () => {
+    const media = stubWidth(1280);
+    render(<App store={topped() as unknown as GameStore} />);
+    fireEvent.click(option("iron_ore"));
+    fireEvent.click(q("[data-why]")!);
+    expect(card()).not.toBeNull();
+    media.resize(390);
+    const modals = document.querySelectorAll('[aria-modal="true"]');
+    expect(modals).toHaveLength(1);
+    expect(modals[0]!.hasAttribute("data-drawer")).toBe(true);
+    expect(modals[0]!.contains(document.activeElement)).toBe(true);
+  });
+
+  // Catches (the final review's item 4): F2/F3 (or P/H) from the drawer or the card unmount
+  // the focused control and leave focus on <body>. Each view has its own target: the priority
+  // list's first row, the handbook's heading (never its search: the next letter would type).
+  it("10e. F2/F3 from the drawer or the card focus the new view, never <body>", () => {
+    mount(topped());
+    fireEvent.click(option("iron_ore"));
+    expect(document.activeElement!.id).toBe("drawer-title");
+    key("F2");
+    expect(document.activeElement!.matches("#view-priority li[data-entry]")).toBe(true);
+    key("F1");
+    fireEvent.click(option("iron_ore"));
+    key("h");
+    expect(document.activeElement!.matches("[data-handbook] h2")).toBe(true);
+    key("F1");
+    fireEvent.click(q("[data-why]")!);
+    expect(card()!.contains(document.activeElement)).toBe(true);
+    key("p");
+    expect(card()).toBeNull();
+    expect(document.activeElement!.matches("#view-priority li[data-entry]")).toBe(true);
+    key("f");
+    fireEvent.click(q("[data-why]")!);
+    key("F3");
+    expect(document.activeElement!.matches("[data-handbook] h2")).toBe(true);
+  });
+
   // Catches: a section letter whose hint names another key, or a hint on the wrong control
   // (K-7: the hint is rendered from the control's own data-key).
   it("10b. the drawer's letters: [B] [U] [R] [A] [S] [D] [H] all resolve, each to its control", () => {
@@ -636,6 +689,16 @@ function probeOf(p: Partial<KeyInput>): KeyInput {
 
 /** Every rendered .key-hint resolves in the scope it's rendered in, to its control's command.
  *  `count`: exactly that many hints (the phone has none), else at least one. */
+/** U-7a's order of reach, as scopeOf applies it. */
+const RANK: Readonly<Record<Scope, number>> = {
+  global: 0,
+  drawer: 1,
+  card: 2,
+  sheet: 3,
+  settings: 4,
+  help: 5,
+};
+
 function checkHints(
   appScope: Scope,
   view: "factory" | "priority" | "handbook" = "factory",
@@ -647,7 +710,7 @@ function checkHints(
   for (const h of hints) {
     const text = h.textContent ?? "";
     expect(h.getAttribute("aria-hidden"), text).toBe("true");
-    const scope: Scope =
+    const own: Scope =
       h.closest("[data-next-buy]") !== null
         ? "card"
         : h.closest('[data-drawer][data-presentation="sheet"]') !== null
@@ -655,6 +718,9 @@ function checkHints(
           : h.closest("[data-drawer]") !== null
             ? "drawer"
             : appScope;
+    // The app's scope wins where it outranks the hint's own (U-7a, K-5): a drawer hint with
+    // the card open is read in the card's scope.
+    const scope: Scope = RANK[appScope] > RANK[own] ? appScope : own;
     const ctx = {
       scope,
       focus: "rest" as const,

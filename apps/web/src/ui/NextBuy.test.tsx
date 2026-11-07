@@ -121,7 +121,7 @@ describe("the NEXT_BUY card (U-4c, desktop)", { timeout: 60_000 }, () => {
     expect(store.send).toHaveBeenCalledWith([P3_BUY], "bottleneck buy");
   });
 
-  it("6. Esc closes it with focus fallen to <body> (a buy unmounted the run, K-21)", () => {
+  it("6b. Esc closes it with focus fallen to <body> (a buy unmounted the run, K-21)", () => {
     mount(fakeStore(fresh, { now: CLIENT_T0 + 60_000 }));
     fireEvent.click(why());
     expect(card()).not.toBeNull();

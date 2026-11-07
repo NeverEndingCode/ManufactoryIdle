@@ -12,6 +12,8 @@
   padding: 12px 16px;
   overflow-y: auto;
   background: var(--s1);
+  /* A size container: a mark row's layout follows the drawer's width (below). */
+  container: drawer / inline-size;
 }
 
 /* U-5a: top, right and bottom 0 in .contentRow, above the main box, under the notices. */
@@ -303,6 +305,28 @@
   display: flex;
   flex: none;
   gap: 6px;
+}
+
+/* The final review's item 6: on a narrow drawer (the 360 px tablet clamp, the phone sheet) a
+   buyable mark's buttons go to a second line under its name, count and cost, so the name keeps
+   its width (CONSTRUCTOR_MK1 whole, not "CON…") and nothing scrolls sideways. 480 px is where
+   a full name, the count and the three buttons stop fitting on one line. */
+@container drawer (max-width: 479px) {
+  .buyable {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+
+  .buyable .markName {
+    flex: 0 1 auto;
+  }
+
+  .buyable .markBtns {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
 }
 
 /* x10 and max: 36 px, outlined. A fine-pointer size, set with height: on a coarse pointer the

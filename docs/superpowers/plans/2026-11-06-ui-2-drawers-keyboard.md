@@ -149,6 +149,7 @@ The Phase 4 rulings, the post-launch rulings, the U-rulings and UI-1's V-rulings
   - Task 6 changes `layout-320`'s drawer-sheet step;
   - Task 7 adds `keyboard.spec` and `phone.spec`, and the held `T` in `tap-hold`.
 - **K-24. Not added:** `aria-keyshortcuts`. The spec doesn't ask for it, the hints are `aria-hidden` by design, and the help overlay is the screen-reader path.
+- **K-25. U-2c amendment: the header takes two lines below 1040 px.** Below that width (tablet and the narrowest desktop; the phone has its own header) the chip, the panel tabs, `?` and cfg sit on a second, right-aligned line, and the tier readout fills the first. It's decided by width alone, never by content, so the save chip appearing mid-session can't change the header's height. 1040 px is at or above the widest one-line header, chip included, in the widest theme: Clean at the desktop title size needs 1028 px of viewport. `phone.spec` pins it: the header fits at 600/640/660 px, and the chip doesn't change its height at 700, 900 or 1100 px.
 
 ## Global Constraints
 

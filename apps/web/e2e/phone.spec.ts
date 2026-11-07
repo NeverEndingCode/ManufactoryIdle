@@ -12,8 +12,12 @@ import {
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-/** K-16's scopes: the drawer panel or sheet, the power panel and the command bar. */
-const COARSE_SCOPES = ["[data-drawer]", "[data-power-panel]", "[data-command]"] as const;
+/** K-16's scopes, each with the fewest targets it must show: the drawer panel or sheet (Close
+ * and the mark's buy 1, x10, max at least), the power panel (a generator's row button and its
+ * +1) and the command bar (why and run). */
+const DRAWER = { "[data-drawer]": 4 };
+const POWER = { "[data-power-panel]": 2 };
+const COMMAND = { "[data-command]": 2 };
 
 async function expectCoarse(page: Page): Promise<void> {
   const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
@@ -31,7 +35,7 @@ async function boxOf(l: Locator) {
 
 test.describe("the phone", () => {
   // Two real-time waits for affordability (the bar's run, then a Biomass Burner).
-  test.describe.configure({ timeout: 300_000 });
+  test.describe.configure({ timeout: 200_000 });
 
   test("one keyboardless thumb: the split bar, the sheets, the generator, the TAP", async ({
     page,
@@ -68,7 +72,7 @@ test.describe("the phone", () => {
         .locator("[data-power] button[data-tap]")
         .evaluate((el) => el.closest("[inert]") !== null);
       expect(await inert, "the TAP is inert under the modal sheet").toBe(true);
-      await expectCoarseTargets(page, "the drawer sheet", COARSE_SCOPES);
+      await expectCoarseTargets(page, "the drawer sheet", { ...DRAWER, ...COMMAND });
 
       // The sheet rises in (180 ms): measure the grip where it comes to rest.
       await sheet.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
@@ -94,7 +98,7 @@ test.describe("the phone", () => {
       await plus.tap();
       await expect(root).toHaveAttribute("data-state-version", String(before + 1));
       await expect(page.locator('[data-notice="rejected"]')).toHaveCount(0);
-      await expectCoarseTargets(page, "the power panel", COARSE_SCOPES);
+      await expectCoarseTargets(page, "the power panel", POWER);
     });
 
     await test.step("the generator drawer sheet", async () => {
@@ -102,7 +106,7 @@ test.describe("the phone", () => {
       const sheet = page.locator('[data-drawer="power:biomass_burner"]');
       await expect(sheet).toHaveAttribute("aria-modal", "true");
       await expectNoOverflow(page, "the generator drawer sheet");
-      await expectCoarseTargets(page, "the generator drawer sheet", COARSE_SCOPES);
+      await expectCoarseTargets(page, "the generator drawer sheet", { ...DRAWER, ...POWER });
       await sheet.getByRole("button", { name: "Close" }).tap();
       await expect(sheet).toHaveCount(0);
     });
@@ -139,15 +143,59 @@ test.describe("a coarse tablet", () => {
     await expect(drawer).toBeVisible();
     await expect(drawer).toHaveAttribute("aria-modal", "false");
     await expectNoOverflow(page, "the tablet drawer");
-    await expectCoarseTargets(page, "the tablet drawer", COARSE_SCOPES);
+    await expectCoarseTargets(page, "the tablet drawer", { ...DRAWER, ...COMMAND });
 
     await page.keyboard.press("5");
     await expect(page.locator("[data-power-panel]")).toBeVisible();
     await page.locator('[data-open-generator="biomass_burner"]').tap();
     await expect(page.locator('[data-drawer="power:biomass_burner"]')).toBeVisible();
     await expectNoOverflow(page, "the tablet power panel and generator drawer");
-    await expectCoarseTargets(page, "the tablet power panel", COARSE_SCOPES);
+    await expectCoarseTargets(page, "the tablet power panel", {
+      ...DRAWER,
+      ...POWER,
+      ...COMMAND,
+    });
   });
+
+  // K-25: the header's wrap is decided by width alone, so the save chip appearing mid-session
+  // never changes its height (it would push the rows down). The chip is the real class, put
+  // where Shell renders it: a guest only sees it from tier 1, beyond this spec's reach.
+  for (const theme of ["terminal", "clean-light"])
+    test(`the save chip never changes the header's height (${theme})`, async ({ page }) => {
+      await page.addInitScript((t) => localStorage.setItem("mi.theme", t), theme);
+      await startGuest(page);
+      const header = page.locator("header").first();
+      for (const width of [700, 900, 1100]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(page.locator("[data-save-chip]")).toHaveCount(0);
+        const before = (await boxOf(header)).height;
+        await header.evaluate((h, shell) => {
+          let chipClass = "";
+          for (const sh of Array.from(document.styleSheets))
+            for (const rule of Array.from(sh.cssRules))
+              if (rule instanceof CSSStyleRule && /^\._chip_[\w-]+$/.test(rule.selectorText))
+                chipClass = rule.selectorText.slice(1);
+          const chip = document.createElement("button");
+          chip.className = chipClass;
+          chip.setAttribute("data-save-chip", "");
+          chip.textContent = shell ? "> save_factory" : "Save your factory";
+          h.querySelector("nav")!.before(chip);
+        }, theme === "terminal");
+        await expect(page.locator("[data-save-chip]")).toHaveCount(1);
+        expect((await boxOf(header)).height, `${width} px`).toBe(before);
+        const outside = await header.evaluate((h) => {
+          const box = h.getBoundingClientRect();
+          return Array.from(h.querySelectorAll("button"))
+            .filter((b) => {
+              const r = b.getBoundingClientRect();
+              return r.left < box.left || r.right > box.right || r.bottom > box.bottom;
+            })
+            .map((b) => b.textContent);
+        });
+        expect.soft(outside, `${width} px: header controls outside the header`).toEqual([]);
+        await page.locator("[data-save-chip]").evaluate((c) => c.remove());
+      }
+    });
 
   // U-2c at its narrow end: no sideways scroll, every control inside the viewport and 44 px,
   // and the header's controls inside the header (the .app clips, so scrollWidth can't see a
@@ -178,6 +226,27 @@ test.describe("a coarse tablet", () => {
             .map((b) => b.getAttribute("aria-label") ?? b.textContent);
         });
         expect.soft(outside, `${width} px: header controls outside the header`).toEqual([]);
+        // The final review's item 6: on the 360 px panel the mark's buttons go under its name,
+        // so "CONSTRUCTOR_MK1" (15 characters) shows whole, and the row keeps them inside.
+        const mark = await drawer.locator('[data-mark="1"]').evaluate((li) => {
+          const name = li.firstElementChild as HTMLElement;
+          const box = li.getBoundingClientRect();
+          const out = Array.from(li.querySelectorAll("button"))
+            .filter((b) => {
+              const r = b.getBoundingClientRect();
+              return r.left < box.left - 0.5 || r.right > box.right + 0.5 || r.bottom > box.bottom;
+            })
+            .map((b) => b.textContent);
+          return {
+            text: name.textContent,
+            cut: name.scrollWidth > name.clientWidth,
+            rowScrolls: li.scrollWidth > li.clientWidth,
+            out,
+          };
+        });
+        expect.soft(mark.cut, `${width} px: "${mark.text}" is cut`).toBe(false);
+        expect.soft(mark.rowScrolls, `${width} px: the mark row scrolls sideways`).toBe(false);
+        expect.soft(mark.out, `${width} px: mark buttons outside the row`).toEqual([]);
       }
     });
 });
