@@ -4,7 +4,7 @@
 // the selected lane, the factory / priority / phone power view, the open drawer, and each lane's
 // selected row (U-7d); the handbook view is its route. The store is created and started outside React (main.tsx).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ItemId, LaneId } from "@manufactory/engine";
+import type { ItemId, LaneId, RecipeId } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { useGame } from "../sync/use-game.js";
@@ -17,7 +17,7 @@ import {
 } from "./derive.js";
 import { inertOutside, openModal } from "./dialog.js";
 import { focusKind, isRowList, scopeOf, type KeyContext, type SectionKey } from "./keys.js";
-import { Drawer } from "./Drawer.js";
+import { Drawer, drawerKey, type DrawerTarget } from "./Drawer.js";
 import { Handbook } from "./Handbook.js";
 import { Help } from "./Help.js";
 import { AnnounceContext, createAnnouncer, type Announcer } from "./announce.js";
@@ -198,7 +198,10 @@ export function App({ store }: { store: GameStore }) {
     : mode !== "phone" && pane === "power"
       ? "factory"
       : pane;
-  const [openItem, setOpenItem] = useState<ItemId | null>(null);
+  /** K-12: the open drawer, an item row's or a generator's. */
+  const [open, setOpen] = useState<DrawerTarget | null>(null);
+  const openItem = open?.kind === "item" ? open.itemId : null;
+  const openGenerator = open?.kind === "generator" ? open.recipeId : null;
   const [focusEntry, setFocusEntry] = useState<string | null>(null);
   /** U-7d: each lane's selected row. It survives lane switches and snapshots; an item that's no
    * longer a row drops out, so its lane falls back to the default (RowList) and stays there. */
@@ -232,32 +235,50 @@ export function App({ store }: { store: GameStore }) {
   });
 
   const powerId = s === null ? null : powerLaneId(s);
-  const openLane = openItem === null ? undefined : s?.content.items.get(openItem)?.lane;
+  const openLane =
+    open === null
+      ? undefined
+      : open.kind === "item"
+        ? s?.content.items.get(open.itemId)?.lane
+        : s?.content.recipes.get(open.recipeId)?.lane;
   /** V-25: the open drawer stays across a view switch, but renders only over its own lane: on
-   * the factory view when its lane is the one shown (the desktop's power tab for a FUEL row),
-   * and on the phone's power view for a FUEL row (U-6b). */
-  const drawerItem =
+   * the factory view when its lane is the one shown (the desktop's power tab for a FUEL row or a
+   * generator), and on the phone's power view for a FUEL row or a generator (U-6b, K-12). */
+  const drawerTarget =
     (shown === "factory" && openLane === laneId) || (shown === "power" && openLane === powerId)
-      ? openItem
+      ? open
       : null;
   /** A lane tab: the drawer of another lane closes, so it never covers the new lane's rows.
    * Focus stays on the tab that was pressed. */
   const onLane = (lane: LaneId) => {
     setPicked(lane);
-    if (openLane !== undefined && openLane !== lane) setOpenItem(null);
+    if (openLane !== undefined && openLane !== lane) setOpen(null);
   };
   /** A row's click, → or Space: its drawer, the title taking focus (U-7c). */
   const openRow = (itemId: ItemId) => {
     opened.current = openItem !== itemId;
-    setOpenItem(itemId);
+    setOpen({ kind: "item", itemId });
+  };
+  /** K-12: a generator row's button opens its drawer, the title taking focus. */
+  const openGeneratorDrawer = (recipeId: RecipeId) => {
+    opened.current = openGenerator !== recipeId;
+    setOpen({ kind: "generator", recipeId });
   };
   /** U-7c: closing returns focus to the row list, the drawer's row still active. The drawer
-   * renders on the factory view only, where the list always is. */
+   * renders on the factory view only, where the list always is. K-12: a generator drawer's
+   * opener is its row's [data-open-generator] button; the row list if that's gone. */
   const rowList = () =>
     appRef.current?.querySelector<HTMLElement>('ul[role="listbox"][data-rows]') ?? null;
+  const opener = (): HTMLElement | null => {
+    if (open?.kind !== "generator" || s === null) return null;
+    const cls = s.content.recipes.get(open.recipeId)?.machineClass;
+    return cls === undefined
+      ? null
+      : (appRef.current?.querySelector<HTMLElement>(`[data-open-generator="${cls}"]`) ?? null);
+  };
   const close = () => {
-    rowList()?.focus();
-    setOpenItem(null);
+    (opener() ?? rowList())?.focus();
+    setOpen(null);
   };
   /** K-11 / Review Focus 3: a key that closed the drawer or the card under focus puts focus on
    * the row list once it's rendered (the new lane's), never leaving it on <body>. */
@@ -302,7 +323,7 @@ export function App({ store }: { store: GameStore }) {
       select(lane, itemId);
     }
     opened.current = true;
-    setOpenItem(itemId);
+    setOpen({ kind: "item", itemId });
   };
 
   const game = route.kind !== "callback" && s !== null && laneId !== null;
@@ -338,14 +359,15 @@ export function App({ store }: { store: GameStore }) {
           settings: sheet !== null,
           phone: mode === "phone",
           why: whyOpen,
-          drawer: drawerItem !== null,
+          drawer: drawerTarget !== null,
         }),
         focus: focusKind(at),
         onRows: isRowList(at),
         view: shown,
         rows: shown === "factory" || (shown === "power" && powerId !== null),
         advice: why !== null && why.getAttribute("aria-disabled") !== "true",
-        follows: drawerItem !== null,
+        // K-12: ↑/↓ re-key an item drawer only; a generator drawer stays.
+        follows: drawerTarget?.kind === "item",
       };
     },
     run: () => click("[data-command] [data-run]") !== null,
@@ -361,9 +383,9 @@ export function App({ store }: { store: GameStore }) {
       if (inMain()) refocusRows.current = true;
       selectView("factory");
       onLane(tab.id);
-      if (closeDrawer && drawerItem !== null) {
+      if (closeDrawer && drawerTarget !== null) {
         refocusRows.current = true;
-        setOpenItem(null);
+        setOpen(null);
       }
       return true;
     },
@@ -375,9 +397,9 @@ export function App({ store }: { store: GameStore }) {
       if (v === "factory" && inMain()) refocusRows.current = true;
       // selectView reads openItem before it's cleared: H opens the drawer's item's entry (K-10).
       selectView(v);
-      if (closeDrawer && drawerItem !== null) {
+      if (closeDrawer && drawerTarget !== null) {
         refocusRows.current = true;
-        setOpenItem(null);
+        setOpen(null);
       }
       return true;
     },
@@ -387,11 +409,11 @@ export function App({ store }: { store: GameStore }) {
       if (next === null) return false;
       select(listLane, next);
       document.getElementById(rowId(next))?.scrollIntoView?.({ block: "nearest" });
-      if (follow && drawerItem !== null) {
+      if (follow && drawerTarget !== null) {
         // U-5a / U-7c: the drawer re-keys on the new row and its title takes focus.
-        if (next !== drawerItem) {
+        if (drawerTarget.kind !== "item" || next !== drawerTarget.itemId) {
           opened.current = true;
-          setOpenItem(next);
+          setOpen({ kind: "item", itemId: next });
         }
       } else rowList()?.focus();
       return true;
@@ -456,6 +478,8 @@ export function App({ store }: { store: GameStore }) {
         onSelect={(itemId) => select(lane, itemId)}
         onOpen={openRow}
         openItem={openItem}
+        onOpenGenerator={openGeneratorDrawer}
+        openGenerator={drawerTarget?.kind === "generator" ? openGenerator : null}
         mode={mode}
       />
     );
@@ -476,12 +500,12 @@ export function App({ store }: { store: GameStore }) {
   }
 
   const drawer =
-    game && drawerItem !== null ? (
+    game && drawerTarget !== null ? (
       <Drawer
-        key={drawerItem}
+        key={drawerKey(drawerTarget)}
         store={store}
         snapshot={s}
-        itemId={drawerItem}
+        target={drawerTarget}
         pending={view.pending}
         onClose={close}
         onSplit={showEntry}

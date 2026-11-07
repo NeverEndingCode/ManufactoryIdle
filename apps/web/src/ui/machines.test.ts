@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { applyBatch, type Effect } from "@manufactory/engine";
+import { applyBatch, installedAt, installedMachines, type Effect } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import {
   fixtureState,
@@ -78,7 +78,10 @@ describe("drawerModel: machines (Q-4, Q-6)", () => {
     // One Mk2 at rate 2 consolidates to floor(2 / 4) = 0 Mk3.
     const s = snapshotOf(slice, {
       ...t8.state,
-      installed: { ...t8.state.installed, iron: { ...t8.state.installed.iron, constructor: [11, 1, 17] } },
+      installed: {
+        ...t8.state.installed,
+        iron: { ...t8.state.installed.iron, constructor: [11, 1, 17] },
+      },
     });
     const mk2 = drawerModel(s, "iron_plate").machines!.marks[1]!;
     expect(mk2.consolidation).toEqual({ from: 1, to: 0, toMark: 3 });
@@ -92,12 +95,17 @@ describe("drawerModel: machines (Q-4, Q-6)", () => {
       if (m.upgrade === null || m.consolidation === null) continue;
       const p = preview(t8, [m.upgrade]);
       if (!p.ok) throw new Error(p.reason);
-      const removed = p.effects.find((e): e is Extract<Effect, { kind: "removed" }> => e.kind === "removed")!;
+      const removed = p.effects.find(
+        (e): e is Extract<Effect, { kind: "removed" }> => e.kind === "removed",
+      )!;
       const installed = p.effects.find(
         (e): e is Extract<Effect, { kind: "installed" }> => e.kind === "installed",
       )!;
       expect([removed.mark, removed.count]).toEqual([m.mark, m.consolidation.from]);
-      expect([installed.mark, installed.count]).toEqual([m.consolidation.toMark, m.consolidation.to]);
+      expect([installed.mark, installed.count]).toEqual([
+        m.consolidation.toMark,
+        m.consolidation.to,
+      ]);
     }
   });
 
@@ -134,7 +142,12 @@ describe("drawerModel: recipes, storage and QS (Q-6)", () => {
     expect(recipes.filter((r) => r.active)).toHaveLength(1);
     for (const r of recipes) {
       if (r.active || r.inCycle || r.unlockTier > t8.state.tier) expect(r.select).toBeNull();
-      else expect(r.select).toEqual({ type: "SELECT_RECIPE", itemId: "plastic", recipeId: r.recipeId });
+      else
+        expect(r.select).toEqual({
+          type: "SELECT_RECIPE",
+          itemId: "plastic",
+          recipeId: r.recipeId,
+        });
     }
   });
 
@@ -189,5 +202,75 @@ describe("idleMove (Q-6, the sim's idleReassignments)", () => {
   it("no move with a single live recipe", () => {
     const sec = drawerModel(fresh, "iron_plate").machines!;
     expect(idleMove(fresh, sec)).toBeNull();
+  });
+});
+
+describe("drawerModel: generators (U-5c, K-12)", { timeout: 60_000 }, () => {
+  // Catches: a generator model on the wrong class or lane, a pool not the installed count, or a
+  // best mark not the content's.
+  it("1. a fresh world's burn_biomass: the Biomass Burner's section in the power lane", () => {
+    const g = drawerModel(fresh, { recipeId: "burn_biomass" });
+    expect(g.kind).toBe("generator");
+    expect(g.recipeId).toBe("burn_biomass");
+    expect(g.machineClass).toBe("biomass_burner");
+    expect(g.name).toBe("Biomass Burner");
+    expect(g.laneId).toBe("power");
+    expect(g.machines.lane).toBe("power");
+    expect(g.machines.machineClass).toBe("biomass_burner");
+    expect(g.machines.bestMark).toBe(1);
+    expect(g.machines.pool).toBe(installedMachines(fresh.display.state, "power", "biomass_burner"));
+    expect(g.machines.recipeId).toBe("burn_biomass");
+    // The item path keeps its kind.
+    expect(drawerModel(fresh, "iron_ore").kind).toBe("item");
+  });
+
+  // Catches: a memo keyed without the recipe (or sharing an item's key), rebuilding each render.
+  it("1. memoised per snapshot and recipe, apart from the items", () => {
+    expect(drawerModel(t8, { recipeId: "burn_biomass" })).toBe(
+      drawerModel(t8, { recipeId: "burn_biomass" }),
+    );
+    expect(drawerModel(t8, { recipeId: "burn_biomass" }, "sci")).not.toBe(
+      drawerModel(t8, { recipeId: "burn_biomass" }, "eng"),
+    );
+  });
+
+  // Catches: a generator drawer opened over a recipe that makes no power.
+  it("1. a recipe that makes no power, or none at all, throws", () => {
+    expect(() => drawerModel(fresh, { recipeId: "make_iron_plate" })).toThrow();
+    expect(() => drawerModel(fresh, { recipeId: "no_such_recipe" })).toThrow();
+  });
+
+  // Catches: a generator's marks built differently from an item's (the refactor drifting).
+  it("1. tier 8: the marks are the item path's, built from content the same way", () => {
+    const expected = (lane: string, machineClass: string) => {
+      const cls = slice.content.machineClasses.get(machineClass)!;
+      return [...cls.marks]
+        .sort((a, b) => a.mark - b.mark)
+        .map((m) => {
+          const owned = installedAt(t8.display.state, lane, machineClass, m.mark);
+          const next = cls.marks.find((n) => n.mark === m.mark + 1);
+          const can = next !== undefined && next.unlockTier <= t8.display.state.tier && owned > 0;
+          const to = can ? Math.floor((owned * m.rateMultiplier) / next.rateMultiplier) : 0;
+          return {
+            mark: m.mark,
+            name: m.name,
+            owned,
+            unlocked: m.unlockTier <= t8.display.state.tier,
+            upgrade: can ? { type: "UPGRADE_MARK", lane, machineClass, fromMark: m.mark } : null,
+            consolidation: can ? { from: owned, to, toMark: next.mark } : null,
+            upgradeBlocked:
+              can && to < 1
+                ? `need at least ${Math.ceil(next.rateMultiplier / m.rateMultiplier)} to upgrade`
+                : null,
+          };
+        });
+    };
+    // The collector (biomass, an item in the power lane) through the item path...
+    expect(drawerModel(t8, "biomass").machines!.marks).toEqual(expected("power", "collector"));
+    // ... and the burner through the recipe path, built the same way.
+    const g = drawerModel(t8, { recipeId: "burn_biomass" });
+    expect(g.machines.marks).toEqual(expected("power", "biomass_burner"));
+    expect(g.machines.marks[0]!.owned).toBe(20);
+    expect(g.machines.pool).toBe(20);
   });
 });

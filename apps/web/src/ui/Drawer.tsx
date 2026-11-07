@@ -4,6 +4,8 @@
 // only with snapshots. Settings (recipe, assignment) are optimistic in the control (Q-10).
 // U-5c: MACHINES is the default body; the other sections are MORE buttons with letter keys
 // (K-4: a key clicks the button carrying its data-key, so a key is a click).
+// K-12: a generator drawer (a power recipe's lane-class, opened from the power panel) shows
+// MACHINES with [U] and [D] only, and its spends go under the panel's power:<class>:<verb>.
 import {
   useEffect,
   useId,
@@ -22,6 +24,7 @@ import {
   type Action,
   type Dec,
   type ItemId,
+  type MachineClassId,
   type RecipeId,
   type WorldState,
 } from "@manufactory/engine";
@@ -38,6 +41,7 @@ import {
   splitOf,
   type RowModel,
 } from "./derive.js";
+import { generatorLabel, generatorRows, mwText } from "./dock-model.js";
 import styles from "./Drawer.module.css";
 import type { SectionKey } from "./keys.js";
 import {
@@ -47,6 +51,7 @@ import {
   idleMove,
   moveMachines,
   type DrawerModel,
+  type GeneratorModel,
   type LevelSection,
   type MachineSection,
 } from "./machines.js";
@@ -74,13 +79,37 @@ export type DrawerVerb = "buy" | "dismantle" | "upgrade" | "storage" | "qs" | "r
 /** Batch labels: a spend's button is busy while its batch is pending (W-13, pessimistic). */
 export const drawerLabel = (itemId: ItemId, verb: DrawerVerb) => `drawer:${itemId}:${verb}`;
 
+/** K-12: what the drawer is open on, an item row or a generator recipe. */
+export type DrawerTarget =
+  { kind: "item"; itemId: ItemId } | { kind: "generator"; recipeId: RecipeId };
+
+/** The React key: "item:iron_ore" or "gen:burn_biomass". */
+export function drawerKey(t: DrawerTarget): string {
+  return t.kind === "item" ? `item:${t.itemId}` : `gen:${t.recipeId}`;
+}
+
+type GeneratorVerb = "buy" | "upgrade" | "dismantle";
+
+/** K-12: a generator drawer's labels are the power panel's, so its buy and the +1 are busy
+ * together (V-21's generatorLabel). */
+export const generatorVerbLabel = (machineClass: MachineClassId, verb: GeneratorVerb) =>
+  verb === "buy" ? generatorLabel(machineClass) : `power:${machineClass}:${verb}`;
+
+/** A spend's batch label for this drawer's model. */
+function labelOf(m: DrawerModel | GeneratorModel, verb: DrawerVerb): string {
+  if (m.kind === "item") return drawerLabel(m.itemId, verb);
+  if (verb === "buy" || verb === "upgrade" || verb === "dismantle")
+    return generatorVerbLabel(m.machineClass, verb);
+  throw new Error(`a generator drawer has no ${verb}`);
+}
+
 export interface DrawerProps {
   store: Pick<GameStore, "now" | "send">;
   snapshot: Snapshot;
-  itemId: ItemId;
+  target: DrawerTarget;
   pending: readonly Batch[];
   onClose(): void;
-  /** K-15 / §13.1: a SPLIT row's tap, to the item's entry in the priority list. */
+  /** K-15 / §13.1: a SPLIT row's tap, to the item's entry in the priority list (items only). */
   onSplit(itemId: ItemId): void;
   /** U-5a: the desktop and tablet panel over the content row; V-19: the phone's fixed sheet.
    * Both are non-modal: role="dialog", aria-modal="false". */
@@ -118,21 +147,23 @@ type Assign = Extract<Action, { type: "ASSIGN_MACHINES" }>;
 type SelectRecipe = Extract<Action, { type: "SELECT_RECIPE" }>;
 
 /** Only what the model offers (U-5c): upgrade with a consolidation, recipe with ≥ 2 recipes,
- *  assign with assign rows, storage always (items), dismantle with any owned; in that order. */
-export function sectionsOf(m: DrawerModel): Section[] {
+ *  assign with assign rows, storage always (items), dismantle with any owned; in that order.
+ *  A generator has upgrade and dismantle only (K-12). */
+export function sectionsOf(m: DrawerModel | GeneratorModel): Section[] {
   const sec = m.machines;
+  const item = m.kind === "item" ? m : null;
   const out: Section[] = [];
   if (sec?.marks.some((r) => r.consolidation !== null)) out.push("upgrade");
-  if (m.recipes.length >= 2) out.push("recipe");
-  if (sec !== null && sec.assign.length > 0) out.push("assign");
-  out.push("storage");
+  if (item !== null && item.recipes.length >= 2) out.push("recipe");
+  if (item !== null && sec !== null && sec.assign.length > 0) out.push("assign");
+  if (item !== null) out.push("storage");
   if (sec?.marks.some((r) => r.owned > 0)) out.push("dismantle");
   return out;
 }
 
 interface Ctx {
   snapshot: Snapshot;
-  model: DrawerModel;
+  model: DrawerModel | GeneratorModel;
   names: Names;
   now: () => number;
   busy(verb: DrawerVerb): boolean;
@@ -156,7 +187,7 @@ function hint(ctx: Ctx, key: string | undefined): ReactNode {
 export function Drawer({
   store,
   snapshot,
-  itemId,
+  target,
   pending,
   onClose,
   onSplit,
@@ -166,7 +197,11 @@ export function Drawer({
 }: DrawerProps) {
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
   const [notation] = useNotation();
-  const model = drawerModel(snapshot, itemId, notation);
+  const model =
+    target.kind === "item"
+      ? drawerModel(snapshot, target.itemId, notation)
+      : drawerModel(snapshot, { recipeId: target.recipeId }, notation);
+  const item = model.kind === "item" ? model : null;
   const sections = sectionsOf(model);
   const [picked, setPicked] = useState<Section | null>(null);
   // A section the model no longer offers falls back to MACHINES.
@@ -174,13 +209,18 @@ export function Drawer({
   const title = useRef<HTMLHeadingElement>(null);
   const box = useRef<HTMLElement>(null);
   const names = useNames(snapshot);
-  const hot = useMemo(() => bottleneckRow(snapshot)?.itemId === itemId, [snapshot, itemId]);
+  const itemId = item?.itemId ?? null;
+  const hot = useMemo(
+    () => itemId !== null && bottleneckRow(snapshot)?.itemId === itemId,
+    [snapshot, itemId],
+  );
+  const targetKey = drawerKey(target);
 
   const claim = useRef(claimFocus);
   claim.current = claimFocus;
   useEffect(() => {
     if (claim.current === undefined || claim.current()) title.current?.focus();
-  }, [itemId]);
+  }, [targetKey]);
   // A layout cleanup runs while the DOM is still attached, so focus is still where it was.
   const left = useRef(onLeaveFocused);
   left.current = onLeaveFocused;
@@ -212,8 +252,8 @@ export function Drawer({
     model,
     names,
     now: () => store.now(),
-    busy: (verb) => pending.some((b) => b.label === drawerLabel(itemId, verb)),
-    send: (actions, verb) => store.send(actions, drawerLabel(itemId, verb)),
+    busy: (verb) => pending.some((b) => b.label === labelOf(model, verb)),
+    send: (actions, verb) => store.send(actions, labelOf(model, verb)),
     owner: store,
     hints: !sheet,
   };
@@ -232,7 +272,7 @@ export function Drawer({
       role="dialog"
       aria-modal="false"
       aria-labelledby="drawer-title"
-      data-drawer={itemId}
+      data-drawer={model.kind === "item" ? model.itemId : `power:${model.machineClass}`}
       data-presentation={presentation}
       className={`${styles.drawer} ${sheet ? styles.sheet : styles.panel}`}
       onKeyDown={onKeyDown}
@@ -249,7 +289,9 @@ export function Drawer({
           aria-label={model.name}
           className={hot ? `${styles.title} state-bottleneck` : styles.title}
         >
-          {names.item(itemId)}
+          {model.kind === "item"
+            ? names.item(model.itemId)
+            : names.machine(model.machineClass, null)}
         </h2>
         {sheet ? (
           // U-5b: a 44 × 44 x.
@@ -261,11 +303,16 @@ export function Drawer({
             Close
           </button>
         )}
-        <Meta snapshot={snapshot} itemId={itemId} now={ctx.now} />
-        {/* U-5a's hint, fine pointer only (U-7e). No ↑/↓ on the phone. */}
+        {model.kind === "item" ? (
+          <Meta snapshot={snapshot} itemId={model.itemId} now={ctx.now} />
+        ) : (
+          <GeneratorMeta snapshot={snapshot} model={model} />
+        )}
+        {/* U-5a's hint, fine pointer only (U-7e). No ↑/↓ on the phone, nor from a generator
+            drawer, which ↑/↓ don't follow (K-12). */}
         {!sheet && (
           <span className={`key-hint ${styles.hint}`} aria-hidden="true">
-            {"[↑↓] row  [ESC] close"}
+            {item !== null ? "[↑↓] row  [ESC] close" : "[ESC] close"}
           </span>
         )}
       </div>
@@ -276,9 +323,9 @@ export function Drawer({
           <h3 className={styles.h3}>{SECTION_NAME[shown].toUpperCase()}</h3>
         )}
         {shown === "upgrade" && sec !== null && <UpgradeSection ctx={ctx} sec={sec} />}
-        {shown === "recipe" && <RecipeSection ctx={ctx} />}
+        {shown === "recipe" && item !== null && <RecipeSection ctx={ctx} m={item} />}
         {shown === "assign" && sec !== null && <AssignSection ctx={ctx} sec={sec} />}
-        {shown === "storage" && <StorageSection ctx={ctx} />}
+        {shown === "storage" && item !== null && <StorageSection ctx={ctx} m={item} />}
         {shown === "dismantle" && sec !== null && <DismantleSection ctx={ctx} sec={sec} />}
       </div>
       <MoreBar
@@ -325,6 +372,21 @@ function Meta({
   );
 }
 
+/** U-5c / K-12: "POWER lane · x14 · 420 MW now", the owned count and the MW from the power
+ * panel's own row (generatorRows), so the two agree. */
+function GeneratorMeta({ snapshot, model }: { snapshot: Snapshot; model: GeneratorModel }) {
+  const theme = useTheme().applied;
+  const row = useMemo(
+    () => generatorRows(snapshot).find((r) => r.machineClass === model.machineClass),
+    [snapshot, model.machineClass],
+  );
+  return (
+    <p className={`${styles.meta} num`} data-meta>
+      {`${laneLabel(snapshot, model.laneId, theme)} lane · x${row?.owned ?? model.machines.pool} · ${mwText(row?.mwNow ?? 0)} MW now`}
+    </p>
+  );
+}
+
 /** "900 IRON_PLATE" seen, "900 Iron Plate" heard; a two-item cost joins with " + ". */
 function costWords(ctx: Ctx, q: Quote): { shown: string; said: string } {
   const parts = [...q.cost];
@@ -349,10 +411,11 @@ function MoreBar({
   sheet: boolean;
   onToggle(s: Section): void;
 }) {
-  const { itemId, storage } = ctx.model;
+  const item = ctx.model.kind === "item" ? ctx.model : null;
   const s = ctx.snapshot;
   const label = (sec: Section): { shown: string; said: string } => {
-    if (sec !== "storage") return { shown: sec, said: SECTION_NAME[sec] };
+    if (sec !== "storage" || item === null) return { shown: sec, said: SECTION_NAME[sec] };
+    const { storage } = item;
     // U-5c: the next level's cost, so the key reads as opening the section, not as a buy.
     if (storage.buy === null) return { shown: "storage · max", said: "Storage, max" };
     const words = costWords(ctx, quote(s.content, s.state, storage.buy));
@@ -381,22 +444,25 @@ function MoreBar({
         );
       })}
       {/* §13.4's context-aware entry: this item's handbook page. A link, so it can open in a
-          new tab too; a plain click stays in the app. H is the global handbook key (K-10). */}
-      <a
-        className={styles.moreBtn}
-        href={routePath({ kind: "handbook", itemId })}
-        data-handbook-link
-        data-key="H"
-        aria-label="Handbook entry"
-        onClick={(e) => {
-          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-          e.preventDefault();
-          navigate({ kind: "handbook", itemId });
-        }}
-      >
-        {hint(ctx, "H")}
-        handbook
-      </a>
+          new tab too; a plain click stays in the app. H is the global handbook key (K-10).
+          A generator has no entry (K-12). */}
+      {item !== null && (
+        <a
+          className={styles.moreBtn}
+          href={routePath({ kind: "handbook", itemId: item.itemId })}
+          data-handbook-link
+          data-key="H"
+          aria-label="Handbook entry"
+          onClick={(e) => {
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            navigate({ kind: "handbook", itemId: item.itemId });
+          }}
+        >
+          {hint(ctx, "H")}
+          handbook
+        </a>
+      )}
     </div>
   );
 }
@@ -407,14 +473,16 @@ const SPLIT_TONES = ["toneA", "toneB", "toneC"] as const;
  *  priority entry (as onSplit did from the bar). The bar itself is decoration. */
 function SplitSection({
   ctx,
+  item,
   split,
   onSplit,
 }: {
   ctx: Ctx;
+  item: DrawerModel;
   split: NonNullable<RowModel["split"]>;
   onSplit(itemId: ItemId): void;
 }) {
-  const { itemId, name } = ctx.model;
+  const { itemId, name } = item;
   const shownLabel = (entryId: string, label: string) =>
     entryId.startsWith("item:") ? ctx.names.item(entryId.slice("item:".length)) : label;
   return (
@@ -612,7 +680,9 @@ function MachinesBody({
   useTick(); // max and the countdowns move with the stock
   const s = ctx.snapshot;
   const [follow, setFollow] = useState<{ mark: number; count: Count } | null>(null);
-  const split = useMemo(() => splitOf(s, ctx.model.itemId), [s, ctx.model.itemId]);
+  // SPLIT is an item's (U-3c); a generator has none (K-12).
+  const item = ctx.model.kind === "item" ? ctx.model : null;
+  const split = useMemo(() => (item === null ? null : splitOf(s, item.itemId)), [s, item]);
   if (sec === null) {
     return (
       <>
@@ -739,7 +809,9 @@ function MachinesBody({
         laneId={ctx.model.laneId}
         caption=""
       />
-      {split !== null && <SplitSection ctx={ctx} split={split} onSplit={onSplit} />}
+      {item !== null && split !== null && (
+        <SplitSection ctx={ctx} item={item} split={split} onSplit={onSplit} />
+      )}
     </>
   );
 }
@@ -865,9 +937,9 @@ function DismantleSection({ ctx, sec }: { ctx: Ctx; sec: MachineSection }) {
 
 // ---- Recipe ----------------------------------------------------------------------------------
 
-function RecipeSection({ ctx }: { ctx: Ctx }) {
+function RecipeSection({ ctx, m }: { ctx: Ctx; m: DrawerModel }) {
   const s = ctx.snapshot;
-  const { recipes, itemId } = ctx.model;
+  const { recipes, itemId } = m;
   const server = recipes.find((c) => c.active)?.recipeId ?? null;
   const pend = usePendingSetting<RecipeId | null>(server, {
     owner: ctx.owner,
@@ -964,8 +1036,8 @@ function Level<A extends Action>({
   );
 }
 
-function StorageSection({ ctx }: { ctx: Ctx }) {
-  const { storage, qs } = ctx.model;
+function StorageSection({ ctx, m }: { ctx: Ctx; m: DrawerModel }) {
+  const { storage, qs } = m;
   const [focus, setFocus] = useState<"storage" | "qs">("storage");
   const action = focus === "storage" ? storage.buy : qs.buy;
   return (

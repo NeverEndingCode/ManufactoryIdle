@@ -531,6 +531,11 @@ describe("the keyboard (U-7)", { timeout: 60_000 }, () => {
     fireEvent.click(option("biomass"));
     checkHints("drawer");
     escapeCloses("[data-drawer]");
+    // K-12: the generator drawer, [B] and [D] and [ESC] only.
+    fireEvent.click(q('[data-open-generator="biomass_burner"]')!);
+    expect(drawer()!.getAttribute("data-drawer")).toBe("power:biomass_burner");
+    checkHints("drawer");
+    escapeCloses("[data-drawer]");
     key("F2");
     expect(document.querySelector('[data-view="priority"]')!.getAttribute("aria-selected")).toBe(
       "true",

@@ -11,6 +11,7 @@ import type { GameStore } from "../sync/store.js";
 import { TapAccumulator } from "../sync/taps.js";
 import { App } from "./App.js";
 import {
+  burnerMk2Slice,
   fakeStore,
   fixtureState,
   freshState,
@@ -245,6 +246,55 @@ describe("D.1 coverage (Q-6, Q-14)", { timeout: 60_000 }, () => {
       },
     ]);
     expect(store.send.mock.calls[0]![1]).toBe("power:biomass_burner:buy");
+  });
+
+  /** K-12: the power tab, then a generator row's drawer. */
+  function openGenerator(machineClass: string): HTMLElement {
+    lane(/Power/);
+    fireEvent.click(
+      document.querySelector<HTMLElement>(`button[data-open-generator="${machineClass}"]`)!,
+    );
+    const d = document.querySelector<HTMLElement>(`[data-drawer="power:${machineClass}"]`);
+    expect(d).not.toBeNull();
+    return d!;
+  }
+
+  it("DISMANTLE: a generator's drawer, tier 8 biomass burners (K-12)", () => {
+    const s = snapshotOf(slice, fixtureState("slice-tier-8.world.json"));
+    const store = mount(s);
+    const d = openGenerator("biomass_burner");
+    pick(d, "Dismantle");
+    fireEvent.click(within(d).getByRole("button", { name: "Dismantle ×1 Mk1" }));
+    const [a] = expectSent(store, s, "DISMANTLE");
+    expect(a).toEqual({
+      type: "DISMANTLE",
+      lane: "power",
+      machineClass: "biomass_burner",
+      mark: 1,
+      count: 1,
+    });
+    expect(store.send.mock.calls[0]![1]).toBe("power:biomass_burner:dismantle");
+  });
+
+  it("UPGRADE_MARK: a generator's drawer, tier 8 biomass burners with a Mk.2 (K-12)", () => {
+    // The slice has no generator with two marks; this content adds a Biomass Burner Mk.2.
+    const mk2 = burnerMk2Slice();
+    const t = fixtureState("slice-tier-8.world.json");
+    const stored = { ...t.stored };
+    for (const id of mk2.content.stockItemIds) stored[id] = liquidCap(mk2.content, t, id);
+    const s = snapshotOf(mk2, { ...t, stored });
+    const store = mount(s);
+    const d = openGenerator("biomass_burner");
+    pick(d, "Upgrade");
+    fireEvent.click(within(d).getByRole("button", { name: "Upgrade 20 Mk1 → 10 Mk2" }));
+    const [a] = expectSent(store, s, "UPGRADE_MARK");
+    expect(a).toEqual({
+      type: "UPGRADE_MARK",
+      lane: "power",
+      machineClass: "biomass_burner",
+      fromMark: 1,
+    });
+    expect(store.send.mock.calls[0]![1]).toBe("power:biomass_burner:upgrade");
   });
 
   it("TAP: the footer's TAP holds and releases; the store's flush is accepted", () => {

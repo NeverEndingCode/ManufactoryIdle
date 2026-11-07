@@ -1,9 +1,10 @@
 // U-6b: the power panel, one for the desktop's 5 POWER lane tab and the phone's ~ power tab
 // (U-6a). Load (the grid Bar and headroom, or the short line), GENERATORS (one row per class with
-// its +1), FUEL (the power lane's fixed rows), BIGGEST USERS and the kick line. Generator rows
-// aren't clickable in UI-1: the generator drawer is UI-2 (V-21). The +1 is the panel's one spend,
-// pessimistic like the drawer's (W-13): Guarded, busy while a batch under its label is out.
-import { D, type ItemId } from "@manufactory/engine";
+// its +1), FUEL (the power lane's fixed rows), BIGGEST USERS and the kick line. An unlocked
+// generator row's text is a button that opens its generator drawer (U-5c, K-12; this supersedes
+// V-21's "rows aren't clickable"). The +1 is the panel's one spend, pessimistic like the drawer's
+// (W-13): Guarded, busy while a batch under its label is out; the drawer's buy shares its label.
+import { D, type ItemId, type RecipeId } from "@manufactory/engine";
 import { useMemo } from "react";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
@@ -40,6 +41,10 @@ export interface PowerPanelProps {
   onSelect(id: ItemId): void;
   onOpen(id: ItemId): void;
   openItem: ItemId | null;
+  /** K-12: a generator row's button; the recipe is generatorRows' own, so panel and drawer agree. */
+  onOpenGenerator(recipeId: RecipeId): void;
+  /** The generator recipe whose drawer is shown, if any. */
+  openGenerator: RecipeId | null;
   mode: LayoutMode;
 }
 
@@ -99,11 +104,15 @@ function Generators({
   store,
   pending,
   names,
+  onOpen,
+  openRecipe,
 }: {
   snapshot: Snapshot;
   store: Pick<GameStore, "now" | "send">;
   pending: readonly Batch[];
   names: Names;
+  onOpen(recipeId: RecipeId): void;
+  openRecipe: RecipeId | null;
 }) {
   const rows = useMemo(() => generatorRows(snapshot), [snapshot]);
   return (
@@ -126,7 +135,14 @@ function Generators({
                 </span>
               ) : (
                 <>
-                  <span className={css.genText}>
+                  <button
+                    type="button"
+                    className={css.genText}
+                    data-open-generator={row.machineClass}
+                    aria-expanded={openRecipe === row.recipeId}
+                    aria-controls={openRecipe === row.recipeId ? "detail" : undefined}
+                    onClick={() => onOpen(row.recipeId)}
+                  >
                     <span className={css.genName}>
                       <Spoken shown={label} said={said} />
                     </span>
@@ -136,7 +152,7 @@ function Generators({
                         said={eatsText(row, (id) => itemName(snapshot, id))}
                       />
                     </span>
-                  </span>
+                  </button>
                   <span className={`${css.genMw} num`}>{`${mwText(row.mwNow)} MW`}</span>
                   <GeneratorBuy
                     row={{ ...row, buy }}
@@ -193,7 +209,14 @@ export function PowerPanel(p: PowerPanelProps) {
           )}
         </p>
       </section>
-      <Generators snapshot={s} store={p.store} pending={view.pending} names={names} />
+      <Generators
+        snapshot={s}
+        store={p.store}
+        pending={view.pending}
+        names={names}
+        onOpen={p.onOpenGenerator}
+        openRecipe={p.openGenerator}
+      />
       {laneId !== null && (
         <section aria-label="Fuel" className={css.section}>
           <h2 className={css.head}>FUEL</h2>
