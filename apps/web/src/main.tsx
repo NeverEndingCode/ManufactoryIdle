@@ -4,13 +4,14 @@ import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import { superTokensClient } from "./auth/supertokens.js";
-import { PARKED_GUEST_TOKEN_KEY } from "./sync/constants.js";
+import { ACCOUNT_LABEL_KEY, PARKED_GUEST_TOKEN_KEY } from "./sync/constants.js";
 import { browserFetch } from "./sync/fetch.js";
 import { browserTokenStorage } from "./sync/identity.js";
 import type { ClientClock } from "./sync/snapshot.js";
 import { GameStore } from "./sync/store.js";
 import { App } from "./ui/App.js";
 import { capabilities } from "./ui/capabilities.js";
+import { parseRoute, replaceRoute } from "./ui/route.js";
 import { applyTheme, storedTheme } from "./ui/theme.js";
 
 const root = document.getElementById("root");
@@ -26,6 +27,9 @@ const browserClock: ClientClock = {
 // Created and started once, outside React: StrictMode's mount, cleanup, mount must not
 // stop and restart it. fetch is late-bound (S-2): the SDK's init() patches window.fetch after
 // this, and game requests must go through the patched one.
+// O-6 / O-8: a load on /account/callback/:provider finishes the sign-in at boot; done()
+// replaces the spent URL once, after the attempt.
+const first = parseRoute(location.pathname);
 const store = new GameStore({
   fetch: browserFetch,
   clock: browserClock,
@@ -33,6 +37,17 @@ const store = new GameStore({
   parked: browserTokenStorage(undefined, PARKED_GUEST_TOKEN_KEY),
   accounts: superTokensClient(location.origin),
   random: crypto,
+  accountLabel: browserTokenStorage(undefined, ACCOUNT_LABEL_KEY),
+  navigate: (url) => window.location.assign(url),
+  ...(first.kind === "callback"
+    ? {
+        callback: {
+          provider: first.provider,
+          search: location.search,
+          done: () => replaceRoute({ kind: "game" }),
+        },
+      }
+    : {}),
 });
 
 /** W-9: a hidden tab has no boundary timer, no text tick, and every animation paused.
@@ -52,6 +67,8 @@ window.addEventListener("pagehide", () => {
   store.releaseTap();
   store.flushTaps({ keepalive: true });
 });
+// O-11: Back from the provider restores this page from the bfcache with its buttons off.
+window.addEventListener("pageshow", (e) => store.pageShown(e.persisted));
 window.addEventListener("focus", () => store.onFocus());
 window.addEventListener("online", () => store.onOnline());
 if (document.visibilityState === "hidden") syncVisibility();

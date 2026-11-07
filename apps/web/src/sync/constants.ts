@@ -28,3 +28,9 @@ export const TAP_LABEL = "tap";
 export const GUEST_TOKEN_KEY = "mi.guestToken";
 /** W-16, S-6: a guest token parked while signed in (a 409 claim, at a sign-in or at boot). */
 export const PARKED_GUEST_TOKEN_KEY = "mi.parkedGuestToken";
+/** O-9: the signed-in label ({ provider, email } as JSON), display-only and per device. */
+export const ACCOUNT_LABEL_KEY = "mi.account";
+/** O-7: sessionStorage: the OAuth state already spent in this tab. */
+export const OAUTH_CONSUMED_KEY = "mi.oauthConsumed";
+/** O-11: `leaving` clears this long after navigate, if the page is still here. */
+export const LEAVE_TIMEOUT_MS = 15_000;

@@ -258,7 +258,7 @@ pgnet_subnet() {
 # render <name> KEY=VALUE...: $SRC/infra/unraid/templates/my-<name>.xml with @@KEY@@ filled in
 # (XML-escaped), written atomically to $TEMPLATES/my-<name>.xml. <Config> lines of the old
 # rendered file whose Target the new one lacks (a variable added to the file by hand, such as the
-# SMTP ones) are carried over. The old file is kept in $WORK for a rollback.
+# DISCORD_* ones) are carried over. The old file is kept in $WORK for a rollback.
 render() {
   local name=$1 kv key val line target out extras="" tmp
   shift
@@ -440,7 +440,8 @@ wait_core() {
 # that the SuperTokens env is set (the SDK contacts no core until a request needs one). So a
 # second check, which depends on no recipe, asks the core something with the API's own URI and
 # key from inside the API container, so the key never leaves it. The core's GET /users/count
-# answers 200 only when it accepts that key.
+# answers 200 only when it accepts that key. Health's "providers" (the sign-in providers whose
+# DISCORD_*/GITHUB_* variables are set) is logged, not required: an empty list still deploys.
 readonly CORE_CHECK='fetch(process.env.SUPERTOKENS_CONNECTION_URI + "/users/count", {
   headers: { "api-key": process.env.SUPERTOKENS_API_KEY ?? "" },
   signal: AbortSignal.timeout(10000),
@@ -463,6 +464,11 @@ smoke() {
   if [[ $body != *'"accounts":true'* ]]; then
     log "the API answers but accounts are off"
     return 1
+  fi
+  if [[ $body =~ \"providers\":\[[^]]*\] ]]; then
+    log "sign-in providers: ${BASH_REMATCH[0]#\"providers\":}"
+  else
+    log "sign-in providers: none listed"
   fi
   if ! body=$(docker exec "$API" node -e "$CORE_CHECK" 2>&1); then
     log "the API could not use its SuperTokens core: ${body:0:300}"

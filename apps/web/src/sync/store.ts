@@ -2,8 +2,16 @@
 // snapshot, the one boundary timer, the outbox and the identity (a guest token or a session).
 // React reads it through useSyncExternalStore (use-game.ts).
 import type { Action } from "@manufactory/engine";
-import type { AccountClient, AuthResult, ResetResult } from "../auth/accounts.js";
 import {
+  providerName,
+  type Account,
+  type AccountClient,
+  type SignInFailure,
+  type SignInResult,
+  type StartResult,
+} from "../auth/accounts.js";
+import {
+  LEAVE_TIMEOUT_MS,
   MIN_REPOLL_MS,
   OFFLINE_AFTER_FAILURES,
   RETRY_STEPS_MS,
@@ -44,7 +52,9 @@ export interface Notice {
     | "tier-up"
     | "account-has-factory"
     | "signed-out"
-    | "session-ended";
+    | "session-ended"
+    | "signed-in"
+    | "sign-in-failed";
   text: string;
   /** guest-rate-limited: the ClientClock time a retry may succeed. */
   retryAt?: number;
@@ -67,13 +77,31 @@ export interface StoreView {
   /** GET /api/health's accounts flag; "unknown" until health answers (S-3). */
   accounts: "unknown" | "off" | "on";
   identity: Identity;
-  /** Signed in: the email when this tab signed in, else null. */
-  account: { email: string | null } | null;
+  /** Signed in (O-9): the provider and email this device saw at the callback, each null when
+   * unknown (no stored label, or one this build can't read). */
+  account: { provider: string | null; email: string | null } | null;
   /** "held": a sign-in is in progress (S-4); "claiming": the claim is retrying (S-5). */
   auth: "idle" | "held" | "claiming";
   /** A guest token is parked (S-6), in storage or only in memory: signing out returns to it. */
   parked: boolean;
+  /** O-3: the configured sign-in providers' ids, from health ([] until it answers). */
+  providers: readonly string[];
+  /** O-11: the provider a sign-in is leaving for, while the drain and the navigation run. */
+  leaving: string | null;
 }
+
+/** O-6: the page loaded on /account/callback/:provider. `done` replaces the URL (O-8). */
+export interface SignInCallback {
+  provider: string;
+  search: string;
+  done(): void;
+}
+
+/** O-5, O-10: beginSignIn's refusals are form errors, not notices. */
+export type BeginResult =
+  | { ok: true }
+  | { ok: false; kind: "unsaved" | "storage" | "unavailable" }
+  | { ok: false; kind: "not-allowed"; reason: string };
 
 export interface GameStoreDeps {
   fetch: FetchLike;
@@ -84,6 +112,12 @@ export interface GameStoreDeps {
   /** W-15: initialised only when health says accounts: true. Omitted: guest-only. */
   accounts?: AccountClient;
   random?: Pick<Crypto, "getRandomValues"> & Partial<Pick<Crypto, "randomUUID">>;
+  /** O-6: set when the page loaded on the sign-in callback. */
+  callback?: SignInCallback;
+  /** O-5: leaves for the provider. Default: window.location.assign. */
+  navigate?: (url: string) => void;
+  /** O-9: the signed-in label (mi.account). Default: memory. */
+  accountLabel?: TokenStorage;
 }
 
 const TEXT = {
@@ -98,6 +132,60 @@ const TEXT = {
   "signed-out": "Signed out. Sign in to return to your saved factory.",
   "session-ended": "Your session ended. Sign in to return to your saved factory.",
 } as const;
+
+/** O-10: the signed-in toast. */
+function signedInText(account: Account): string {
+  const name = providerName(account.provider);
+  return account.email === null
+    ? `Signed in with ${name}.`
+    : `Signed in with ${name} as ${account.email}.`;
+}
+
+/** O-10: the sign-in-failed toast, by kind. */
+function signInFailedText(provider: string, f: SignInFailure): string {
+  const name = providerName(provider);
+  switch (f.kind) {
+    case "denied":
+      return `Sign-in with ${name} was cancelled. You're still playing as a guest.`;
+    case "provider-error":
+      return `${name} couldn't sign you in${f.code === null ? "" : ` (${f.code})`}. Try again from Settings.`;
+    case "no-email":
+      return `${name} didn't share an email address, and an account needs one. Check the email on your ${name} account, then try again.`;
+    case "not-allowed":
+      return f.reason;
+    case "stale":
+      return "That sign-in didn't finish in this tab, or it took too long. Start it again from Settings.";
+    case "unknown-provider":
+      return "That sign-in provider isn't available here.";
+    case "unavailable":
+      return "Couldn't reach the server to finish signing in. You're still playing as a guest; try again from Settings.";
+  }
+}
+
+/** O-3: only well-formed ids reach a URL path; a missing field (an older server) is []. */
+const PROVIDER_ID = /^[a-z0-9-]{1,32}$/;
+function parseProviders(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = raw.filter((p): p is string => typeof p === "string" && PROVIDER_ID.test(p));
+  return [...new Set(ids)];
+}
+
+/** O-9: the stored label, or blanks when it's missing or malformed. */
+function parseLabel(raw: string | null): { provider: string | null; email: string | null } {
+  let value: unknown = null;
+  try {
+    value = raw === null ? null : JSON.parse(raw);
+  } catch {
+    value = null;
+  }
+  const o = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  return {
+    provider: typeof o.provider === "string" && PROVIDER_ID.test(o.provider) ? o.provider : null,
+    email: typeof o.email === "string" ? o.email : null,
+  };
+}
+
+const SIGN_IN_NOTICES = ["signed-in", "sign-in-failed"] as const;
 
 const UNAVAILABLE = { ok: false, kind: "unavailable" } as const;
 
@@ -133,6 +221,10 @@ export class GameStore {
   readonly #content: ContentCache;
   readonly #outbox: Outbox<Sent>;
   readonly #random: GameStoreDeps["random"];
+  readonly #navigate: (url: string) => void;
+  readonly #accountLabel: TokenStorage;
+  /** O-6: the callback, until the boot consumes it (once). */
+  #callback: SignInCallback | null;
 
   #snapshot: Snapshot | null = null;
   #repoll: RepollState = { streak: 0 };
@@ -186,6 +278,11 @@ export class GameStore {
   /** The guest token came from the park (S-7) and hasn't loaded a world since. A 401 on it is
    * a claim that committed before its tab closed: quietly make a new guest (fix round 1, E). */
   #tokenFromPark = false;
+  /** O-3: health's providers. */
+  #providers: readonly string[] = [];
+  /** O-11: the provider being left for, and the timer that gives up on the page leaving. */
+  #leaving: string | null = null;
+  #leaveTimer: number | null = null;
 
   // The tap (Q-11). Two timers, both on the ClientClock: the 10 Hz repeat while held, and
   // the one flush timer, which is never due before #lastFlushAt + TAP_FLUSH_EVERY_MS.
@@ -212,6 +309,9 @@ export class GameStore {
     this.#accounts = d.accounts;
     this.#content = new ContentCache(d.fetch);
     this.#random = d.random;
+    this.#navigate = d.navigate ?? ((url) => window.location.assign(url));
+    this.#accountLabel = d.accountLabel ?? memoryTokenStorage();
+    this.#callback = d.callback ?? null;
     this.#taps = new TapAccumulator(() => d.clock.now(), d.clock.now());
     this.#outbox = new Outbox({
       fetch: d.fetch,
@@ -295,6 +395,8 @@ export class GameStore {
     this.#bootTimer = null;
     if (this.#claimTimer !== null) this.#clock.clearTimeout(this.#claimTimer);
     this.#claimTimer = null;
+    // The page isn't leaving any more (O-11): nothing would clear `leaving` later.
+    this.#clearLeaving(false);
     this.#holding = false;
     this.#clearRepeat();
     this.#clearFlush();
@@ -515,12 +617,94 @@ export class GameStore {
 
   // ---- accounts (W-15, W-16, S-4 to S-7) ----
 
-  signUp(email: string, password: string): Promise<AuthResult> {
-    return this.#signIn((c) => c.signUp(email, password));
+  /** O-5: leaves the page for the provider, only with an empty outbox. Guards, then the drain
+   * (the tap hold ends, its taps join the outbox, idle()), then the URL, then navigate. Nothing
+   * is held and the outbox keeps running: a batch still pending after the drain refuses the
+   * whole sign-in (`unsaved`), since the outbox is in memory and the page is about to unload.
+   * After each wait it re-checks: a stop() or a pageshow that cleared `leaving` (or a newer
+   * beginSignIn that took it) means this attempt is over, and it never navigates. */
+  async beginSignIn(provider: string): Promise<BeginResult> {
+    const client = this.#client();
+    if (
+      client === null ||
+      !this.#providers.includes(provider) ||
+      this.#identity !== "guest" ||
+      this.#auth !== "idle" ||
+      this.#leaving !== null
+    ) {
+      return UNAVAILABLE;
+    }
+    // A token only in memory dies with the page.
+    if (this.#tokens.get() !== null && !this.#tokens.persistent) {
+      return { ok: false, kind: "storage" };
+    }
+    this.#leaving = provider;
+    for (const kind of SIGN_IN_NOTICES) this.#dropNotice(kind, false);
+    if (this.#holding) {
+      this.#holding = false;
+      this.#clearRepeat();
+    }
+    const tap = this.#take();
+    if (tap !== null) void this.#outbox.enqueue([tap], TAP_LABEL);
+    this.#emit();
+    await this.idle();
+    if (this.#abandoned(provider)) return this.#gaveUp(provider);
+    if (this.#unsaved()) return this.#stayed({ ok: false, kind: "unsaved" });
+    let start: StartResult;
+    try {
+      start = await client.authorisationURL(provider);
+    } catch {
+      start = UNAVAILABLE;
+    }
+    if (this.#abandoned(provider)) return this.#gaveUp(provider);
+    if (!start.ok) return this.#stayed(start);
+    if (this.#tokens.get() !== null && !this.#tokens.persistent) {
+      return this.#stayed({ ok: false, kind: "storage" });
+    }
+    if (this.#unsaved()) return this.#stayed({ ok: false, kind: "unsaved" });
+    this.#leaveTimer = this.#clock.setTimeout(() => {
+      this.#leaveTimer = null;
+      this.#clearLeaving();
+    }, LEAVE_TIMEOUT_MS);
+    this.#navigate(start.url);
+    return { ok: true };
   }
 
-  signIn(email: string, password: string): Promise<AuthResult> {
-    return this.#signIn((c) => c.signIn(email, password));
+  /** O-11, from pageshow: a bfcache restore (Back from the provider) is a page that stayed. */
+  pageShown(persisted: boolean): void {
+    if (persisted) this.#clearLeaving();
+  }
+
+  /** This beginSignIn no longer owns the page's leaving: stopped, or `leaving` was cleared
+   * (pageshow, the timer) or taken by a newer attempt. */
+  #abandoned(provider: string): boolean {
+    return this.#stopped || this.#leaving !== provider;
+  }
+
+  /** Refuses an abandoned attempt, clearing `leaving` only if it is still this attempt's. */
+  #gaveUp(provider: string): BeginResult {
+    if (this.#leaving === provider) this.#clearLeaving();
+    return UNAVAILABLE;
+  }
+
+  /** Something would be lost if the page unloaded now. */
+  #unsaved(): boolean {
+    return (
+      this.#outbox.inFlight !== null || this.#outbox.queued.length > 0 || this.#taps.pending > 0
+    );
+  }
+
+  #stayed<R extends BeginResult>(result: R): R {
+    this.#clearLeaving();
+    return result;
+  }
+
+  #clearLeaving(emit = true): void {
+    if (this.#leaveTimer !== null) this.#clock.clearTimeout(this.#leaveTimer);
+    this.#leaveTimer = null;
+    if (this.#leaving === null) return;
+    this.#leaving = null;
+    if (emit) this.#emit();
   }
 
   /** S-7: back to the parked guest, or a new one. False (the session kept) when the server
@@ -543,44 +727,60 @@ export class GameStore {
     return true;
   }
 
-  sendReset(email: string): Promise<ResetResult> {
-    const client = this.#client();
-    return client === null ? Promise.resolve(UNAVAILABLE) : client.sendReset(email);
-  }
-
-  submitNewPassword(password: string): Promise<ResetResult> {
-    const client = this.#client();
-    return client === null ? Promise.resolve(UNAVAILABLE) : client.submitNewPassword(password);
-  }
-
   #client(): AccountClient | null {
     return this.#accountsState === "on" && this.#accounts ? this.#accounts : null;
   }
 
-  /** S-4: hold, sign in, then claim (S-5) or release. Resolves with the sign-in's result; the
-   * claim runs on (idle() waits for it). */
-  async #signIn(call: (c: AccountClient) => Promise<AuthResult>): Promise<AuthResult> {
-    const client = this.#client();
-    if (client === null || this.#identity !== "guest" || this.#auth !== "idle") return UNAVAILABLE;
-    const drained = this.#hold();
-    let result: AuthResult;
-    try {
-      result = await call(client);
-    } catch {
-      result = UNAVAILABLE;
-    }
-    await drained;
-    if (!result.ok) {
-      this.#release();
-      return result;
-    }
+  /** A sign-in succeeded (S-4, O-6): the session is ours, and the claim (S-5) decides the world.
+   * Called under the hold, so nothing world-shaped has gone out since it began. */
+  #enterSession(account: Account): void {
     this.#identity = "session";
-    this.#account = { email: result.email };
+    this.#account = account;
     this.#claimPending = true;
     this.#claimRetries = 0;
     this.#emit();
     this.#claimOnce();
-    return result;
+  }
+
+  /** O-6 step 3, false: the callback, before anything world-shaped. The guest is held (nothing
+   * has been sent, so nothing drains) while the client finishes the sign-in; done() follows
+   * the attempt. Success is #enterSession, then S-5 and S-6 unchanged; failure releases the
+   * guest, who resumes with its token or makes one. A stop() meanwhile still records the
+   * outcome, and start() resumes from it. */
+  async #finishCallback(client: AccountClient, cb: SignInCallback): Promise<void> {
+    this.#identity = "guest";
+    this.#auth = "held";
+    this.#emit();
+    let result: SignInResult;
+    try {
+      result = await client.finishSignIn(cb.provider, cb.search);
+    } catch {
+      result = UNAVAILABLE;
+    }
+    cb.done();
+    if (!result.ok) {
+      this.#setNotice(
+        { kind: "sign-in-failed", text: signInFailedText(cb.provider, result) },
+        false,
+      );
+      this.#release();
+      return;
+    }
+    this.#accountLabel.set(JSON.stringify(result.account));
+    this.#setNotice({ kind: "signed-in", text: signedInText(result.account) }, false);
+    this.#enterSession(result.account);
+  }
+
+  /** O-6 step 2: the callback can't be finished here. done(), the notice, and a normal boot. */
+  #skipCallback(kind: "unknown-provider" | "unavailable"): void {
+    const cb = this.#callback;
+    if (cb === null) return;
+    this.#callback = null;
+    cb.done();
+    this.#setNotice(
+      { kind: "sign-in-failed", text: signInFailedText(cb.provider, { kind }) },
+      false,
+    );
   }
 
   /** S-4: from now until #release(), nothing world-shaped is sent. The tap hold ends and its
@@ -686,6 +886,8 @@ export class GameStore {
         this.#settleClaim();
         this.#identity = "guest";
         this.#account = null;
+        this.#accountLabel.clear();
+        this.#dropNotice("signed-in", false);
         this.#setNotice({ kind: "client-bug", text: TEXT["client-bug"] }, false);
         this.#release();
         return;
@@ -789,10 +991,12 @@ export class GameStore {
     this.#outbox.clear({ kind: "unauthorized" });
     this.#identity = "guest";
     this.#account = null;
+    this.#accountLabel.clear();
     this.#auth = "idle";
     this.#resetWorld();
     this.#unpark();
     this.#dropNotice("account-has-factory", false);
+    for (const n of SIGN_IN_NOTICES) this.#dropNotice(n, false);
     this.#setNotice({ kind, text: TEXT[kind] }, false);
     this.#emit();
     if (this.#stopped) return;
@@ -884,9 +1088,14 @@ export class GameStore {
     this.#bootRetries = 0;
     // Warm the cache: on the common path the world pins the same bundle.
     this.#track(this.#content.get(health.contentChecksum).catch(() => {}));
+    this.#providers = parseProviders(health.providers);
     let session = false;
     if (health.accounts === true && this.#accounts) {
       this.#accountsState = "on";
+      // O-6 step 2: a callback for a provider this server doesn't offer.
+      if (this.#callback !== null && !this.#providers.includes(this.#callback.provider)) {
+        this.#skipCallback("unknown-provider");
+      }
       this.#accounts.init();
       // A transient refresh failure here reads as no session: the player boots as a guest
       // (the parked token returns, S-7), and a later sign-in's 409 parks it again.
@@ -898,11 +1107,31 @@ export class GameStore {
       if (this.#stopped) return;
     } else {
       this.#accountsState = "off";
+      this.#skipCallback("unavailable");
+    }
+    // A parked token only exists while signed in: the session ended while away (S-7). Before a
+    // callback too, so its guest (on a failure) is the parked one, never a new one.
+    if (!session && this.#parked.get() !== null) {
+      this.#unpark();
+      this.#setNotice({ kind: "session-ended", text: TEXT["session-ended"] }, false);
+    }
+    // O-9: the label describes a session; without one it is stale, and must not name a later
+    // session's account. Before the callback, whose success writes a fresh one.
+    if (!session) this.#accountLabel.clear();
+    // O-6 step 3. Consumed here, once: a stop() before this point leaves it for the next boot.
+    const cb = this.#callback;
+    this.#callback = null;
+    if (cb !== null && session) {
+      // A reload after a success, or a stray hit: the session boot below, with no notice.
+      cb.done();
+    } else if (cb !== null && this.#accounts) {
+      await this.#finishCallback(this.#accounts, cb);
+      return;
     }
     if (session) {
       this.#identity = "session";
-      this.#account = { email: null };
-      // A session and a guest token: a sign-up or sign-in cut short (the tab closed before its
+      this.#account = parseLabel(this.#accountLabel.get());
+      // A session and a guest token: a sign-in cut short (the tab closed before its
       // claim answered). Claim now, under the hold, exactly as a sign-in does (S-4, S-5): a
       // GET first would make the account an empty world and strand the guest's. The claim is
       // idempotent (migration 003): a repeat of a committed claim is 200 with the same world;
@@ -919,11 +1148,6 @@ export class GameStore {
       }
     } else {
       this.#identity = "guest";
-      // A parked token only exists while signed in: the session ended while away (S-7).
-      if (this.#parked.get() !== null) {
-        this.#unpark();
-        this.#setNotice({ kind: "session-ended", text: TEXT["session-ended"] }, false);
-      }
     }
     this.#emit();
     this.#outbox.start();
@@ -1329,6 +1553,8 @@ export class GameStore {
       account: this.#account,
       auth: this.#auth,
       parked: this.#parked.get() !== null,
+      providers: this.#providers,
+      leaving: this.#leaving,
     };
   }
 

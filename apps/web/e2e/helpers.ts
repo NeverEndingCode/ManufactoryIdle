@@ -109,19 +109,27 @@ export async function expectNoOverflow(page: Page, label: string): Promise<void>
   expect.soft(report.small, `${label}: targets under 44 × 44 px`).toEqual([]);
 }
 
-/** Opens Settings and creates an account on the sign-up form; resolves once the sheet says
- * "Signed in". The sheet is left open. */
-export async function signUpThroughSettings(
+/** The fake provider's display names (the client's PROVIDER_NAMES). */
+const PROVIDER_NAME = { discord: "Discord", github: "GitHub" } as const;
+
+/** Sets the fake provider's user (cookie dev-oauth-user, O-14), opens Settings, presses
+ * "Sign in with <Name>", and resolves once the page is back on "/" with data-sync="ready":
+ * after the callback page's navigation, so a still-"/" page before the redirect never counts. */
+export async function signInThroughSettings(
   page: Page,
-  email: string,
-  password: string,
+  provider: "discord" | "github",
+  user: string,
 ): Promise<void> {
+  const origin = new URL(page.url()).origin;
+  await page.context().addCookies([{ name: "dev-oauth-user", value: user, url: origin }]);
   await page.locator("[data-open-settings]").click();
   const sheet = page.getByRole("dialog", { name: "Settings" });
   await expect(sheet).toBeVisible();
-  const form = sheet.getByRole("form", { name: "Create account" });
-  await form.getByLabel("Email").fill(email);
-  await form.getByLabel("Password").fill(password);
-  await form.getByRole("button", { name: "Create account" }).click();
-  await expect(sheet.locator("p[data-signed-in]")).toContainText("Signed in");
+  const callback = page.waitForRequest(
+    (r) => r.isNavigationRequest() && new URL(r.url()).pathname === `/account/callback/${provider}`,
+  );
+  await sheet.getByRole("button", { name: `Sign in with ${PROVIDER_NAME[provider]}` }).click();
+  await callback;
+  await expect(page).toHaveURL(`${origin}/`);
+  await expect(page.locator("[data-sync]")).toHaveAttribute("data-sync", "ready");
 }

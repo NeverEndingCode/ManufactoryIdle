@@ -2,13 +2,11 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { format, liquidCap } from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { AuthResult, ResetResult } from "../auth/accounts.js";
 import { shownStock } from "../sync/interpolate.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
-import type { GameStore } from "../sync/store.js";
+import type { BeginResult, GameStore } from "../sync/store.js";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App.js";
-import { RESET_SENT } from "./AccountForms.js";
 import { setNotation } from "./notation.js";
 import { setTheme, THEME_KEY, THEMES } from "./theme.js";
 import {
@@ -67,9 +65,10 @@ function never<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
-function fill(scope: HTMLElement, label: string, value: string) {
-  fireEvent.change(within(scope).getByLabelText(label), { target: { value } });
-}
+/** The Account section's provider buttons, in order. */
+const providerButtons = (scope: HTMLElement) => [
+  ...scope.querySelectorAll<HTMLButtonElement>("[data-provider]"),
+];
 
 describe("Settings (S-11)", { timeout: 60_000 }, () => {
   it("1. a modal dialog: focus moves in, Escape closes it, focus returns to the opener", () => {
@@ -188,112 +187,152 @@ describe("Settings (S-11)", { timeout: 60_000 }, () => {
     expect(free.closest("[data-theme-option]")!.querySelector("[data-locked]")).toBeNull();
   });
 
-  it("4. accounts off: the Account section says so and has no form", () => {
+  it("4. accounts off: the Account section says so and has no buttons", () => {
     mount(fakeStore(fresh));
     const dialog = openSettings();
     expect(within(dialog).getByText("Accounts aren't enabled on this server.")).toBeTruthy();
-    expect(dialog.querySelector("form")).toBeNull();
-    expect(dialog.querySelector("input[type=email], input[type=password]")).toBeNull();
+    expect(providerButtons(dialog)).toEqual([]);
+    expect(dialog.querySelector("[data-account]")!.querySelector("form, input, button")).toBeNull();
   });
 
-  it("5. sign-up and sign-in: the call, field errors, a form error, and the busy submit", async () => {
+  it("5a. accounts on with no provider: sign-in isn't available, and no buttons", () => {
     const store = fakeStore(fresh);
-    store.set({ accounts: "on" });
+    store.set({ accounts: "on", providers: [] });
     mount(store);
     const dialog = openSettings();
-    const signUp = within(dialog).getByRole("form", { name: "Create account" });
-    const email = within(signUp).getByLabelText<HTMLInputElement>("Email");
-    const password = within(signUp).getByLabelText<HTMLInputElement>("Password");
-    expect(email.type).toBe("email");
-    expect(email.autocomplete).toBe("email");
-    expect(password.type).toBe("password");
-    expect(password.autocomplete).toBe("new-password");
-
-    store.signUp.mockResolvedValueOnce({
-      ok: false,
-      kind: "field",
-      fields: [
-        { id: "email", error: "This email already exists. Please sign in instead." },
-        { id: "password", error: "Password must contain at least one number" },
-      ],
-    } satisfies AuthResult);
-    fill(signUp, "Email", "a@x.example");
-    fill(signUp, "Password", "password1");
-    fireEvent.click(within(signUp).getByRole("button", { name: "Create account" }));
-    expect(store.signUp).toHaveBeenCalledTimes(1);
-    expect(store.signUp).toHaveBeenCalledWith("a@x.example", "password1");
-    await settle();
-    const described = (input: HTMLElement) =>
-      (input.getAttribute("aria-describedby") ?? "")
-        .split(" ")
-        .map((id) => document.getElementById(id)?.textContent)
-        .join(" ");
-    expect(described(email)).toContain("This email already exists. Please sign in instead.");
-    expect(described(password)).toContain("Password must contain at least one number");
-    expect(email.getAttribute("aria-invalid")).toBe("true");
-    // The first invalid input takes focus (its description is read), and a summary is said.
-    expect(document.activeElement).toBe(email);
-    expect(announced()).toBe("Check the 2 highlighted fields.");
-
-    // Pending: the submit is aria-disabled until the promise settles, and a second press is a
-    // no-op.
-    store.signUp.mockImplementationOnce(() => never());
-    const submit = within(signUp).getByRole("button", { name: "Create account" });
-    fireEvent.click(submit);
-    expect(submit.getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(submit);
-    fireEvent.submit(signUp);
-    expect(store.signUp).toHaveBeenCalledTimes(2);
-
-    // Sign-in: wrong credentials are a form-level error, announced in the one region.
-    cleanup();
-    mount(store);
-    const d2 = openSettings();
-    fireEvent.click(within(d2).getByRole("button", { name: "Sign in instead" }));
-    const signIn = within(d2).getByRole("form", { name: "Sign in" });
-    expect(within(signIn).getByLabelText<HTMLInputElement>("Password").autocomplete).toBe(
-      "current-password",
-    );
-    store.signIn.mockResolvedValueOnce({ ok: false, kind: "wrong-credentials" });
-    fill(signIn, "Email", "a@x.example");
-    fill(signIn, "Password", "nope12345");
-    fireEvent.click(within(signIn).getByRole("button", { name: "Sign in" }));
-    await settle();
-    expect(store.signIn).toHaveBeenCalledWith("a@x.example", "nope12345");
-    expect(signIn.querySelector("[data-form-error]")!.textContent).toBe(
-      "That email and password don't match.",
-    );
-    expect(announced()).toBe("That email and password don't match.");
-    expect(liveRegions()).toHaveLength(1);
-
-    // The store deciding (held, claiming) keeps the submit busy too.
-    store.set({ auth: "held" });
-    expect(
-      within(signIn).getByRole("button", { name: "Sign in" }).getAttribute("aria-disabled"),
-    ).toBe("true");
+    const line = dialog.querySelector("[data-signin-unavailable]")!;
+    expect(line.textContent).toBe("Sign-in isn't available right now.");
+    expect(providerButtons(dialog)).toEqual([]);
   });
 
-  it("6. signed in: the email, Sign out, and the parked-guest line", async () => {
+  it("5b. one button per provider, in order, in the theme's voice; a click begins once (O-18)", () => {
     const store = fakeStore(fresh);
-    store.set({ accounts: "on", identity: "session", account: { email: "a@x.example" } });
+    store.set({ accounts: "on", providers: ["discord", "github"] });
     mount(store);
     let dialog = openSettings();
-    expect(within(dialog).getByText("Signed in as a@x.example")).toBeTruthy();
-    expect(dialog.querySelector("form")).toBeNull();
+    const group = within(dialog).getByRole("group", { name: "Sign in" });
+    expect(
+      within(group)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("data-provider")),
+    ).toEqual(["discord", "github"]);
+    expect(
+      within(group)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["Sign in with Discord", "Sign in with GitHub"]);
+    expect(
+      within(dialog).getByText(
+        "Save this factory to an account and play it anywhere. Signing in the first time creates the account.",
+      ),
+    ).toBeTruthy();
+    // Terminal: the shell voice.
+    expect(providerButtons(dialog).map((b) => b.textContent)).toEqual([
+      "> login --discord",
+      "> login --github",
+    ]);
+    act(() => void setTheme("clean-dark"));
+    expect(providerButtons(dialog).map((b) => b.textContent)).toEqual([
+      "Sign in with Discord",
+      "Sign in with GitHub",
+    ]);
+
+    store.beginSignIn.mockImplementationOnce(() => never());
+    const discord = within(dialog).getByRole("button", { name: "Sign in with Discord" });
+    fireEvent.click(discord);
+    expect(store.beginSignIn).toHaveBeenCalledTimes(1);
+    expect(store.beginSignIn).toHaveBeenCalledWith("discord");
+    fireEvent.click(discord);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in with GitHub" }));
+    expect(store.beginSignIn).toHaveBeenCalledTimes(1);
+
+    // An id with no display name renders as itself (O-2).
+    cleanup();
+    store.set({ providers: ["gitlab"] });
+    mount(store);
+    dialog = openSettings();
+    const gitlab = within(dialog).getByRole("button", { name: "Sign in with gitlab" });
+    expect(gitlab.textContent).toBe("Sign in with gitlab");
+  });
+
+  it("5c. a refusal is a form error, announced once in the one region (O-10)", async () => {
+    const cases: [BeginResult, string][] = [
+      [
+        { ok: false, kind: "unsaved" },
+        "Your last actions haven't reached the server yet. Try again in a moment.",
+      ],
+      [
+        { ok: false, kind: "storage" },
+        "This browser isn't saving your factory, so it would be lost on the way to Discord. Allow this site to store data, then try again.",
+      ],
+      [{ ok: false, kind: "unavailable" }, "Couldn't reach the server. Try again."],
+      [{ ok: false, kind: "not-allowed", reason: "Accounts are paused." }, "Accounts are paused."],
+    ];
+    for (const [result, text] of cases) {
+      cleanup();
+      const store = fakeStore(fresh);
+      store.set({ accounts: "on", providers: ["discord", "github"] });
+      store.beginSignIn.mockResolvedValueOnce(result);
+      mount(store);
+      const dialog = openSettings();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Sign in with Discord" }));
+      await settle();
+      expect(dialog.querySelector("[data-form-error]")!.textContent).toBe(text);
+      const said = document.querySelector("[data-announce]");
+      expect(said?.textContent).toBe(text);
+      await settle();
+      // Once: a second announcement would re-key the node (Notices keys it by seq).
+      expect(document.querySelector("[data-announce]")).toBe(said);
+      expect(liveRegions()).toHaveLength(1);
+    }
+  });
+
+  it("5d. leaving: every button is off, and the chosen one reads Opening… (O-11)", () => {
+    const store = fakeStore(fresh);
+    store.set({ accounts: "on", providers: ["discord", "github"], leaving: "github" });
+    mount(store);
+    const dialog = openSettings();
+    const [discord, github] = providerButtons(dialog);
+    expect(discord!.getAttribute("aria-disabled")).toBe("true");
+    expect(github!.getAttribute("aria-disabled")).toBe("true");
+    expect(github!.textContent).toBe("Opening GitHub…");
+    expect(github!.getAttribute("aria-busy")).toBe("true");
+    expect(discord!.hasAttribute("aria-busy")).toBe(false);
+    expect(github!.getAttribute("aria-label")).toBe("Sign in with GitHub");
+    fireEvent.click(discord!);
+    expect(store.beginSignIn).not.toHaveBeenCalled();
+    store.set({ leaving: null });
+    expect(discord!.getAttribute("aria-disabled")).toBe("false");
+    expect(github!.textContent).toBe("> login --github");
+  });
+
+  it("6. signed in: the provider and email, Sign out, and the parked-guest line (O-9)", async () => {
+    const store = fakeStore(fresh);
+    const signedIn = (account: { provider: string | null; email: string | null }) => {
+      cleanup();
+      store.set({ accounts: "on", identity: "session", account, providers: ["discord"] });
+      mount(store);
+      return openSettings();
+    };
+    let dialog = signedIn({ provider: "discord", email: "a@x" });
+    expect(dialog.querySelector("[data-signed-in]")!.textContent).toBe(
+      "Signed in with Discord as a@x",
+    );
+    expect(providerButtons(dialog)).toEqual([]);
     expect(within(dialog).queryByText(/A guest factory is kept/)).toBeNull();
+    dialog = signedIn({ provider: "github", email: null });
+    expect(dialog.querySelector("[data-signed-in]")!.textContent).toBe("Signed in with GitHub");
+    dialog = signedIn({ provider: null, email: null });
+    expect(dialog.querySelector("[data-signed-in]")!.textContent).toBe("Signed in");
     fireEvent.click(within(dialog).getByRole("button", { name: "Sign out" }));
     expect(store.signOut).toHaveBeenCalledTimes(1);
     await settle();
 
-    // A boot that found the session: no email. A parked token adds its line, from view.parked
-    // alone: here the park is only in memory (no notice, nothing in localStorage). A failed
-    // sign-out says so.
+    // A parked token adds its line, from view.parked alone: here the park is only in memory
+    // (no notice, nothing in localStorage). A failed sign-out says so.
     expect(localStorage.getItem("mi.parkedGuestToken")).toBeNull();
-    store.set({ account: { email: null }, notices: [], parked: true });
-    cleanup();
-    mount(store);
-    dialog = openSettings();
-    expect(within(dialog).getByText("Signed in")).toBeTruthy();
+    store.set({ notices: [], parked: true });
+    dialog = signedIn({ provider: null, email: null });
     expect(
       within(dialog).getByText(
         "A guest factory is kept on this device; signing out returns to it.",
@@ -309,22 +348,24 @@ describe("Settings (S-11)", { timeout: 60_000 }, () => {
     expect(liveRegions()).toHaveLength(1);
   });
 
-  it("7. the chip: accounts on, a guest, tier 1 or more; it opens the sign-up form", () => {
+  it("7. the chip: accounts on, a provider, a guest, tier 1 or more; it opens at the first provider (O-13)", () => {
     const chip = () => screen.queryByRole("button", { name: "Save your factory" });
     const at = (s: Snapshot, patch: Parameters<FakeStore["set"]>[0]) => {
       cleanup();
       const store = fakeStore(s);
-      store.set(patch);
+      store.set({ providers: ["github", "discord"], ...patch });
       mount(store);
     };
     at(fresh, { accounts: "on" });
     expect(fresh.state.tier).toBe(0);
     expect(chip()).toBeNull();
-    at(tier8, { accounts: "on", identity: "session", account: { email: null } });
+    at(tier8, { accounts: "on", identity: "session", account: { provider: null, email: null } });
     expect(chip()).toBeNull();
     at(tier8, { accounts: "off" });
     expect(chip()).toBeNull();
     at(tier8, { accounts: "unknown" });
+    expect(chip()).toBeNull();
+    at(tier8, { accounts: "on", providers: [] });
     expect(chip()).toBeNull();
     at(tier8, { accounts: "on" });
     expect(chip()).not.toBeNull();
@@ -332,96 +373,18 @@ describe("Settings (S-11)", { timeout: 60_000 }, () => {
 
     fireEvent.click(chip()!);
     const dialog = screen.getByRole("dialog", { name: "Settings" });
-    const form = within(dialog).getByRole("form", { name: "Create account" });
-    expect(form.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(
+      within(dialog).getByRole("button", { name: "Sign in with GitHub" }),
+    );
   });
 
-  it("7b. a tier-1 world shows the chip", () => {
+  it("7b. a tier-1 world with a provider shows the chip; with none it doesn't", () => {
     const store = fakeStore(snapshotOf(slice, { ...freshState(slice), tier: 1 }));
-    store.set({ accounts: "on" });
+    store.set({ accounts: "on", providers: [] });
     mount(store);
+    expect(screen.queryByRole("button", { name: "Save your factory" })).toBeNull();
+    store.set({ providers: ["github"] });
     expect(screen.getByRole("button", { name: "Save your factory" })).toBeTruthy();
-  });
-
-  it("8. Forgot password sends the reset and always answers the same", async () => {
-    const store = fakeStore(fresh);
-    store.set({ accounts: "on" });
-    mount(store);
-    const dialog = openSettings();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in instead" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Forgot password?" }));
-    const form = within(dialog).getByRole("form", { name: "Reset password" });
-    expect(form.querySelector("input[type=password]")).toBeNull();
-    const GENERIC = "If that email has an account, a reset link is on its way.";
-
-    for (const result of [
-      { ok: true },
-      { ok: false, kind: "unavailable" },
-      { ok: false, kind: "field", fields: [{ id: "email", error: "Email is invalid" }] },
-    ] satisfies ResetResult[]) {
-      store.sendReset.mockResolvedValueOnce(result);
-      const f = within(dialog).getByRole("form", { name: "Reset password" });
-      fill(f, "Email", "a@x.example");
-      fireEvent.click(within(f).getByRole("button", { name: "Send reset link" }));
-      await settle();
-      expect(within(dialog).getByText(GENERIC)).toBeTruthy();
-      expect(within(dialog).queryByText("Email is invalid")).toBeNull();
-      fireEvent.click(within(dialog).getByRole("button", { name: "Send another" }));
-    }
-    expect(store.sendReset).toHaveBeenCalledTimes(3);
-    expect(store.sendReset).toHaveBeenCalledWith("a@x.example");
-  });
-
-  it("9. /account/reset-password: submit, invalid-token, then Password changed and Sign in", async () => {
-    history.replaceState(null, "", "/account/reset-password?token=t");
-    const store = fakeStore(fresh);
-    store.set({ accounts: "on" });
-    const { container } = mount(store);
-    expect(container.querySelector("header")).not.toBeNull();
-    expect(screen.queryByRole("tablist", { name: "Lanes" })).toBeNull();
-    const form = screen.getByRole("form", { name: "Choose a new password" });
-    const input = within(form).getByLabelText<HTMLInputElement>("New password");
-    expect(input.type).toBe("password");
-    expect(input.autocomplete).toBe("new-password");
-
-    store.submitNewPassword.mockResolvedValueOnce({ ok: false, kind: "invalid-token" });
-    fill(form, "New password", "password2");
-    fireEvent.click(within(form).getByRole("button", { name: "Change password" }));
-    expect(store.submitNewPassword).toHaveBeenCalledWith("password2");
-    await settle();
-    expect(form.querySelector("[data-form-error]")!.textContent).toBe(
-      "This link has expired or was already used. Ask for a new one.",
-    );
-    expect(announced()).toBe("This link has expired or was already used. Ask for a new one.");
-    expect(liveRegions()).toHaveLength(1);
-
-    store.submitNewPassword.mockResolvedValueOnce({
-      ok: false,
-      kind: "field",
-      fields: [{ id: "password", error: "Password must contain at least 8 characters" }],
-    });
-    fireEvent.click(within(form).getByRole("button", { name: "Change password" }));
-    await settle();
-    const describedBy = input.getAttribute("aria-describedby") ?? "";
-    expect(document.getElementById(describedBy)?.textContent).toBe(
-      "Password must contain at least 8 characters",
-    );
-    expect(document.activeElement).toBe(input);
-    expect(announced()).toBe("Check the highlighted field.");
-
-    fireEvent.click(within(form).getByRole("button", { name: "Change password" }));
-    await settle();
-    expect(store.submitNewPassword).toHaveBeenCalledTimes(3);
-    expect(within(screen.getByRole("main")).getByText("Password changed.")).toBeTruthy();
-    expect(announced()).toBe("Password changed.");
-    const entries = history.length;
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(history.length).toBe(entries); // replaced: the used link isn't a back target
-    expect(location.pathname).toBe("/");
-    expect(location.search).toBe("");
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
-    expect(within(dialog).getByRole("form", { name: "Sign in" })).toBeTruthy();
-    expect(screen.getByRole("tablist", { name: "Lanes" })).toBeTruthy();
   });
 });
 
@@ -429,7 +392,11 @@ describe("Fix round 1", { timeout: 60_000 }, () => {
   it("10. the trap: notice controls behind the sheet are inert, Shift+Tab stays in, the region still speaks", async () => {
     const user = userEvent.setup();
     const store = fakeStore(fresh);
-    store.set({ accounts: "on", notices: [{ kind: "rejected", text: "That didn't go through." }] });
+    store.set({
+      accounts: "on",
+      providers: ["discord"],
+      notices: [{ kind: "rejected", text: "That didn't go through." }],
+    });
     mount(store);
     const dismiss = screen.getByRole("button", { name: "Dismiss" });
     const dialog = openSettings();
@@ -461,13 +428,11 @@ describe("Fix round 1", { timeout: 60_000 }, () => {
     );
 
     // The sheet's announcements reach the shared region.
-    store.signIn.mockResolvedValueOnce({ ok: false, kind: "wrong-credentials" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in instead" }));
-    const form = within(dialog).getByRole("form", { name: "Sign in" });
-    fireEvent.click(within(form).getByRole("button", { name: "Sign in" }));
+    store.beginSignIn.mockResolvedValueOnce({ ok: false, kind: "unavailable" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in with Discord" }));
     await settle();
     expect(region.querySelector("[data-announce]")?.textContent).toBe(
-      "That email and password don't match.",
+      "Couldn't reach the server. Try again.",
     );
 
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
@@ -475,28 +440,11 @@ describe("Fix round 1", { timeout: 60_000 }, () => {
     expect(dismiss.hasAttribute("inert")).toBe(false);
   });
 
-  it("11. a sign-in that flips identity before resolving: announced, focus on the status line, Escape still closes", async () => {
+  it("11. Escape listens on the document: it closes the sheet with focus on <body>", () => {
     const store = fakeStore(fresh);
-    store.set({ accounts: "on" });
-    // As the real store: identity flips (and emits) before signIn's promise resolves.
-    store.signIn.mockImplementationOnce((email: string) => {
-      store.set({ identity: "session", account: { email } });
-      return Promise.resolve<AuthResult>({ ok: true, email });
-    });
+    store.set({ accounts: "on", providers: ["discord"] });
     mount(store);
-    const dialog = openSettings();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in instead" }));
-    const form = within(dialog).getByRole("form", { name: "Sign in" });
-    fill(form, "Email", "a@x.example");
-    fill(form, "Password", "password1");
-    fireEvent.click(within(form).getByRole("button", { name: "Sign in" }));
-    await settle();
-    expect(form.isConnected).toBe(false);
-    expect(announced()).toBe("Signed in as a@x.example");
-    expect(document.activeElement).not.toBe(document.body);
-    expect(document.activeElement).toBe(within(dialog).getByText("Signed in as a@x.example"));
-
-    // Escape listens on the document: it works wherever focus is, even on <body>.
+    openSettings();
     act(() => (document.activeElement as HTMLElement).blur());
     expect(document.activeElement).toBe(document.body);
     fireEvent.keyDown(document.body, { key: "Escape" });
@@ -504,79 +452,47 @@ describe("Fix round 1", { timeout: 60_000 }, () => {
     expect(document.activeElement).toBe(settingsButton());
   });
 
-  it("12. focus never falls to <body>: Send another, and a sign-out that swaps the section", async () => {
+  it("12. focus never falls to <body> when the Account section swaps", () => {
     const store = fakeStore(fresh);
-    store.set({ accounts: "on" });
+    store.set({ accounts: "on", providers: ["discord"] });
     mount(store);
     const dialog = openSettings();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Sign in instead" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Forgot password?" }));
-    const reset = within(dialog).getByRole("form", { name: "Reset password" });
-    fill(reset, "Email", "a@x.example");
-    fireEvent.click(within(reset).getByRole("button", { name: "Send reset link" }));
-    await settle();
-    expect(document.activeElement).toBe(within(dialog).getByText(RESET_SENT));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Send another" }));
-    expect(document.activeElement).toBe(within(reset).getByLabelText("Email"));
+    const heading = () => within(dialog).getByRole("heading", { name: "Settings" });
 
-    // Signed in, then out: the Sign out button unmounts; the title takes focus.
-    store.set({ identity: "session", account: { email: null } });
+    // A guest whose session appears (a boot finishing) loses the focused provider button.
+    const button = within(dialog).getByRole("button", { name: "Sign in with Discord" });
+    button.focus();
+    store.set({ identity: "session", account: { provider: "discord", email: null } });
+    expect(button.isConnected).toBe(false);
+    expect(document.activeElement).toBe(heading());
+
+    // Signed in, then out: the Sign out button unmounts; the title takes focus, not the
+    // first provider button (the sheet wasn't opened at Account).
     const out = within(dialog).getByRole("button", { name: "Sign out" });
     out.focus();
     store.set({ identity: "guest", account: null });
     expect(out.isConnected).toBe(false);
-    expect(document.activeElement).toBe(within(dialog).getByRole("heading", { name: "Settings" }));
+    expect(document.activeElement).toBe(heading());
   });
 
-  it("13. the reset page waits for health, and says so when accounts are off", async () => {
-    history.replaceState(null, "", "/account/reset-password?token=t");
+  it("14. the callback route shows only the loading line; a popstate to / brings the game back", () => {
+    history.replaceState(null, "", "/account/callback/github?code=c&state=s");
     const store = fakeStore(tier8);
-    store.set({ accounts: "unknown" });
-    mount(store);
-    // The chip never shows on the reset page.
-    expect(screen.queryByRole("button", { name: "Save your factory" })).toBeNull();
-    const form = screen.getByRole("form", { name: "Choose a new password" });
-    expect(within(form).getByText("Checking the server…")).toBeTruthy();
-    const submit = within(form).getByRole("button", { name: "Change password" });
-    expect(submit.getAttribute("aria-disabled")).toBe("true");
-    fill(form, "New password", "password2");
-    fireEvent.click(submit);
-    fireEvent.submit(form);
-    expect(store.submitNewPassword).not.toHaveBeenCalled();
-
-    store.set({ accounts: "on" });
-    expect(within(form).queryByText("Checking the server…")).toBeNull();
-    expect(submit.getAttribute("aria-disabled")).toBe("false");
-    expect(screen.queryByRole("button", { name: "Save your factory" })).toBeNull();
-    fireEvent.click(submit);
-    expect(store.submitNewPassword).toHaveBeenCalledWith("password2");
-
-    store.set({ accounts: "off" });
-    expect(screen.queryByRole("form", { name: "Choose a new password" })).toBeNull();
-    expect(screen.getByText("Accounts aren't enabled on this server.")).toBeTruthy();
-    expect(document.querySelector("input[type=password]")).toBeNull();
-  });
-
-  it("14. a popstate route change switches App between the game and the reset page", () => {
-    const store = fakeStore(fresh);
-    store.set({ accounts: "on" });
+    store.set({ accounts: "on", providers: ["github"] });
     const { container } = mount(store);
     const app = () => container.querySelector<HTMLElement>(".app")!;
-    expect(app().dataset.route).toBe("game");
-    expect(screen.getByRole("tablist", { name: "Lanes" })).toBeTruthy();
-    act(() => {
-      history.pushState(null, "", "/account/reset-password?token=t");
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
-    expect(app().dataset.route).toBe("reset-password");
+    expect(app().dataset.route).toBe("callback");
+    expect(screen.getByText("Signing in…").className).toBe("app-loading");
     expect(screen.queryByRole("tablist", { name: "Lanes" })).toBeNull();
-    expect(screen.getByRole("form", { name: "Choose a new password" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Save your factory" })).toBeNull();
+    expect(location.pathname + location.search).toBe("/account/callback/github?code=c&state=s");
     act(() => {
       history.replaceState(null, "", "/");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     expect(app().dataset.route).toBe("game");
     expect(screen.getByRole("tablist", { name: "Lanes" })).toBeTruthy();
+    expect(screen.queryByText("Signing in…")).toBeNull();
   });
 });
 

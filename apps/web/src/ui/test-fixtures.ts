@@ -19,10 +19,9 @@ import {
   type IndexedContent,
   type WorldState,
 } from "@manufactory/engine";
-import type { AuthResult, ResetResult } from "../auth/accounts.js";
 import type { Outcome } from "../sync/errors.js";
 import { makeSnapshot, type Snapshot } from "../sync/snapshot.js";
-import type { Notice, StoreView } from "../sync/store.js";
+import type { BeginResult, Notice, StoreView } from "../sync/store.js";
 
 // Paths from strings, not URL objects: under jsdom the global URL is jsdom's, which
 // fileURLToPath refuses. That is also why this file doesn't import sync/test-rig.ts.
@@ -110,12 +109,9 @@ export interface FakeStore {
   pressTap: Mock<() => void>;
   releaseTap: Mock<() => void>;
   flushTaps: Mock<(opts?: { keepalive?: boolean }) => void>;
-  /** Task 3's accounts; each resolves with a success unless a test says otherwise. */
-  signUp: Mock<(email: string, password: string) => Promise<AuthResult>>;
-  signIn: Mock<(email: string, password: string) => Promise<AuthResult>>;
+  /** The accounts (O-5, S-7); each resolves with a success unless a test says otherwise. */
+  beginSignIn: Mock<(provider: string) => Promise<BeginResult>>;
   signOut: Mock<() => Promise<boolean>>;
-  sendReset: Mock<(email: string) => Promise<ResetResult>>;
-  submitNewPassword: Mock<(password: string) => Promise<ResetResult>>;
   set(patch: Partial<StoreView>): void;
   tick(ms: number): void;
   readonly tickers: number;
@@ -135,6 +131,8 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     account: null,
     auth: "idle",
     parked: false,
+    providers: [],
+    leaving: null,
   };
   let clock = opts.now ?? CLIENT_T0;
   const listeners = new Set<() => void>();
@@ -156,11 +154,8 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     pressTap: vi.fn(),
     releaseTap: vi.fn(),
     flushTaps: vi.fn(),
-    signUp: vi.fn((email: string) => Promise.resolve<AuthResult>({ ok: true, email })),
-    signIn: vi.fn((email: string) => Promise.resolve<AuthResult>({ ok: true, email })),
+    beginSignIn: vi.fn(() => Promise.resolve<BeginResult>({ ok: true })),
     signOut: vi.fn(() => Promise.resolve(true)),
-    sendReset: vi.fn(() => Promise.resolve<ResetResult>({ ok: true })),
-    submitNewPassword: vi.fn(() => Promise.resolve<ResetResult>({ ok: true })),
     set(patch) {
       view = { ...view, ...patch };
       act(() => listeners.forEach((fn) => fn()));

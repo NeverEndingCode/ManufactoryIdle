@@ -169,15 +169,25 @@ describe("GET /api/health", () => {
     const { app, store } = await server();
     const res = await app.inject({ method: "GET", url: "/api/health" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, contentChecksum: store.current.version, accounts: false });
+    expect(res.json()).toEqual({
+      ok: true,
+      contentChecksum: store.current.version,
+      accounts: false,
+      providers: [],
+    });
   });
 
-  it("reports accounts: true when an accounts core is wired", async () => {
-    const { app } = await server(SLICE, undefined, {
-      accounts: { register() {}, handleError: async () => false },
+  it("reports accounts: true and the configured providers when an accounts core is wired (O-3)", async () => {
+    const { app, store } = await server(SLICE, undefined, {
+      accounts: { register() {}, handleError: async () => false, providers: ["github"] },
     });
     const res = await app.inject({ method: "GET", url: "/api/health" });
-    expect(res.json()).toHaveProperty("accounts", true);
+    expect(res.json()).toEqual({
+      ok: true,
+      contentChecksum: store.current.version,
+      accounts: true,
+      providers: ["github"],
+    });
   });
 });
 
@@ -1199,6 +1209,7 @@ describe("the error handler", () => {
           });
         },
         handleError: async () => false,
+        providers: [],
       },
       ...extra,
     });

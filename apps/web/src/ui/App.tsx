@@ -27,8 +27,7 @@ import { useNotation } from "./notation.js";
 import { PowerFooter } from "./PowerFooter.js";
 import { PowerPanel } from "./PowerPanel.js";
 import { PriorityList } from "./PriorityList.js";
-import { ResetPassword } from "./ResetPassword.js";
-import { replaceRoute, useRoute } from "./route.js";
+import { useRoute } from "./route.js";
 import { RowList } from "./RowList.js";
 import { Settings, type SettingsProps } from "./Settings.js";
 import { DesktopShell, PhoneShell, type ShellProps, type View } from "./Shell.js";
@@ -36,7 +35,7 @@ import { syncCapabilities } from "./theme.js";
 import { useLayoutMode } from "./use-layout-mode.js";
 import { createTickSource, TickContext } from "./use-tick.js";
 
-type SheetAt = Pick<SettingsProps, "section" | "mode">;
+type SheetAt = Pick<SettingsProps, "section">;
 
 /** What the bottleneck announcement keys on: the framed item, a frameless one, or none. */
 function bottleneckKey(b: BottleneckModel | null): string | null {
@@ -260,20 +259,11 @@ export function App({ store }: { store: GameStore }) {
     setOpenItem(itemId);
   };
 
-  const game = route.kind !== "reset-password" && s !== null && laneId !== null;
+  const game = route.kind !== "callback" && s !== null && laneId !== null;
   let main: ReactNode;
-  if (route.kind === "reset-password") {
-    main = (
-      <ResetPassword
-        store={store}
-        view={view}
-        onDone={() => {
-          // The used link isn't a page to go back to.
-          replaceRoute({ kind: "game" });
-          openSheet({ section: "account", mode: "sign-in" }, null);
-        }}
-      />
-    );
+  if (route.kind === "callback") {
+    // O-8: only this line while the sign-in finishes, so nothing can change the URL mid-request.
+    main = <p className="app-loading">Signing in…</p>;
   } else if (s === null || laneId === null) {
     main = <p className="app-loading">Loading your factory…</p>;
   } else if (shown === "handbook") {
@@ -351,7 +341,7 @@ export function App({ store }: { store: GameStore }) {
   const props: ShellProps = {
     store,
     view,
-    snapshot: route.kind === "reset-password" ? null : s,
+    snapshot: route.kind === "callback" ? null : s,
     mode,
     shown,
     onView: selectView,
@@ -360,7 +350,7 @@ export function App({ store }: { store: GameStore }) {
     onLane,
     bottleneck,
     onSettings: (opener) => openSheet({}, opener),
-    onSaveChip: (opener) => openSheet({ section: "account", mode: "sign-up" }, opener),
+    onSaveChip: (opener) => openSheet({ section: "account" }, opener),
     slots: {
       main,
       overlays: (

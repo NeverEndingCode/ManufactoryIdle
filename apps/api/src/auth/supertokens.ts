@@ -1,6 +1,8 @@
 // SuperTokens wiring (spec 3b). Accounts are optional (R-16): without
 // SUPERTOKENS_CONNECTION_URI this returns null and the API stays guest-only.
-// Discord and GitHub are configured only when their credentials are set (R-12).
+// Accounts are OAuth only (O-1): ThirdParty and Session, no email/password and no mail.
+// Each provider in PROVIDER_TABLE is configured only when its credentials are set (R-12, O-2),
+// and the redirect URI is pinned to the website's /account/callback/<id> (O-4).
 //
 // supertokens-node 24's Fastify adapter is structural (no fastify peer dependency): its
 // `plugin` adds a root preHandler hook (skip-override) that serves /auth/* (Fastify's 404
@@ -9,19 +11,14 @@ import cors from "@fastify/cors";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import * as supertokens from "supertokens-node";
 import { errorHandler, plugin } from "supertokens-node/framework/fastify";
-import * as EmailPassword from "supertokens-node/recipe/emailpassword";
-import { SMTPService } from "supertokens-node/recipe/emailpassword/emaildelivery";
 import * as Session from "supertokens-node/recipe/session";
 import * as ThirdParty from "supertokens-node/recipe/thirdparty";
+import type { APIInterface } from "supertokens-node/recipe/thirdparty";
 import type { ProviderInput } from "supertokens-node/recipe/thirdparty/types";
 import { AccountsUnavailableError, type SessionVerifier } from "../identity.js";
 
 export type Env = Record<string, string | undefined>;
 export type Log = (message: string) => void;
-/** EmailPassword's email delivery service (the SDK doesn't export the interface here). */
-export type ResetMailService = NonNullable<
-  NonNullable<NonNullable<Parameters<typeof EmailPassword.init>[0]>["emailDelivery"]>["service"]
->;
 
 export interface SuperTokensAccounts {
   /** Registers CORS for WEBSITE_DOMAIN and SuperTokens' plugin (its /auth/* routes). */
@@ -31,17 +28,23 @@ export interface SuperTokensAccounts {
   handleError(error: unknown, request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
   /** The session's SuperTokens user id, or null without a session (`sessionRequired: false`). */
   verifySession: SessionVerifier;
+  /** O-3: the configured thirdPartyIds, in PROVIDER_TABLE order. */
+  providers: readonly string[];
 }
 
 const set = (v: string | undefined): v is string => v !== undefined && v !== "";
 
-/** The third-party providers whose client id and secret are both set (R-12). */
+/** O-2: one line per provider: [thirdPartyId, env prefix]. Google later: ["google", "GOOGLE"]. */
+export const PROVIDER_TABLE = [
+  ["discord", "DISCORD"],
+  ["github", "GITHUB"],
+] as const satisfies readonly (readonly [thirdPartyId: string, envPrefix: string])[];
+
+/** The providers whose <PREFIX>_CLIENT_ID and _SECRET are both set, in table order (R-12).
+ * No scope: the SDK's defaults (Discord identify+email, GitHub read:user+user:email) apply. */
 export function providersFromEnv(env: Env): ProviderInput[] {
   const providers: ProviderInput[] = [];
-  for (const [thirdPartyId, prefix] of [
-    ["discord", "DISCORD"],
-    ["github", "GITHUB"],
-  ] as const) {
+  for (const [thirdPartyId, prefix] of PROVIDER_TABLE) {
     const clientId = env[`${prefix}_CLIENT_ID`];
     const clientSecret = env[`${prefix}_CLIENT_SECRET`];
     if (set(clientId) && set(clientSecret)) {
@@ -51,44 +54,54 @@ export function providersFromEnv(env: Env): ProviderInput[] {
   return providers;
 }
 
-/** How password-reset mail is delivered (R-24). Never SuperTokens' default, which POSTs
- * the email and the live reset link to api.supertokens.io: SMTP when all five SMTP_*
- * vars are set, otherwise a service that sends nothing and logs no address or token. */
-export function passwordResetDelivery(
-  env: Env,
-  log: Log,
-): { kind: "smtp" | "none"; service: ResetMailService } {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM } = env;
-  if (set(SMTP_HOST) && set(SMTP_PORT) && set(SMTP_USER) && set(SMTP_PASSWORD) && set(SMTP_FROM)) {
-    const port = Number(SMTP_PORT);
-    if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
-      throw new Error(
-        `SMTP_PORT must be an integer from 1 to 65535, got ${JSON.stringify(SMTP_PORT)}`,
-      );
-    }
+/** O-4: the exact URL each provider must redirect to. The origin drops any trailing slash. */
+export function callbackURL(websiteDomain: string, thirdPartyId: string): string {
+  return `${new URL(websiteDomain).origin}/account/callback/${thirdPartyId}`;
+}
+
+const NOT_HERE = {
+  status: "GENERAL_ERROR",
+  message: "Sign-in isn't available from this address.",
+} as const;
+
+/** O-4: ThirdParty's `override.apis`. Both APIs answer GENERAL_ERROR unless the redirect URI
+ * is exactly callbackURL(websiteDomain, provider.id) (no prefix match: GitHub accepts
+ * sub-paths of a registered URI), and signInUpPOST refuses `oAuthTokens` outright, since a
+ * token minted for some other app would sign in as its owner. A disabled API stays disabled.
+ *
+ * `original` is the SDK's override proxy (supertokens-js-override): its methods forward
+ * through `this._call`, so they must be called as methods of `original`, never detached. */
+export function guardThirdPartyApis(
+  websiteDomain: string,
+): (original: APIInterface) => APIInterface {
+  const pinned = (thirdPartyId: string, uri: string) =>
+    uri === callbackURL(websiteDomain, thirdPartyId);
+  return (original) => {
+    const { authorisationUrlGET, signInUpPOST } = original;
     return {
-      kind: "smtp",
-      service: new SMTPService({
-        smtpSettings: {
-          host: SMTP_HOST,
-          port,
-          secure: port === 465,
-          authUsername: SMTP_USER,
-          password: SMTP_PASSWORD,
-          from: { name: "Manufactory Idle", email: SMTP_FROM },
-        },
-      }),
+      ...original,
+      authorisationUrlGET:
+        authorisationUrlGET &&
+        (async (input) =>
+          pinned(input.provider.id, input.redirectURIOnProviderDashboard)
+            ? authorisationUrlGET.call(original, input)
+            : NOT_HERE),
+      signInUpPOST:
+        signInUpPOST &&
+        (async (input) =>
+          "redirectURIInfo" in input &&
+          input.redirectURIInfo !== undefined &&
+          pinned(input.provider.id, input.redirectURIInfo.redirectURIOnProviderDashboard)
+            ? signInUpPOST.call(original, input)
+            : NOT_HERE),
     };
-  }
-  return {
-    kind: "none",
-    service: {
-      async sendEmail() {
-        log("password reset email not sent: SMTP not configured");
-      },
-    },
   };
 }
+
+/** O-3: logged when accounts are on but no provider is: sign-in is then unavailable. */
+const NO_PROVIDER = `accounts are on but no sign-in provider is configured (set ${PROVIDER_TABLE.map(
+  ([, prefix]) => `${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET`,
+).join(", or ")})`;
 
 /** The SuperTokens appInfo for one deployment (S-9, W-26). */
 export function appInfoFor(apiDomain: string, websiteDomain: string) {
@@ -97,7 +110,8 @@ export function appInfoFor(apiDomain: string, websiteDomain: string) {
     apiDomain,
     websiteDomain,
     apiBasePath: "/auth" as const,
-    // Where the web client mounts its account routes; reset-password mail links use it.
+    // Where the web client mounts its account routes (O-17). No recipe sends links any more;
+    // the OAuth callbacks live under it, at /account/callback/<id>, by our choice (O-4).
     websiteBasePath: "/account" as const,
   };
 }
@@ -128,6 +142,19 @@ export function superTokensFromEnv(
     );
   }
 
+  // A provider with only one of its two variables set is skipped; say which (names only,
+  // never the values: one of them is a secret).
+  for (const [thirdPartyId, prefix] of PROVIDER_TABLE) {
+    const id = `${prefix}_CLIENT_ID`;
+    const secret = `${prefix}_CLIENT_SECRET`;
+    if (set(env[id]) !== set(env[secret])) {
+      const [has, lacks] = set(env[id]) ? [id, secret] : [secret, id];
+      log.warn(`${has} is set but ${lacks} is not: ${thirdPartyId} sign-in is off`);
+    }
+  }
+  const providers = providersFromEnv(env);
+  if (providers.length === 0) log.warn(NO_PROVIDER);
+
   supertokens.init({
     framework: "fastify",
     supertokens: {
@@ -136,10 +163,10 @@ export function superTokensFromEnv(
     },
     appInfo: appInfoFor(apiDomain, websiteDomain),
     recipeList: [
-      EmailPassword.init({
-        emailDelivery: { service: passwordResetDelivery(env, log.info).service },
+      ThirdParty.init({
+        signInAndUpFeature: { providers },
+        override: { apis: guardThirdPartyApis(websiteDomain) },
       }),
-      ThirdParty.init({ signInAndUpFeature: { providers: providersFromEnv(env) } }),
       Session.init(),
     ],
   });
@@ -150,6 +177,7 @@ export function superTokensFromEnv(
   const renderError = errorHandler();
 
   return {
+    providers: providers.map((p) => p.config.thirdPartyId),
     register(app) {
       app.register(cors, {
         origin: websiteDomain,

@@ -1,5 +1,5 @@
-/* S-11: the settings sheet, a bottom sheet below 600 px and a centred panel above; the
-   account forms and the reset page share its form rules. Rows, hairlines, no shadows (W-17).
+/* S-11: the settings sheet, a bottom sheet below 600 px and a centred panel above, with the
+   Account section's provider buttons (O-18). Rows, hairlines, no shadows (W-17).
    No state colours here (4a test 8a): errors are text, weight and a hairline. Nothing
    animates. */
 .backdrop {
@@ -156,45 +156,12 @@
   font-weight: 600;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.field label {
-  color: var(--t2);
-  font-size: var(--fs-label);
-}
-
-.field input {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--s2);
-  color: var(--t1);
-  font: inherit;
-}
-
-.field input[aria-invalid="true"] {
-  border-color: var(--t1);
-  border-width: 1px;
-}
-
-.fieldError,
 .formError {
   margin: 0;
   color: var(--t1);
   font-size: var(--fs-label);
   font-weight: 600;
   overflow-wrap: anywhere;
-}
-
-.formError {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -219,28 +186,20 @@
   overflow-wrap: anywhere;
 }
 
-.switch {
-  margin: 0;
-  color: var(--t2);
-  font-size: var(--fs-label);
+/* O-18: one full-width row per provider, in table order; .btn gives the 44 px height. */
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-/* A text-weight secondary button: still a 44 px target. */
-.linkish {
-  padding-inline: 6px;
-  border-color: transparent;
-  color: var(--link);
-  text-decoration: underline;
-}
-
-/* The reset page, in place of the panes. */
-.page {
-  max-width: 480px;
-  margin: 12px auto;
-  padding: 12px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--s1);
+.provider {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 
 /* U-2e / W-25: the GPL notice. It wraps at 320 px; its links are 44 px targets (W-20). */

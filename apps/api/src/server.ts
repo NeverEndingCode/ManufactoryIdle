@@ -53,6 +53,8 @@ export interface ServerDeps {
   accounts?: {
     register(app: FastifyInstance): void;
     handleError(error: unknown, request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
+    /** The configured sign-in providers' thirdPartyIds, in table order (O-3). */
+    providers: readonly string[];
   };
   /** Per-instance, in-memory rate limits (R-23). Omitted: the defaults. */
   limits?: {
@@ -178,6 +180,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ok: true,
     contentChecksum: content.current.version,
     accounts: accounts !== undefined,
+    // O-3: `accounts: true, providers: []` is possible, and the client then offers no sign-in.
+    providers: accounts ? [...accounts.providers] : [],
   }));
 
   // Public and immutable: a bundle never changes under its checksum (W-5). A malformed

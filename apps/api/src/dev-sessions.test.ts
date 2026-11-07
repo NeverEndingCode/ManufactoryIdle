@@ -1,143 +1,267 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { devServer } from "./dev-server.js";
+import { devServer, type DevServerOptions } from "./dev-server.js";
+import { FAKE_USER_COOKIE } from "./dev-sessions.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const c of cleanups.splice(0)) await c();
 });
 
-async function open(fakeSessions = true) {
-  const dev = await devServer(fakeSessions ? { fakeSessions: true } : {});
+const ORIGIN = "http://localhost:5173";
+const NOT_HERE = { status: "GENERAL_ERROR", message: "Sign-in isn't available from this address." };
+
+async function open(opts: DevServerOptions = { fakeSessions: true }) {
+  const dev = await devServer(opts);
   cleanups.push(async () => {
     await dev.app.close();
     await dev.db.close();
   });
   const { app } = dev;
+  const get = (url: string, headers: Record<string, string> = {}) =>
+    app.inject({ method: "GET", url, headers });
   const post = (url: string, payload?: unknown, headers: Record<string, string> = {}) =>
-    app.inject({ method: "POST", url, headers, ...(payload === undefined ? {} : { payload: payload as object }) });
-  const form = (email: string, password: string) => ({
-    formFields: [
-      { id: "email", value: email },
-      { id: "password", value: password },
-    ],
-  });
-  const signUp = (email: string, password = "hunter2hunter2") =>
-    post("/auth/signup", form(email, password));
+    app.inject({
+      method: "POST",
+      url,
+      headers,
+      ...(payload === undefined ? {} : { payload: payload as object }),
+    });
+  const authURL = (
+    id: string,
+    redirect = `${ORIGIN}/account/callback/${id}`,
+    headers: Record<string, string> = {},
+  ) =>
+    get(
+      `/auth/authorisationurl?thirdPartyId=${encodeURIComponent(id)}&redirectURIOnProviderDashboard=${encodeURIComponent(redirect)}`,
+      headers,
+    );
+  /** Steps 1–3 of the sign-in: the authorisation URL, then the fake provider. Returns the 302. */
+  const authorize = async (id: string, user: string | null) => {
+    const url = (await authURL(id)).json().urlWithQueryParams as string;
+    return get(`${url}&state=s1`, user === null ? {} : { cookie: `${FAKE_USER_COOKIE}=${user}` });
+  };
+  const paramsOf = (location: string): Record<string, string> =>
+    Object.fromEntries(new URL(location, "http://x").searchParams);
+  const signInUp = (
+    id: string,
+    params: Record<string, string>,
+    redirect = `${ORIGIN}/account/callback/${id}`,
+  ) =>
+    post("/auth/signinup", {
+      thirdPartyId: id,
+      redirectURIInfo: { redirectURIOnProviderDashboard: redirect, redirectURIQueryParams: params },
+    });
+  /** The whole sign-in, end to end (steps 1–4). */
+  const signIn = async (user: string, id = "discord") => {
+    const location = (await authorize(id, user)).headers.location as string;
+    return signInUp(id, paramsOf(location));
+  };
   const cookieOf = (res: { headers: Record<string, unknown> }): string => {
     const raw = res.headers["set-cookie"];
-    const line = (Array.isArray(raw) ? raw : [raw as string]).find((c) => c.startsWith("sAccessToken="))!;
+    const line = (Array.isArray(raw) ? raw : [raw as string]).find((c) =>
+      c.startsWith("sAccessToken="),
+    )!;
     return line.split(";")[0]!;
   };
-  return { ...dev, post, form, signUp, cookieOf };
+  return { ...dev, get, post, authURL, authorize, paramsOf, signInUp, signIn, cookieOf };
 }
 
-describe("fake sessions", () => {
-  it("health says accounts: true with the flag, false without", async () => {
+describe("fake sessions", { timeout: 60_000 }, () => {
+  it("health lists the fake providers with the flag, none without", async () => {
     const on = await open();
-    expect((await on.app.inject({ method: "GET", url: "/api/health" })).json()).toHaveProperty("accounts", true);
-    const off = await open(false);
-    expect((await off.app.inject({ method: "GET", url: "/api/health" })).json()).toHaveProperty("accounts", false);
+    expect((await on.get("/api/health")).json()).toMatchObject({
+      accounts: true,
+      providers: ["discord", "github"],
+    });
+    const one = await open({ fakeSessions: true, fakeProviders: ["github"] });
+    expect((await one.get("/api/health")).json()).toMatchObject({
+      accounts: true,
+      providers: ["github"],
+    });
+    const off = await open({});
+    expect((await off.get("/api/health")).json()).toMatchObject({ accounts: false, providers: [] });
   });
 
-  it("sign-up gives OK, a session cookie and a front-token", async () => {
-    const { signUp } = await open();
-    const before = Date.now();
-    const res = await signUp("a@example.com");
-    expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toContain("application/json");
-    const body = res.json();
+  // Mutation caught: pinning by prefix or ignoring the provider id lets the second and third
+  // cases through; returning an absolute URL breaks the path-only check.
+  it("authorisationurl: a path-only URL for a listed provider and its exact callback", async () => {
+    const { authURL } = await open();
+    const ok = await authURL("discord");
+    expect(ok.statusCode).toBe(200);
+    const body = ok.json() as { status: string; urlWithQueryParams: string };
     expect(body.status).toBe("OK");
+    expect(body.urlWithQueryParams.startsWith("/auth/dev/oauth/authorize?")).toBe(true);
+    const q = new URL(body.urlWithQueryParams, "http://x").searchParams;
+    expect(q.get("thirdPartyId")).toBe("discord");
+    expect(q.get("redirect_uri")).toBe(`${ORIGIN}/account/callback/discord`);
+
+    const unlisted = await authURL("google");
+    expect(unlisted.statusCode).toBe(400);
+    expect(unlisted.json()).toEqual({
+      message: "the provider google could not be found in the configuration",
+    });
+
+    expect((await authURL("discord", `${ORIGIN}/account/callback/github`)).json()).toEqual(
+      NOT_HERE,
+    );
+    expect((await authURL("discord", `${ORIGIN}/elsewhere`)).json()).toEqual(NOT_HERE);
+    expect((await authURL("discord", `${ORIGIN}/account/callback/discord/x`)).json()).toEqual(
+      NOT_HERE,
+    );
+    expect((await authURL("discord", "not a url")).json()).toEqual(NOT_HERE);
+  });
+
+  // Mutation caught: redirecting to redirect_uri itself (not just its path) sends the player
+  // to evil.example.
+  it("authorize: the 302 is path-only, to our callback, whatever redirect_uri says", async () => {
+    const { get, authorize } = await open();
+    const res = await authorize("discord", "alice");
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toMatch(
+      /^\/account\/callback\/discord\?code=[0-9a-f]{32}&state=s1$/,
+    );
+
+    const evil = await get(
+      `/auth/dev/oauth/authorize?thirdPartyId=discord&redirect_uri=${encodeURIComponent("https://evil.example/account/callback/discord")}&state=s1`,
+    );
+    expect(evil.statusCode).toBe(302);
+    expect(evil.headers.location).toMatch(
+      /^\/account\/callback\/discord\?code=[0-9a-f]{32}&state=s1$/,
+    );
+
+    const deny = await authorize("discord", "deny");
+    expect(deny.statusCode).toBe(302);
+    expect(deny.headers.location).toBe("/account/callback/discord?error=access_denied&state=s1");
+  });
+
+  it("authorize: a cookie outside the pattern is the default player", async () => {
+    const { authorize, paramsOf, signInUp } = await open();
+    const res = await authorize("discord", "Not_A_User!");
+    const ok = await signInUp("discord", paramsOf(res.headers.location as string));
+    expect(ok.json().user.emails).toEqual(["player@discord.example"]);
+    const none = await authorize("github", null);
+    const ok2 = await signInUp("github", paramsOf(none.headers.location as string));
+    expect(ok2.json().user.emails).toEqual(["player@github.example"]);
+  });
+
+  // Mutation caught: keying users by user alone makes alice on GitHub the Discord alice (O-12).
+  it("signinup: creates, then finds, a ThirdParty user per provider, with a session", async () => {
+    const { signIn } = await open();
+    const before = Date.now();
+    const first = await signIn("alice");
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["content-type"]).toContain("application/json");
+    const body = first.json();
+    expect(body.status).toBe("OK");
+    expect(body.createdNewRecipeUser).toBe(true);
     expect(body.user).toMatchObject({
-      emails: ["a@example.com"],
+      emails: ["alice@discord.example"],
       tenantIds: ["public"],
       isPrimaryUser: false,
       phoneNumbers: [],
-      thirdParty: [],
+      thirdParty: [{ id: "discord", userId: "alice" }],
     });
-    const setCookie = ([] as string[]).concat(res.headers["set-cookie"] as string | string[]);
+    expect(body.user.loginMethods[0]).toMatchObject({
+      recipeId: "thirdparty",
+      recipeUserId: body.user.id,
+      email: "alice@discord.example",
+      thirdParty: { id: "discord", userId: "alice" },
+    });
+    const setCookie = ([] as string[]).concat(first.headers["set-cookie"] as string | string[]);
     const line = setCookie.find((c) => c.startsWith("sAccessToken=dev."))!;
     expect(line).toContain("HttpOnly");
     expect(line).toContain("SameSite=Lax");
     expect(line).toContain("Path=/");
-    const front = JSON.parse(Buffer.from(res.headers["front-token"] as string, "base64").toString());
+    const front = JSON.parse(
+      Buffer.from(first.headers["front-token"] as string, "base64").toString(),
+    );
     expect(front.uid).toBe(body.user.id);
     expect(front.ate).toBeGreaterThan(before);
     expect(front.up).toEqual({});
+
+    const again = (await signIn("alice")).json();
+    expect(again.status).toBe("OK");
+    expect(again.createdNewRecipeUser).toBe(false);
+    expect(again.user.id).toBe(body.user.id);
+
+    const github = (await signIn("alice", "github")).json();
+    expect(github.createdNewRecipeUser).toBe(true);
+    expect(github.user.emails).toEqual(["alice@github.example"]);
+    expect(github.user.id).not.toBe(body.user.id);
   });
 
-  it("sign-up field errors", async () => {
-    const { signUp } = await open();
-    await signUp("a@example.com");
-    const dup = (await signUp("a@example.com")).json();
-    expect(dup).toEqual({
-      status: "FIELD_ERROR",
-      formFields: [{ id: "email", error: "This email already exists. Please sign in instead." }],
+  // Mutation caught: not deleting a used code lets the reuse succeed.
+  it("signinup failures", async () => {
+    const { authorize, paramsOf, signInUp, post } = await open();
+    const params = paramsOf((await authorize("discord", "bob")).headers.location as string);
+    expect((await signInUp("discord", params)).json().status).toBe("OK");
+    const reused = await signInUp("discord", params);
+    expect(reused.statusCode).toBe(500);
+    expect(reused.json()).toEqual({ error: "internal error" });
+
+    const crossed = paramsOf((await authorize("discord", "bob")).headers.location as string);
+    const asGithub = await signInUp("github", crossed);
+    expect(asGithub.statusCode).toBe(500);
+    expect(asGithub.json()).toEqual({ error: "internal error" });
+
+    const made = await signInUp("discord", { code: "0".repeat(32), state: "s1" });
+    expect(made.statusCode).toBe(500);
+
+    const noInfo = await post("/auth/signinup", {
+      thirdPartyId: "discord",
+      oAuthTokens: { access_token: "x" },
     });
-    const bad = (await signUp("nope")).json();
-    expect(bad.formFields).toEqual([{ id: "email", error: "Email is invalid" }]);
-    const short = (await signUp("b@example.com", "short1")).json();
-    expect(short.formFields).toEqual([
-      { id: "password", error: "Password must contain at least 8 characters, including a number" },
-    ]);
+    expect(noInfo.json()).toEqual(NOT_HERE);
+    const elsewhere = paramsOf((await authorize("discord", "bob")).headers.location as string);
+    expect((await signInUp("discord", elsewhere, `${ORIGIN}/elsewhere`)).json()).toEqual(NOT_HERE);
+    const unlisted = await signInUp("google", elsewhere);
+    expect(unlisted.statusCode).toBe(400);
+    expect(unlisted.json()).toEqual({
+      message: "the provider google could not be found in the configuration",
+    });
+
+    const noEmail = paramsOf((await authorize("discord", "no-email")).headers.location as string);
+    const r1 = await signInUp("discord", noEmail);
+    expect(r1.json()).toEqual({ status: "NO_EMAIL_GIVEN_BY_PROVIDER" });
+    expect(r1.headers["set-cookie"]).toBeUndefined();
+    const notAllowed = paramsOf(
+      (await authorize("discord", "not-allowed")).headers.location as string,
+    );
+    expect((await signInUp("discord", notAllowed)).json()).toEqual({
+      status: "SIGN_IN_UP_NOT_ALLOWED",
+      reason: "Cannot sign in / up due to security reasons. Please contact support. (ERR_CODE_DEV)",
+    });
   });
 
-  it("password rules match the real validator, in order, for sign-up and reset", async () => {
-    const { signUp } = await open();
-    const cases: Array<[string, string]> = [
-      ["short1", "Password must contain at least 8 characters, including a number"],
-      ["a1".repeat(50), "Password's length must be lesser than 100 characters"],
-      ["12345678", "Password must contain at least one alphabet"],
-      ["abcdefgh", "Password must contain at least one number"],
-    ];
-    for (const [pw, error] of cases) {
-      expect((await signUp("c@example.com", pw)).json().formFields).toEqual([{ id: "password", error }]);
-    }
-    expect((await signUp("c@example.com", "a1".repeat(49) + "a")).json().status).toBe("OK");
-  });
-
-  it("reset applies the same password rules", async () => {
-    const { app, signUp, post } = await open();
-    await signUp("a@example.com");
-    await post("/auth/user/password/reset/token", { formFields: [{ id: "email", value: "a@example.com" }] });
-    const path = ((await app.inject({ method: "GET", url: "/auth/dev/reset-link?email=a@example.com" })).json() as { link: string }).link;
-    const token = new URL(path, "http://x").searchParams.get("token")!;
-    const res = await post("/auth/user/password/reset", { formFields: [{ id: "password", value: "12345678" }], token });
-    expect(res.json().formFields).toEqual([{ id: "password", error: "Password must contain at least one alphabet" }]);
-  });
-
-  it("sign-in: wrong password, then right", async () => {
-    const { signUp, post, form } = await open();
-    await signUp("a@example.com", "rightpass1");
-    const wrong = await post("/auth/signin", form("a@example.com", "wrongpass1"));
-    expect(wrong.json()).toEqual({ status: "WRONG_CREDENTIALS_ERROR" });
-    const unknown = await post("/auth/signin", form("z@example.com", "rightpass1"));
-    expect(unknown.json()).toEqual({ status: "WRONG_CREDENTIALS_ERROR" });
-    const ok = await post("/auth/signin", form("a@example.com", "rightpass1"));
-    expect(ok.json().status).toBe("OK");
-    expect(ok.headers["set-cookie"]).toBeDefined();
+  // Mutation caught: deleting the code only after the provider check lets the right post win.
+  it("signinup: a discord code posted as github is refused, and burned", async () => {
+    const { authorize, paramsOf, signInUp } = await open();
+    const params = paramsOf((await authorize("discord", "carol")).headers.location as string);
+    const asGithub = await signInUp("github", params, `${ORIGIN}/account/callback/github`);
+    expect(asGithub.statusCode).toBe(500);
+    expect(asGithub.json()).toEqual({ error: "internal error" });
+    expect(asGithub.headers["set-cookie"]).toBeUndefined();
+    const thenRight = await signInUp("discord", params);
+    expect(thenRight.statusCode).toBe(500);
+    expect(thenRight.json()).toEqual({ error: "internal error" });
   });
 
   it("the cookie is a session for /api/world and claim", async () => {
-    const { app, signUp, post, cookieOf } = await open();
-    const s1 = await signUp("a@example.com");
-    const world = await app.inject({ method: "GET", url: "/api/world", headers: { cookie: cookieOf(s1) } });
+    const { get, post, signIn, cookieOf } = await open();
+    const world = await get("/api/world", { cookie: cookieOf(await signIn("alice")) });
     expect(world.statusCode).toBe(200);
 
-    const s2 = await signUp("b@example.com");
+    const s2 = await signIn("bob");
     const { guestToken } = (await post("/api/guests")).json() as { guestToken: string };
     const claim = await post("/api/auth/claim", { guestToken }, { cookie: cookieOf(s2) });
     expect(claim.statusCode).toBe(200);
-    const after = await app.inject({
-      method: "GET",
-      url: "/api/world",
-      headers: { authorization: `Guest ${guestToken}` },
-    });
+    const after = await get("/api/world", { authorization: `Guest ${guestToken}` });
     expect(after.statusCode).toBe(401);
   });
 
   it("sign-out clears the cookie and revokes the session", async () => {
-    const { app, signUp, post, cookieOf } = await open();
-    const cookie = cookieOf(await signUp("a@example.com"));
+    const { get, post, signIn, cookieOf } = await open();
+    const cookie = cookieOf(await signIn("alice"));
     const out = await post("/auth/signout", undefined, { cookie });
     expect(out.json()).toEqual({ status: "OK" });
     expect(out.headers["front-token"]).toBe("remove");
@@ -145,43 +269,13 @@ describe("fake sessions", () => {
       .concat(out.headers["set-cookie"] as string | string[])
       .find((c) => c.startsWith("sAccessToken="))!;
     expect(cleared).toMatch(/Max-Age=0|Expires=Thu, 01 Jan 1970/);
-    const replay = await app.inject({ method: "GET", url: "/api/world", headers: { cookie } });
-    expect(replay.statusCode).toBe(401);
-    expect((await app.inject({ method: "GET", url: "/api/world" })).statusCode).toBe(401);
-  });
-
-  it("rejects an fdi-version the node SDK does not speak", async () => {
-    const { post, form } = await open();
-    const bad = await post("/auth/signup", form("a@example.com", "hunter2hunter2"), { "fdi-version": "1.16" });
-    expect(bad.statusCode).toBe(400);
-    expect(bad.body).toContain("fdi-version mismatch");
-    const ok = await post("/auth/signup", form("a@example.com", "hunter2hunter2"), { "fdi-version": "4.2,4.1" });
-    expect(ok.statusCode).toBe(200);
-    const none = await post("/auth/signup", form("b@example.com", "hunter2hunter2"));
-    expect(none.statusCode).toBe(200);
-  });
-
-  it("password reset", async () => {
-    const { app, signUp, post, form } = await open();
-    await signUp("a@example.com", "oldpass123");
-    expect((await post("/auth/user/password/reset/token", { formFields: [{ id: "email", value: "a@example.com" }] })).json()).toEqual({ status: "OK" });
-    expect((await post("/auth/user/password/reset/token", { formFields: [{ id: "email", value: "x@example.com" }] })).json()).toEqual({ status: "OK" });
-    const link = await app.inject({ method: "GET", url: "/auth/dev/reset-link?email=a@example.com" });
-    const path = (link.json() as { link: string }).link;
-    expect(path.startsWith("/account/reset-password?token=")).toBe(true);
-    expect((await app.inject({ method: "GET", url: "/auth/dev/reset-link?email=x@example.com" })).statusCode).toBe(404);
-    const token = new URL(path, "http://x").searchParams.get("token")!;
-    const reset = await post("/auth/user/password/reset", { formFields: [{ id: "password", value: "newpass123" }], token });
-    expect(reset.json()).toEqual({ status: "OK" });
-    expect((await post("/auth/signin", form("a@example.com", "newpass123"))).json().status).toBe("OK");
-    expect((await post("/auth/signin", form("a@example.com", "oldpass123"))).json().status).toBe("WRONG_CREDENTIALS_ERROR");
-    const bogus = await post("/auth/user/password/reset", { formFields: [{ id: "password", value: "newpass123" }], token: "made-up" });
-    expect(bogus.json()).toEqual({ status: "RESET_PASSWORD_INVALID_TOKEN_ERROR" });
+    expect((await get("/api/world", { cookie })).statusCode).toBe(401);
+    expect((await get("/api/world")).statusCode).toBe(401);
   });
 
   it("refresh needs the cookie", async () => {
-    const { signUp, post, cookieOf } = await open();
-    const cookie = cookieOf(await signUp("a@example.com"));
+    const { post, signIn, cookieOf } = await open();
+    const cookie = cookieOf(await signIn("alice"));
     const ok = await post("/auth/session/refresh", undefined, { cookie });
     expect(ok.statusCode).toBe(200);
     expect(ok.headers["front-token"]).toBeDefined();
@@ -190,6 +284,31 @@ describe("fake sessions", () => {
     expect(no.statusCode).toBe(401);
     expect(no.json()).toEqual({ message: "unauthorised" });
     expect(no.headers["front-token"]).toBe("remove");
+  });
+
+  it("rejects an fdi-version the node SDK does not speak", async () => {
+    const { authURL } = await open();
+    const bad = await authURL("discord", undefined, { "fdi-version": "1.16" });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.body).toContain("fdi-version mismatch");
+    expect((await authURL("discord", undefined, { "fdi-version": "4.2,4.1" })).json().status).toBe(
+      "OK",
+    );
+    expect((await authURL("discord")).json().status).toBe("OK");
+  });
+
+  it("the email/password endpoints are gone", async () => {
+    const { get, post } = await open();
+    const form = {
+      formFields: [
+        { id: "email", value: "a@example.com" },
+        { id: "password", value: "hunter2hunter2" },
+      ],
+    };
+    expect((await post("/auth/signup", form)).statusCode).toBe(404);
+    expect((await post("/auth/signin", form)).statusCode).toBe(404);
+    expect((await post("/auth/user/password/reset/token", form)).statusCode).toBe(404);
+    expect((await get("/auth/dev/reset-link?email=a@example.com")).statusCode).toBe(404);
   });
 
   it("refuses to exist in production", async () => {

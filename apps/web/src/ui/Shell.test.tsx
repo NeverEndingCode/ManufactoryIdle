@@ -283,6 +283,40 @@ describe("the shell (U-2)", { timeout: 60_000 }, () => {
     expect(main.getBoundingClientRect().top).toBe(top);
   });
 
+  it("8. the save chip needs a provider, on the desktop and the phone (O-13)", () => {
+    for (const width of [1280, 375]) {
+      cleanup();
+      vi.unstubAllGlobals();
+      stubWidth(width);
+      const store = fakeStore(tier8);
+      store.set({ accounts: "on", providers: [] });
+      mount(store);
+      expect(screen.queryByRole("button", { name: "Save your factory" })).toBeNull();
+      store.set({ providers: ["github"] });
+      expect(screen.getByRole("button", { name: "Save your factory" })).toBeTruthy();
+    }
+  });
+
+  it("8b. the sign-in toasts can be dismissed; signed-out still can't (O-10)", () => {
+    stubWidth(1280);
+    const store = fakeStore(fresh);
+    store.set({
+      notices: [
+        { kind: "signed-in", text: "Signed in with GitHub." },
+        { kind: "sign-in-failed", text: "That sign-in provider isn't available here." },
+        { kind: "signed-out", text: "Signed out. Sign in to return to your saved factory." },
+      ],
+    });
+    mount(store);
+    const notice = (kind: string) =>
+      document.querySelector<HTMLElement>(`[data-notice="${kind}"]`)!;
+    for (const kind of ["signed-in", "sign-in-failed"] as const) {
+      fireEvent.click(within(notice(kind)).getByRole("button", { name: "Dismiss" }));
+      expect(store.dismiss).toHaveBeenLastCalledWith(kind);
+    }
+    expect(within(notice("signed-out")).queryByRole("button")).toBeNull();
+  });
+
   it("9. About: the source and license links in Settings; the footer is the power bar", () => {
     stubWidth(1280);
     mount(fakeStore(fresh));

@@ -99,7 +99,8 @@ It runs, in order:
    with the core ahead of the API. The file is rewritten through a temporary file next to it,
    moved over it, after a copy to `unraid-autostart.bak`.
 6. Smoke-test. First, through the published port, `curl -fsS http://127.0.0.1:8087/api/health`
-   must say `"accounts":true`, which says only that the SuperTokens env is set. Then, from inside
+   must say `"accounts":true`, which says only that the SuperTokens env is set; its `"providers"`
+   (the sign-in providers configured) is logged but not required. Then, from inside
    the API container, `node -e` fetches `$SUPERTOKENS_CONNECTION_URI/users/count` with
    `api-key: $SUPERTOKENS_API_KEY`, which must answer 200. That check depends on no sign-in
    recipe, and the key never leaves the container. A wrong key, a core the API can't reach, or a
@@ -169,13 +170,19 @@ the previous checkout, and bash has read all of it before step 1 checks out the 
 change to `deploy.sh` takes effect on the next run. The templates are read from the new checkout,
 so changes to them take effect at once.
 
-### Adding a variable (SMTP, `ADMIN_TOKEN`, sign-in providers)
+### Tabs open across the OAuth change
+
+Tabs left open on the old bundle still show the old email forms until they reload; that is
+harmless, since there are no email/password users. The deploy itself needs nothing special: the
+core check (step 6) depends on no sign-in recipe.
+
+### Adding a variable (`ADMIN_TOKEN`, sign-in providers)
 
 Edit `/boot/config/plugins/dockerMan/templates-user/my-manufactory-api.xml` directly. Add one
 line per variable before `</Container>`, in the same one-line form as the others, with
 `Mask="true"` for a secret:
 
-    <Config Name="SMTP_PASSWORD" Target="SMTP_PASSWORD" Default="" Mode="" Description="" Type="Variable" Display="always" Required="false" Mask="true">…</Config>
+    <Config Name="DISCORD_CLIENT_SECRET" Target="DISCORD_CLIENT_SECRET" Default="" Mode="" Description="" Type="Variable" Display="always" Required="false" Mask="true">…</Config>
 
 Then apply it without a build:
 
@@ -183,19 +190,28 @@ Then apply it without a build:
 
 Later deploys carry such lines over. The variables themselves are listed in `apps/api/README.md`.
 
-**Sign-in providers.** Discord sign-in needs `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`, and
-GitHub sign-in needs `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Each provider is turned on only
-when both of its variables are set (R-12). For example:
+## Sign-in providers
 
-    <Config Name="DISCORD_CLIENT_ID" Target="DISCORD_CLIENT_ID" Default="" Mode="" Description="Discord OAuth app" Type="Variable" Display="always" Required="false" Mask="false">…</Config>
-    <Config Name="DISCORD_CLIENT_SECRET" Target="DISCORD_CLIENT_SECRET" Default="" Mode="" Description="Discord OAuth app" Type="Variable" Display="always" Required="false" Mask="true">…</Config>
+Accounts are Discord and GitHub only (no email/password). A provider is on when both of its
+variables are set in the API template (see "Adding a variable"):
 
-Register these callback (redirect) URLs in the providers' OAuth apps. They are for the upcoming
-OAuth work in the web client, which doesn't serve them yet. Until then, setting these variables
-turns the providers on in the API, but nobody can sign in with them from the site.
+| Provider | Variables                                    | Callback URL to register                                           |
+| -------- | -------------------------------------------- | ------------------------------------------------------------------ |
+| Discord  | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | `https://manufactory.neverendingcode.com/account/callback/discord` |
+| GitHub   | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`   | `https://manufactory.neverendingcode.com/account/callback/github`  |
 
-- Discord: `https://manufactory.neverendingcode.com/account/callback/discord`
-- GitHub: `https://manufactory.neverendingcode.com/account/callback/github`
+- **Discord:** in the [developer portal](https://discord.com/developers/applications), create an
+  application. Under OAuth2, add the callback URL above as a redirect, and copy the client ID and
+  the client secret (reset it to see it).
+- **GitHub:** under Settings → Developer settings → OAuth Apps, create an OAuth App with homepage
+  `https://manufactory.neverendingcode.com` and the callback URL above as its "Authorization
+  callback URL". Copy the client ID, and generate a client secret.
+
+The scopes are the SDK's defaults, Discord's `identify email` and GitHub's `read:user user:email`;
+there is nothing to set. The API accepts only these exact callback URLs (it pins the redirect URI),
+so register them exactly. After `--recreate`, `curl -s http://127.0.0.1:8087/api/health` lists the
+live providers in `"providers"`; a provider with only one of its two variables set is left out,
+with a warning in the API's log.
 
 ## Rollback
 
@@ -215,12 +231,15 @@ target, because the accounts are now in the game's own core.
 
 ## Where the secrets live
 
-| Secret                                                     | Where                                                                                                                      | Source                                                        |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Database password (in `DATABASE_URL`)                      | `templates-user/my-manufactory-api.xml` (masked), the role in `postgresql16`, and the API container's env                  | Generated by step 3 on the first deploy                       |
-| Core database password (in `POSTGRESQL_CONNECTION_URI`)    | `templates-user/my-manufactory-supertokens.xml` (masked), the role in `postgresql16`, and the core container's env         | Generated by step 3 on the first run with the core            |
-| The core's API key (`API_KEYS`, `SUPERTOKENS_API_KEY`)     | `templates-user/my-manufactory-supertokens.xml` and `my-manufactory-api.xml` (both masked), and both containers' env       | Generated by step 4 on the first run with the core, then kept |
-| Optional: `ADMIN_TOKEN`, `SMTP_*`, `DISCORD_*`, `GITHUB_*` | Lines you add to `/boot/config/plugins/dockerMan/templates-user/my-manufactory-api.xml` (`Mask="true"`), then `--recreate` | You (see "Adding a variable")                                 |
+| Secret                                                  | Where                                                                                                                      | Source                                                        |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Database password (in `DATABASE_URL`)                   | `templates-user/my-manufactory-api.xml` (masked), the role in `postgresql16`, and the API container's env                  | Generated by step 3 on the first deploy                       |
+| Core database password (in `POSTGRESQL_CONNECTION_URI`) | `templates-user/my-manufactory-supertokens.xml` (masked), the role in `postgresql16`, and the core container's env         | Generated by step 3 on the first run with the core            |
+| The core's API key (`API_KEYS`, `SUPERTOKENS_API_KEY`)  | `templates-user/my-manufactory-supertokens.xml` and `my-manufactory-api.xml` (both masked), and both containers' env       | Generated by step 4 on the first run with the core, then kept |
+| Optional: `ADMIN_TOKEN`, `DISCORD_*`, `GITHUB_*`        | Lines you add to `/boot/config/plugins/dockerMan/templates-user/my-manufactory-api.xml` (`Mask="true"`), then `--recreate` | You (see "Adding a variable")                                 |
+
+`SMTP_*` lines left in the API template from before the OAuth change are no longer read and can be
+deleted.
 
 Nothing secret is in the repo, an image layer, a build arg or the script's output. The script
 passes the password to `psql` on stdin, and the container env through a temporary `--env-file`

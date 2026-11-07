@@ -1,16 +1,22 @@
 // S-10 / W-3: routing is a location.pathname switch over three paths, with pushState and
-// popstate. Panes and sheets stay component state. The route is one small external store, so
+// popstate. O-8: the sign-in callback is a route of its own, so the unknown-path replace never
+// strips its ?code=…&state=… before the SDK reads them. Panes and sheets stay component state. The route is one small external store, so
 // every useRoute() reads the same value.
 import { useEffect, useSyncExternalStore } from "react";
 import type { ItemId } from "@manufactory/engine";
 
 export type Route =
-  { kind: "game" } | { kind: "handbook"; itemId: ItemId | null } | { kind: "reset-password" };
+  | { kind: "game" }
+  | { kind: "handbook"; itemId: ItemId | null }
+  | { kind: "callback"; provider: string };
+
+/** O-3's provider id; anything else under /account/callback is an unknown path. */
+const PROVIDER_ID = /^[a-z0-9-]{1,32}$/;
 
 const GAME: Route = { kind: "game" };
 
 /** A trailing slash is fine; the item is decoded (a malformed escape shows the index); any
- * other path is the game. */
+ * other path is the game (an old /account/reset-password link included, O-1). */
 export function parseRoute(pathname: string): Route {
   let p = pathname === "" ? "/" : pathname;
   if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
@@ -26,8 +32,13 @@ export function parseRoute(pathname: string): Route {
       return { kind: "handbook", itemId: null };
     }
   }
-  if (parts.length === 2 && parts[0] === "account" && parts[1] === "reset-password")
-    return { kind: "reset-password" };
+  if (
+    parts.length === 3 &&
+    parts[0] === "account" &&
+    parts[1] === "callback" &&
+    PROVIDER_ID.test(parts[2]!)
+  )
+    return { kind: "callback", provider: parts[2]! };
   return GAME;
 }
 
@@ -37,8 +48,8 @@ export function routePath(r: Route): string {
       return "/";
     case "handbook":
       return r.itemId === null ? "/handbook" : `/handbook/${encodeURIComponent(r.itemId)}`;
-    case "reset-password":
-      return "/account/reset-password";
+    case "callback":
+      return `/account/callback/${r.provider}`;
   }
 }
 
@@ -76,7 +87,7 @@ export function navigate(next: Route): void {
   emit();
 }
 
-/** The same, replacing the history entry (the reset page's used link). */
+/** The same, replacing the history entry (O-8: the callback's spent URL). */
 export function replaceRoute(next: Route): void {
   history.replaceState(null, "", routePath(next));
   emit();
