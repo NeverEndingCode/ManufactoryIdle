@@ -3,7 +3,15 @@
 // tablet, PhoneShell below 600 px, both filling this .app root. App holds the view state (V-25):
 // the selected lane, the factory / priority / phone power view, the open drawer, and each lane's
 // selected row (U-7d); the handbook view is its route. The store is created and started outside React (main.tsx).
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { ItemId, LaneId, RecipeId } from "@manufactory/engine";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
@@ -378,11 +386,22 @@ export function App({ store }: { store: GameStore }) {
   const logSheetShown = game && logOpen && !logBox;
   // A layout that gets the box (or a world being loaded) closes the sheet; focus that was in it
   // goes to the shown view's target (refocusRows). In a layout effect, so no frame has both.
+  // K-5 holds across a resize into the phone (fix round 1, I-1): the ticker closes the card and
+  // any drawer (openLog), and every other opener is inert while the sheet is open, so the log
+  // sheet is never beside a second modal.
   useLayoutEffect(() => {
     if (!logOpen || logSheetShown) return;
     refocusRows.current = true;
     setLogOpen(false);
   }, [logOpen, logSheetShown]);
+  /** The ticker: opening the log is a switch of context (I-1), so the NEXT_BUY card and any
+   * open drawer close first, and the log sheet is the one modal. */
+  const openLog = useCallback(() => {
+    whyReturn.current = false;
+    setWhyOpen(false);
+    setOpen(null);
+    setLogOpen(true);
+  }, []);
 
   // U-7: the dispatcher. Every action is the click path (K-4): it clicks the real button, or
   // calls the handler the button calls. Each returns whether it found its target (K-9).
@@ -622,7 +641,7 @@ export function App({ store }: { store: GameStore }) {
           />
         ),
       // U-9a / L-10: the box, else the ticker (rendered only once there's a line).
-      log: !game ? null : logBox ? <FactoryLog /> : <LogTicker onOpen={() => setLogOpen(true)} />,
+      log: !game ? null : logBox ? <FactoryLog /> : <LogTicker onOpen={openLog} />,
       footer:
         game && mode !== "phone" ? (
           <PowerFooter store={store} snapshot={s} taps={view.taps} pending={view.pending} />

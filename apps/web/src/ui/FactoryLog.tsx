@@ -107,8 +107,10 @@ export const FactoryLog = memo(function FactoryLog() {
   );
 });
 
-/** L-10: the newest line, ellipsized, as the button that opens the sheet; none with no lines. */
-export function LogTicker({ onOpen }: { onOpen(opener: HTMLElement): void }) {
+/** L-10: the newest line, ellipsized, as the button that opens the sheet; none with no lines.
+ * M-1, accepted: its first line of a world shrinks the row list's visible height once (row tops
+ * stay put). */
+export const LogTicker = memo(function LogTicker({ onOpen }: { onOpen(): void }) {
   const entries = useLogEntries();
   const shell = useTheme().applied.voice === "shell";
   const last = entries.at(-1);
@@ -121,7 +123,7 @@ export function LogTicker({ onOpen }: { onOpen(opener: HTMLElement): void }) {
       data-log-ticker
       aria-haspopup="dialog"
       aria-label={`Factory log, ${n} ${n === 1 ? "entry" : "entries"}`}
-      onClick={(e) => onOpen(e.currentTarget)}
+      onClick={() => onOpen()}
     >
       <span className={`${css.tickerText} ${css[last.tone]}`} aria-hidden="true">
         {shell ? last.text : last.said}
@@ -131,7 +133,7 @@ export function LogTicker({ onOpen }: { onOpen(opener: HTMLElement): void }) {
       </span>
     </button>
   );
-}
+});
 
 /** L-11: the modal log sheet (U-4c style): the full list, newest at the bottom, scrolled there
  * on open. Closed by x, the backdrop or Esc; App returns focus to the ticker. */

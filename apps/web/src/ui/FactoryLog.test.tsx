@@ -373,4 +373,29 @@ describe("the factory log on screen (U-9a, L-9..L-12)", { timeout: 60_000 }, () 
     expect(sheet()!.textContent).toContain("factory.log");
     expect(spokenIds(sheet()!)).toEqual([]);
   });
+
+  // Catches (fix round 1, I-1): the log sheet opened beside a desktop drawer or card, which
+  // become modal sheets too once the layout turns into the phone: two aria-modals.
+  for (const opener of ["drawer", "card"] as const)
+    it(`8b. the ticker closes the ${opener} first; a resize to the phone leaves one modal`, () => {
+      const vp = stubWidth(1280, { height: 650 });
+      const store = fakeStore(fresh, { now: CLIENT_T0 + 60_000 });
+      mount(store);
+      buy(store);
+      if (opener === "drawer") {
+        fireEvent.click(q('[role="option"][data-item="iron_plate"]')!);
+        expect(q('[data-drawer="iron_plate"]')).not.toBeNull();
+      } else {
+        fireEvent.click(q("[data-why]")!);
+        expect(q("[data-next-buy]")).not.toBeNull();
+      }
+      fireEvent.click(ticker()!);
+      expect(sheet()).not.toBeNull();
+      expect(q("[data-drawer]")).toBeNull();
+      expect(q("[data-next-buy]")).toBeNull();
+      vp.resize(390, 844);
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      expect(modals).toHaveLength(1);
+      expect(modals[0]!.contains(document.activeElement)).toBe(true);
+    });
 });
