@@ -410,7 +410,7 @@ describe("the CSS source", () => {
     );
     expect(rule.height).toBe("var(--row-h)");
     expect(rule.overflow).toBe("hidden");
-    const CELLS = ["row", "gutter", "name", "rate", "sat", "machines", "storage", "stock"];
+    const CELLS = ["row", "gutter", "name", "rate", "sat", "trend", "machines", "storage", "stock"];
     const reaches = (selector: string) =>
       [...selector.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].some((m) => CELLS.includes(m[1]!));
     const bad = row

@@ -57,6 +57,7 @@
 .name,
 .rate,
 .sat,
+.trend,
 .machines,
 .stock {
   overflow: hidden;
@@ -95,6 +96,35 @@
 .sat {
   flex: none;
   width: 48px;
+}
+
+/* U-9b: the ten-minute sparkline, desktop only (the container rule below). Its colours (L-14):
+   --t3, --rate-down when the rate is below 0, the bottleneck's state colour; unknown cells in
+   --t3. On the selected row (--s-hi, where terminal --t3 is barred) the --t3 ones are --t2. */
+.trend {
+  display: none;
+  flex: none;
+  width: 120px;
+  color: var(--t3);
+  font-family: var(--font-mono);
+}
+
+.unknown {
+  color: var(--t3);
+}
+
+.row[aria-selected="true"] .trend,
+.row[aria-selected="true"] .unknown {
+  color: var(--t2);
+}
+
+/* After the selected row's override, at its specificity, so they keep their own colour there. */
+.row .trend.down {
+  color: var(--rate-down);
+}
+
+.row .trend:global(.state-bottleneck) {
+  color: var(--state-bottleneck);
 }
 
 .machines {
@@ -160,7 +190,13 @@
   }
 }
 
-/* Columns drop by the list's own width (U-3b). */
+/* Columns drop by the list's own width (U-3b); TREND shows only on a wide list. */
+@container rows (min-width: 1100px) {
+  .trend {
+    display: block;
+  }
+}
+
 @container rows (max-width: 899px) {
   .machines {
     display: none;
@@ -188,7 +224,8 @@
 /* The phone: U-3b's two lines in the same 54 px row, by grid areas. Line 2 starts 18 px in (the
    gutter's 10 px and the 8 px gap). No header, no MACHINES. */
 .phone .head,
-.phone .machines {
+.phone .machines,
+.phone .trend {
   display: none;
 }
 

@@ -193,6 +193,46 @@ function usageViolations(decls: readonly Decl[]): string[] {
   return bad;
 }
 
+/** The row's cell classes (Row.module.css): a row may be the selected one, on --s-hi. */
+const ROW_CELLS = [
+  "gutter",
+  "name",
+  "rate",
+  "sat",
+  "trend",
+  "unknown",
+  "machines",
+  "storage",
+  "stock",
+];
+const SELECTED_ROW = /\.row\[aria-selected="true"\]/;
+
+/** L-14: each row cell class given --t3 needs a selected-row rule giving it --t2, because the
+ * matrix and the usage check read selectors only and can't see the row's fill under the cell. */
+function selectedRowGaps(decls: readonly Decl[]): string[] {
+  const selectors = (d: Decl) =>
+    (d.stack.filter((s) => !s.startsWith("@")).at(-1) ?? "").split(",").map((x) => x.trim());
+  const classesOf = (sel: string) =>
+    [...sel.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].map((m) => m[1]!);
+  const colour = (d: Decl, token: string) =>
+    d.property === "color" && STRIP(d.value) === `var(--${token})`;
+  const overridden = new Set(
+    decls
+      .filter((d) => colour(d, "t2"))
+      .flatMap(selectors)
+      .filter((sel) => SELECTED_ROW.test(sel))
+      .flatMap((sel) => classesOf(sel.replace(SELECTED_ROW, ""))),
+  );
+  const need = new Set(
+    decls
+      .filter((d) => colour(d, "t3"))
+      .flatMap(selectors)
+      .flatMap(classesOf)
+      .filter((c) => ROW_CELLS.includes(c)),
+  );
+  return [...need].filter((c) => !overridden.has(c)).sort();
+}
+
 describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
   it("1. every text token on every surface reaches 4.5:1, bar the declared pairs", () => {
     const failing = matrixFailures();
@@ -276,5 +316,24 @@ describe("contrast (U-1f, V-4)", { timeout: 60_000 }, () => {
       ]),
     );
     expect(files.flatMap((f) => usageViolations(read(f)))).toEqual([]);
+  });
+
+  // Catches: a --t3 row cell (the sparkline, its unknown cells) left --t3 on the selected row,
+  // where terminal --t3 on --s-hi is 4.22:1 (U-1f).
+  it("6. every --t3 row cell has a selected-row override (L-14)", () => {
+    expect(selectedRowGaps(read("ui/Row.module.css"))).toEqual([]);
+    // The self-check: the override is what passes it.
+    const check = (css: string) => selectedRowGaps(declarations("x.css", css));
+    expect(check(".trend { color: var(--t3) } .unknown { color: var(--t3) }")).toEqual([
+      "trend",
+      "unknown",
+    ]);
+    expect(
+      check('.trend { color: var(--t3) } .row[aria-selected="true"] .trend { color: var(--t2) }'),
+    ).toEqual([]);
+    expect(
+      check('.trend { color: var(--t3) } .row[aria-selected="true"] .x { color: var(--t2) }'),
+    ).toEqual(["trend"]);
+    expect(check(".head { color: var(--t3) }")).toEqual([]);
   });
 });

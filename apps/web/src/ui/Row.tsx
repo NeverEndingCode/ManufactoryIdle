@@ -1,5 +1,6 @@
-// U-3: one row, one DOM in every layout and every state. Seven cells, each a single ellipsized
-// line: the gutter's mark, the name, the rate, SAT, MACHINES, the storage bar and the stock. The
+// U-3: one row, one DOM in every layout and every state. Eight cells, each a single ellipsized
+// line: the gutter's mark, the name, the rate, SAT, the trend (U-9b), MACHINES, the storage bar
+// and the stock. The
 // bottleneck, the selection, an open drawer and a pending buy change classes and text only, never
 // the element tree (RowList.test 1) or the box (tokens.test 10a). A listbox option holds nothing
 // focusable (U-7d): the list owns the keys, and a click is the list's too.
@@ -12,6 +13,8 @@ import { machinesText, optionName, rateText, satText, type RowModel } from "./de
 import type { Names } from "./names.js";
 import { fmt } from "./notation.js";
 import css from "./Row.module.css";
+import type { RowTrend } from "./trend.js";
+import { Trend } from "./TrendCell.js";
 import { useTick } from "./use-tick.js";
 import { useTween } from "./use-tween.js";
 
@@ -26,6 +29,8 @@ export interface RowProps {
   selected: boolean;
   /** 16 cells on the phone (U-3b). */
   cells?: number;
+  /** U-9b: the row's sparkline and word, from RowList's one memo per book version (L-12). */
+  trend: RowTrend;
   onClick(itemId: ItemId): void;
 }
 
@@ -35,7 +40,17 @@ export function rowId(itemId: ItemId): string {
   return `row-${itemId}`;
 }
 
-export function Row({ row, snapshot, now, names, bottleneck, selected, cells, onClick }: RowProps) {
+export function Row({
+  row,
+  snapshot,
+  now,
+  names,
+  bottleneck,
+  selected,
+  cells,
+  trend,
+  onClick,
+}: RowProps) {
   const { itemId } = row;
   const sat = satText(row);
   const net = row.netPerSecond;
@@ -54,7 +69,7 @@ export function Row({ row, snapshot, now, names, bottleneck, selected, cells, on
       role="option"
       id={rowId(itemId)}
       aria-selected={selected}
-      aria-label={optionName(snapshot, row, bottleneck)}
+      aria-label={optionName(snapshot, row, bottleneck, trend.word)}
       data-item={itemId}
       data-tag={row.tag}
       className={css.row}
@@ -68,6 +83,7 @@ export function Row({ row, snapshot, now, names, bottleneck, selected, cells, on
         {rateText(net)}
       </span>
       <span className={cx(css.sat, "num", `state-${sat.cls}`)}>{sat.text}</span>
+      <Trend cells={trend.cells} down={trend.down} bottleneck={bottleneck} />
       <span className={css.machines}>{machinesText(snapshot, itemId, names.theme)}</span>
       <span className={css.storage}>
         <Bar

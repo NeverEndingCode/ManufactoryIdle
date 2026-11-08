@@ -40,6 +40,10 @@ test("every view fits 320 px", async ({ page }) => {
 
   await test.step("Factory", async () => {
     await expect(page.locator('#view-factory [role="option"]').first()).toBeVisible();
+    // U-9b: no TREND column on the phone (the drawer's meta line has the trend).
+    await expect(
+      page.locator('#view-factory [role="option"] [class*="_trend_"]').first(),
+    ).toBeHidden();
     await expectNoOverflow(page, "factory");
   });
 

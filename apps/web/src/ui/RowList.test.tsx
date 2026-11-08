@@ -42,8 +42,23 @@ import {
   type FakeStore,
   type Slice,
 } from "./test-fixtures.js";
+import css from "./Row.module.css";
 import { themeDef } from "./theme.js";
 import { createTickSource, TickContext } from "./use-tick.js";
+
+// L-12's render counter for the TREND cells: the real memo boundary, with a Profiler inside it,
+// so a cell that re-renders on its own (a useTick in it) is counted as well as one its row pushes.
+const trendRenders = vi.hoisted(() => ({ n: 0 }));
+vi.mock("./TrendCell.js", async (importOriginal) => {
+  const m = await importOriginal<typeof import("./TrendCell.js")>();
+  const { createElement: h, memo: keep, Profiler: P } = await import("react");
+  return {
+    ...m,
+    Trend: keep((p: Parameters<typeof m.TrendCells>[0]) =>
+      h(P, { id: "trend", onRender: () => (trendRenders.n += 1) }, h(m.TrendCells, p)),
+    ),
+  };
+});
 
 let slice: Slice;
 let fresh: Snapshot;
@@ -89,8 +104,10 @@ describe("RowList: fixed rows (U-3a)", { timeout: 60_000 }, () => {
     const plain = () => shape(option("iron_ore"));
     const tree = plain();
     expect(framed()).toBe(tree);
-    // Seven cells, the storage cell holding the bar.
-    expect(option("iron_ore").children).toHaveLength(7);
+    // Eight cells, the storage cell holding the bar, the trend cell (U-9b) after SAT.
+    expect(option("iron_ore").children).toHaveLength(8);
+    expect(trendCell("iron_ore").getAttribute("aria-hidden")).toBe("true");
+    expect(trendCell("iron_ore").children).toHaveLength(10);
 
     // Selected (the default is the framed row) and unselected, through the keys (the
     // dispatcher's Home, on the focused list: K-8).
@@ -109,6 +126,110 @@ describe("RowList: fixed rows (U-3a)", { timeout: 60_000 }, () => {
     store.set({ pending: [batch] });
     expect(framed()).toBe(tree);
     expect(plain()).toBe(tree);
+  });
+});
+
+/** The row's TREND cell: the fifth, after SAT (U-3b). */
+const trendCell = (item: string) => option(item).children[4] as HTMLElement;
+
+/** `s` as a later response: the clock `dMs` on, arriving now, with some rates replaced. */
+function later(
+  s: Snapshot,
+  dMs: number,
+  receivedAt: number,
+  rates: Record<string, number> = {},
+): Snapshot {
+  const items = { ...s.schedule.items };
+  for (const [id, r] of Object.entries(rates)) items[id] = { ...items[id]!, netPerSecond: r };
+  return { ...s, schedule: { ...s.schedule, atMs: s.schedule.atMs + dMs, items }, receivedAt };
+}
+
+describe("RowList: the TREND column (U-9b, L-12, L-15)", { timeout: 60_000 }, () => {
+  // Catches: the trend read at the 4 Hz tick (a useTick in the cell, or the window computed in
+  // the row on every render), or a minute timer that never bumps the rows.
+  it("12. the cells re-render on an adoption and at the server minute, never at 4 Hz", () => {
+    stubWidth(1280);
+    const store = fakeStore(tier8);
+    mount(store);
+    fireEvent.click(screen.getByRole("tab", { name: /Iron/ }));
+    const rows = laneRows(tier8, "iron").length;
+    expect(rows).toBeGreaterThan(3);
+    store.adopt({ prev: null, next: tier8 });
+    expect(trendCell(laneRows(tier8, "iron")[0]!.itemId).textContent).toBe("··········");
+
+    trendRenders.n = 0;
+    for (let i = 0; i < 10; i++) store.tick(250);
+    expect(trendRenders.n).toBe(0);
+
+    const next = later(tier8, 20_000, store.now());
+    store.adopt({ next });
+    expect(trendRenders.n).toBe(rows);
+    expect(trendCell(laneRows(tier8, "iron")[0]!.itemId).textContent).toBe("·········▄");
+
+    // The server minute: just before it, nothing; past it, each cell once.
+    const sNow = serverNow(next, store.now());
+    const toMinute = 60_000 - (sNow % 60_000);
+    trendRenders.n = 0;
+    store.tick(toMinute - 50);
+    expect(trendRenders.n).toBe(0);
+    store.tick(100);
+    expect(trendRenders.n).toBe(rows);
+    // tier-8's boundary comes before the minute: the new minute is unknown, not stale.
+    expect(trendCell(laneRows(tier8, "iron")[0]!.itemId).textContent).toBe("········▄·");
+  });
+
+  // Catches: the trend word after ", bottleneck", or a word with one known bucket.
+  it("14. the option's name says the trend before bottleneck, and nothing with < 2 buckets", () => {
+    const store = fakeStore(fresh);
+    mount(store);
+    const row = laneRows(fresh, "iron").find((r) => r.itemId === "iron_plate")!;
+    const r = row.netPerSecond;
+    expect(r).toBeGreaterThan(0);
+    store.adopt({ prev: null, next: fresh });
+    const name = () => option("iron_plate").getAttribute("aria-label")!;
+    expect(name()).toBe(optionName(fresh, row, true));
+    const s1 = later(fresh, 60_000, store.now(), { iron_plate: 2 * r });
+    store.adopt({ next: s1 });
+    // Two known minutes, both at r so far: steady.
+    expect(name()).toMatch(/, steady, bottleneck$/);
+    store.tick(60_000);
+    const s2 = later(fresh, 120_000, store.now(), { iron_plate: 2 * r });
+    store.adopt({ next: s2 });
+    expect(name()).toMatch(/ percent satisfied, rising, bottleneck$/);
+    expect(option("iron_ore").getAttribute("aria-label")).not.toMatch(/bottleneck/);
+  });
+
+  // Catches: the down colour from anything but the rate's sign, or the bottleneck's colour on
+  // every row.
+  it("15. the colour classes: down below 0, state-bottleneck on the framed row, else neither", () => {
+    const store = fakeStore(fresh);
+    mount(store);
+    store.adopt({ prev: null, next: later(fresh, 0, CLIENT_T0, { iron_ore: -1 }) });
+    const has = (item: string, c: string) => trendCell(item).classList.contains(c);
+    expect(has("iron_ore", css.down!)).toBe(true);
+    expect(has("iron_ore", "state-bottleneck")).toBe(false);
+    expect(has("iron_plate", "state-bottleneck")).toBe(true);
+    expect(has("iron_plate", css.down!)).toBe(false);
+    expect(has("iron_rod", css.down!)).toBe(false);
+    expect(has("iron_rod", "state-bottleneck")).toBe(false);
+    expect(has("iron_rod", css.trend!)).toBe(true);
+    // Unknown cells carry their own class (L-14: --t3, --t2 on the selected row).
+    expect(trendCell("iron_rod").children[0]!.classList.contains(css.unknown!)).toBe(true);
+  });
+
+  it("the header names the column between SAT and MACHINES", () => {
+    mount(fakeStore(fresh));
+    const head = [...document.querySelectorAll(`.${css.head} > span`)].map((e) => e.textContent);
+    expect(head).toEqual([
+      "",
+      "ITEM",
+      "RATE",
+      "SAT",
+      "LAST 10 MIN",
+      "MACHINES",
+      "STORAGE",
+      "STOCK",
+    ]);
   });
 });
 

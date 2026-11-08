@@ -594,6 +594,7 @@ export function App({ store }: { store: GameStore }) {
         claimFocus={claimFocus}
         onLeaveFocused={() => (leftFocused.current = true)}
         cardOpen={whyOpen && mode !== "phone"}
+        trendInMeta={mode !== "desktop"}
       />
     ) : null;
 

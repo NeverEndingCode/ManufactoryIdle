@@ -43,6 +43,13 @@ test("a guest starts, buys the bottleneck machine, and keeps the world across a 
       "buy 1 constructor_mk1 --lane iron --for iron_plate",
     );
     await expect(page.locator("[data-frame]")).toHaveCount(0);
+    // U-9b: the TREND column at 1280, ten cells; the oldest minute isn't known yet.
+    await expect(page.getByText("LAST 10 MIN", { exact: true })).toBeVisible();
+    const trend = page.locator('[role="option"]').first().locator('[class*="_trend_"]');
+    await expect(trend).toBeVisible();
+    const cells = (await trend.textContent()) ?? "";
+    expect(cells).toHaveLength(10);
+    expect(cells.startsWith("·")).toBe(true);
     // U-9a: the 96 px log box costs the main box 106 px; eight 44 px rows still fit (the
     // header row and the box's padding and border are the 30).
     const log = page.locator("section[data-factory-log]");

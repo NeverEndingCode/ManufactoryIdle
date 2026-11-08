@@ -4,8 +4,9 @@
 import { createContext, useContext } from "react";
 import type { AdoptEvent, GameStore } from "../sync/store.js";
 import { createFactoryLog, type FactoryLogBook } from "./factory-log.js";
+import { createTrendBook, type TrendBook } from "./trend.js";
 
-export type { FactoryLogBook };
+export type { FactoryLogBook, TrendBook };
 
 export type FeelStore = Pick<GameStore, "onAdopt" | "later" | "now">;
 
@@ -14,17 +15,9 @@ export interface Book {
   record(e: AdoptEvent): void;
 }
 
-// A minimal book until Task 5 (trend.ts) fills it in.
-export type TrendBook = Book;
-
 export interface Feel {
   log: FactoryLogBook;
   trend: TrendBook;
-}
-
-/** A book that keeps nothing yet. */
-function stubBook(): Book {
-  return { record() {} };
 }
 
 const feels = new WeakMap<object, Feel>();
@@ -34,8 +27,12 @@ const feels = new WeakMap<object, Feel>();
 export function feelOf(store: FeelStore): Feel {
   let feel = feels.get(store);
   if (feel === undefined) {
-    // The log's windows run on the store's monotonic clock (L-8).
-    feel = { log: createFactoryLog({ now: () => store.now() }), trend: stubBook() };
+    // The log's windows run on the store's monotonic clock (L-8); the trend's minute timer is
+    // the store's later(), so stop() clears it.
+    feel = {
+      log: createFactoryLog({ now: () => store.now() }),
+      trend: createTrendBook({ later: (fn, ms) => store.later(fn, ms), now: () => store.now() }),
+    };
     const { log, trend } = feel;
     store.onAdopt((e) => log.record(e));
     store.onAdopt((e) => trend.record(e));

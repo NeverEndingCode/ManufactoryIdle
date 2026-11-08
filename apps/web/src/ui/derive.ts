@@ -24,14 +24,14 @@ import type { Snapshot } from "../sync/snapshot.js";
 import { machineLabel } from "./names.js";
 import { currentNotation, fmt } from "./notation.js";
 import type { ThemeDef } from "./theme.js";
+import type { TrendWord } from "./trend.js";
 import type { LayoutMode } from "./use-layout-mode.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
 
 /** The frame's one button (P-3, Q-5): the sim `bottleneck` policy's four actions. */
 export type FrameAction =
-  | BuyMachine
-  | Extract<Action, { type: "BUY_STORAGE" | "BUY_QS" | "SET_RESERVE" }>;
+  BuyMachine | Extract<Action, { type: "BUY_STORAGE" | "BUY_QS" | "SET_RESERVE" }>;
 
 /** "+0.333/s": a net rate, signed when positive. */
 export function rateText(net: number): string {
@@ -233,7 +233,9 @@ function recipeRow(
     : `Limiting ${targetName(s, limitingTarget)}. ${more}`;
   // A generator's primary output is the power pseudo-item, which has no row: frame its
   // scarcest stock input (Q-5).
-  const itemId = generator ? scarcestInput(s, [...recipe.inputPerSecond.keys()]) : recipe.primaryOutput;
+  const itemId = generator
+    ? scarcestInput(s, [...recipe.inputPerSecond.keys()])
+    : recipe.primaryOutput;
   return {
     laneId: itemId === null ? null : (s.content.items.get(itemId)?.lane ?? null),
     itemId,
@@ -396,8 +398,14 @@ export function machinesText(s: Snapshot, itemId: ItemId, theme: ThemeDef): stri
 }
 
 /** U-7d: the option's one phrase, "Rotor, plus 0.4 per second, 11 percent full, 41 percent
- *  satisfied, bottleneck". Per snapshot: the fullness is at the schedule's atMs. */
-export function optionName(s: Snapshot, row: RowModel, bottleneck: boolean): string {
+ *  satisfied, rising, bottleneck". Per snapshot: the fullness is at the schedule's atMs. The
+ *  trend word (U-9b) comes before ", bottleneck", which stays last (L-15). */
+export function optionName(
+  s: Snapshot,
+  row: RowModel,
+  bottleneck: boolean,
+  word?: TrendWord | null,
+): string {
   const net = row.netPerSecond;
   const rate =
     net === 0
@@ -409,7 +417,8 @@ export function optionName(s: Snapshot, row: RowModel, bottleneck: boolean): str
     cls === "paused" || cls === "idle"
       ? cls
       : `${Math.round(row.satisfaction * 100)} percent satisfied`;
-  return `${row.name}, ${rate}, ${full} percent full, ${sat}${bottleneck ? ", bottleneck" : ""}`;
+  const trend = word ? `, ${word}` : "";
+  return `${row.name}, ${rate}, ${full} percent full, ${sat}${trend}${bottleneck ? ", bottleneck" : ""}`;
 }
 
 /** U-3e: a lane tab's light, the first match. */

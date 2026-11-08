@@ -21,6 +21,7 @@ import {
   powerByLane,
 } from "./dock-model.js";
 import { generatorVerbLabel } from "./Drawer.js";
+import { FeelContext, feelOf } from "./feel.js";
 import { FloatingTap } from "./FloatingTap.js";
 import { PowerFooter } from "./PowerFooter.js";
 import { PowerPanel } from "./PowerPanel.js";
@@ -62,10 +63,18 @@ function topped(state: WorldState): WorldState {
   return { ...state, stored };
 }
 
-function withTicks(store: FakeStore, node: ReactNode) {
-  return render(
-    <TickContext.Provider value={createTickSource(store)}>{node}</TickContext.Provider>,
+/** The tick source and the feel pair, as App provides them (the power lane's rows read the
+ * trend book, U-9b). */
+function Around({ store, children }: { store: FakeStore; children: ReactNode }) {
+  return (
+    <FeelContext.Provider value={feelOf(store)}>
+      <TickContext.Provider value={createTickSource(store)}>{children}</TickContext.Provider>
+    </FeelContext.Provider>
   );
+}
+
+function withTicks(store: FakeStore, node: ReactNode) {
+  return render(<Around store={store}>{node}</Around>);
 }
 
 function panel(s: Snapshot, store: FakeStore = fakeStore(s)) {
@@ -86,10 +95,7 @@ function panel(s: Snapshot, store: FakeStore = fakeStore(s)) {
     />
   );
   const r = withTicks(store, node());
-  const rerender = () =>
-    r.rerender(
-      <TickContext.Provider value={createTickSource(store)}>{node()}</TickContext.Provider>,
-    );
+  const rerender = () => r.rerender(<Around store={store}>{node()}</Around>);
   return { store, rerender, root: document.querySelector<HTMLElement>("[data-power-panel]")! };
 }
 
@@ -102,11 +108,7 @@ function tapButton(kind: TapKind, s: Snapshot, store: FakeStore, taps = NO_TAPS)
   const r = withTicks(store, node(props));
   const button = () => document.querySelector<HTMLElement>("[data-power] button[data-tap]")!;
   const update = (patch: Partial<typeof props>) =>
-    r.rerender(
-      <TickContext.Provider value={createTickSource(store)}>
-        {node({ ...props, ...patch })}
-      </TickContext.Provider>,
-    );
+    r.rerender(<Around store={store}>{node({ ...props, ...patch })}</Around>);
   return { button, update };
 }
 

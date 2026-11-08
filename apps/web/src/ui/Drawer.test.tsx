@@ -1526,3 +1526,51 @@ describe("MACHINES and the sections (U-5c, K-9, K-11, K-13 – K-15)", { timeout
     expect(rule(".moreBtn")).toMatchObject({ height: "36px" });
   });
 });
+
+describe("the drawer's trend (U-9b)", { timeout: 60_000 }, () => {
+  /** What a reader gets from the meta line: its text outside aria-hidden. */
+  function heard(el: Element): string {
+    const copy = el.cloneNode(true) as Element;
+    copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+    return copy.textContent ?? "";
+  }
+  /** `s` a minute on, arriving now, at the same rates. */
+  const minuteOn = (s: Snapshot, receivedAt: number): Snapshot => ({
+    ...s,
+    schedule: { ...s.schedule, atMs: s.schedule.atMs + 60_000 },
+    receivedAt,
+  });
+
+  // Catches: the trend missing on the tablet (where the TREND column is gone), shown on desktop
+  // (where the column has it), read out cell by cell, or a word said with nothing known.
+  it("on the tablet the meta line ends in the sparkline, and a reader hears the word", () => {
+    stubWidth(800);
+    const store = fakeStore(fresh);
+    mount(store);
+    store.adopt({ prev: null, next: fresh });
+    const meta = () => drawer("iron_ore")!.querySelector("[data-meta]")!;
+    expect(open("iron_ore").dataset.presentation).toBe("panel");
+    const cells = () => /trend ([·▁▂▃▄▅▆▇█]+)/.exec(meta().textContent ?? "")?.[1];
+    expect(cells()).toBe("··········");
+    expect(heard(meta())).not.toMatch(/trend/);
+
+    store.tick(60_000);
+    store.adopt({ next: minuteOn(fresh, store.now()) });
+    expect(meta().textContent).toContain("trend ");
+    expect(cells()).toHaveLength(10);
+    expect(cells()).toMatch(/^········▄▄$/);
+    expect(heard(meta())).toMatch(/trend steady$/);
+    // The separators are the line's own "·"; the cells (a run of ten) are never read.
+    expect(heard(meta())).not.toMatch(/[▁▂▃▄▅▆▇█]|··/);
+  });
+
+  it("on desktop the meta line has no trend", () => {
+    stubWidth(1280);
+    const store = fakeStore(fresh);
+    mount(store);
+    store.adopt({ prev: null, next: fresh });
+    store.tick(60_000);
+    store.adopt({ next: minuteOn(fresh, store.now()) });
+    expect(open("iron_ore").querySelector("[data-meta]")!.textContent).not.toContain("trend");
+  });
+});
