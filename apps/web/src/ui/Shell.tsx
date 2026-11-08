@@ -15,6 +15,7 @@ import { PowerReading } from "./PowerFooter.js";
 import css from "./Shell.module.css";
 import { tabTarget } from "./tabs.js";
 import { useTheme, type Voice } from "./theme.js";
+import { TierBanner } from "./TierBanner.js";
 import { TierReadout } from "./TierReadout.js";
 import type { LayoutMode } from "./use-layout-mode.js";
 
@@ -46,6 +47,9 @@ export interface ShellProps {
     main: ReactNode;
     overlays: ReactNode;
     command: ReactNode;
+    /** U-9a / L-10: the factory log's box, or its ticker; between the content row and the
+     * command line (on the phone, the factory tab's only). */
+    log: ReactNode;
     footer: ReactNode;
     floating: ReactNode;
   };
@@ -296,6 +300,17 @@ function SettingsButton({
   );
 }
 
+/** U-9d / L-18: what the tier banner lies over: the tier readout on desktop and tablet, the
+ * readouts box on the phone. The banner is absolute inside, so the header never moves. */
+function TierSlot({ p, s, children }: { p: ShellProps; s: Snapshot; children: ReactNode }) {
+  return (
+    <div className={css.tierSlot} data-tier-slot>
+      {children}
+      <TierBanner view={p.view} snapshot={s} store={p.store} phone={p.mode === "phone"} />
+    </div>
+  );
+}
+
 /** Desktop and tablet (U-2b, U-2c): one tree; the CSS tells them apart by data-layout. */
 export function DesktopShell(p: ShellProps) {
   const { applied } = useTheme();
@@ -307,7 +322,11 @@ export function DesktopShell(p: ShellProps) {
         <h1 aria-label="Manufactory Idle" className={css.title}>
           <span aria-hidden="true">MANUFACTORY_</span>
         </h1>
-        {s !== null && <TierReadout snapshot={s} now={() => p.store.now()} />}
+        {s !== null && (
+          <TierSlot p={p} s={s}>
+            <TierReadout snapshot={s} now={() => p.store.now()} />
+          </TierSlot>
+        )}
         <span className={css.spacer} />
         {/* The right-hand group wraps as one onto a second line on a narrow tablet (U-2c). */}
         <div className={css.nav}>
@@ -338,6 +357,7 @@ export function DesktopShell(p: ShellProps) {
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone={false} />}
       <ContentRow p={p} />
+      {p.slots.log}
       {p.slots.command}
       {p.slots.footer}
     </>
@@ -378,15 +398,18 @@ export function PhoneShell(p: ShellProps) {
           </span>
         </h1>
         {s !== null && (
-          <div className={css.readouts}>
-            {p.shown !== "power" && <TierReadout snapshot={s} now={() => p.store.now()} phone />}
-            <PowerReading snapshot={s} powerTab={p.shown === "power"} />
-          </div>
+          <TierSlot p={p} s={s}>
+            <div className={css.readouts}>
+              {p.shown !== "power" && <TierReadout snapshot={s} now={() => p.store.now()} phone />}
+              <PowerReading snapshot={s} powerTab={p.shown === "power"} />
+            </div>
+          </TierSlot>
         )}
         <SettingsButton p={p} label="≡" className={css.menu} />
       </header>
       {s !== null && p.shown === "factory" && <LaneTabs p={p} s={s} phone />}
       <ContentRow p={p} lead={lead} />
+      {p.shown === "factory" && p.slots.log}
       {p.shown === "factory" && p.slots.command}
       {p.slots.floating}
       {s !== null && <PanelTabs p={p} views={PHONE_VIEWS.map((id) => ({ id }))} phone />}

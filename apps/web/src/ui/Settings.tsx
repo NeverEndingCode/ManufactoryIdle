@@ -1,7 +1,9 @@
 // S-11: the settings sheet, a modal dialog with four sections: notation, theme, account and
 // About (U-2e: the GPL notice, W-25, moved out of the footer).
 // U-1i: the Theme fieldset lists the six themes with a registry swatch; a locked one stays
-// listed and focusable, aria-disabled, and picking it does nothing.
+// listed and focusable, aria-disabled, and picking it does nothing. Below it, "Glow and
+// scanlines" (L-16): natively disabled outside terminal, which has no glow to turn off, with
+// the note that says so.
 // A bottom sheet below 600 px and a centred panel above. Escape (anywhere: it listens on the
 // document), Close or the backdrop closes it. Tab wraps inside it, and focus never falls to
 // <body>: whatever unmounts the focused control, the title takes focus. App makes the
@@ -14,10 +16,12 @@ import styles from "./Settings.module.css";
 import { capabilities } from "./capabilities.js";
 import { trapTab } from "./dialog.js";
 import { currentBuildInfo, sourceLinks } from "./source-link.js";
-import { isLocked, THEMES, useTheme } from "./theme.js";
+import { isLocked, THEMES, useCrt, useTheme } from "./theme.js";
 
 /** U-1i: the locked themes' line, and their radio's accessible description. */
 export const LOCKED_LINE = "Unlocks in the prestige store";
+/** L-16: the CRT checkbox's note and description. */
+export const CRT_LINE = "Retro terminal only";
 
 export interface SettingsProps {
   store: Pick<GameStore, "beginSignIn" | "signOut">;
@@ -36,6 +40,7 @@ export function Settings({ store, view, section, onClose }: SettingsProps) {
   const dialog = useRef<HTMLDivElement>(null);
   const [notation, setNotation] = useNotation();
   const theme = useTheme();
+  const crt = useCrt();
   const caps = capabilities(view);
   const atAccount = section === "account";
 
@@ -165,6 +170,21 @@ export function Settings({ store, view, section, onClose }: SettingsProps) {
               </div>
             );
           })}
+          <div className={styles.option} data-crt-option>
+            <input
+              type="checkbox"
+              id={`${titleId}-crt`}
+              checked={crt.on}
+              disabled={!theme.applied.effects}
+              aria-describedby={`${titleId}-crt-line`}
+              onChange={(e) => crt.set(e.currentTarget.checked)}
+              data-crt-choice
+            />
+            <label htmlFor={`${titleId}-crt`}>Glow and scanlines</label>
+            <span id={`${titleId}-crt-line`} className={styles.lockLine}>
+              {CRT_LINE}
+            </span>
+          </div>
         </fieldset>
 
         <section aria-labelledby={accountId} className={styles.group} data-account>

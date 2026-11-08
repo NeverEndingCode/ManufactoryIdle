@@ -2,8 +2,15 @@
 // a second while held, and once more after release; every flush is its own one-TAP batch.
 // The 1 s floor itself is pinned exactly in the store's unit tests (Task 5); this sees it
 // through the network, so it allows 100 ms of observation jitter.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { actionPosts, isTapPost, startGuest } from "./helpers.js";
+
+/** A release flushes only the taps counted since the last flush. The held flush and the
+ * tenth repeat fall due together a second after the press, so wait for the footer to show a
+ * counted tap before releasing: the release then always has one to send. */
+async function counted(footer: Locator): Promise<void> {
+  await expect(footer).not.toHaveAttribute("data-taps-pending", "0");
+}
 
 test("holding the tap flushes once a second, then once after release", async ({ page }) => {
   const posts = actionPosts(page);
@@ -20,6 +27,7 @@ test("holding the tap flushes once a second, then once after release", async ({ 
     await expect(footer).toHaveAttribute("data-holding", "");
     await first;
     await tapPost();
+    await counted(footer);
     const last = tapPost();
     await page.mouse.up();
     await last;
@@ -64,6 +72,7 @@ test("a held T taps like the button", async ({ page }) => {
     await page.keyboard.down("t");
     await expect(footer).toHaveAttribute("data-holding", "");
     await first;
+    await counted(footer);
     const last = tapPost();
     upAt = Date.now();
     await page.keyboard.up("t");

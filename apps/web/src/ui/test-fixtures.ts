@@ -21,7 +21,8 @@ import {
 } from "@manufactory/engine";
 import type { Outcome } from "../sync/errors.js";
 import { makeSnapshot, type Snapshot } from "../sync/snapshot.js";
-import type { BeginResult, Notice, StoreView } from "../sync/store.js";
+import type { Batch } from "../sync/outbox.js";
+import type { AdoptEvent, BeginResult, Notice, StoreView } from "../sync/store.js";
 
 // Paths from strings, not URL objects: under jsdom the global URL is jsdom's, which
 // fileURLToPath refuses. That is also why this file doesn't import sync/test-rig.ts.
@@ -113,8 +114,9 @@ export function starvedPipeState(slice: Slice): WorldState {
   };
 }
 
-/** What App reads from a GameStore, driven by hand: set() a view, tick() the 4 Hz text. `send`
- * never settles unless a test gives it an implementation. */
+/** What App reads from a GameStore, driven by hand: set() a view, adopt() a snapshot, tick() the
+ * clock (the 4 Hz text and any due later() timers). `send` never settles unless a test gives it
+ * an implementation. */
 export interface FakeStore {
   subscribe(fn: () => void): () => void;
   getView(): StoreView;
@@ -130,7 +132,15 @@ export interface FakeStore {
   /** The accounts (O-5, S-7); each resolves with a success unless a test says otherwise. */
   beginSignIn: Mock<(provider: string) => Promise<BeginResult>>;
   signOut: Mock<() => Promise<boolean>>;
+  /** U-9f, L-2: as GameStore. */
+  onAdopt(fn: (e: AdoptEvent) => void): () => void;
+  later(fn: () => void, ms: number): () => void;
   set(patch: Partial<StoreView>): void;
+  /** One adoption, in one act(): the adopt listeners run (the view still reads prev, as in
+   * the real store), then the view's snapshot becomes `next` and the view listeners run.
+   * `prev` defaults to the view's snapshot before. */
+  adopt(e: { prev?: Snapshot | null; next: Snapshot; settled?: Batch | null }): void;
+  /** Moves the clock on, firing the due later() timers in time order, then the tickers. */
   tick(ms: number): void;
   readonly tickers: number;
 }
@@ -155,6 +165,9 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
   let clock = opts.now ?? CLIENT_T0;
   const listeners = new Set<() => void>();
   const tickers = new Set<() => void>();
+  const adoptListeners = new Set<(e: AdoptEvent) => void>();
+  let timers: { at: number; seq: number; fn: () => void }[] = [];
+  let seq = 0;
   return {
     subscribe: (fn) => {
       listeners.add(fn);
@@ -174,13 +187,52 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
     flushTaps: vi.fn(),
     beginSignIn: vi.fn(() => Promise.resolve<BeginResult>({ ok: true })),
     signOut: vi.fn(() => Promise.resolve(true)),
+    onAdopt: (fn) => {
+      adoptListeners.add(fn);
+      return () => {
+        adoptListeners.delete(fn);
+      };
+    },
+    later: (fn, ms) => {
+      const timer = { at: clock + Math.max(0, ms), seq: seq++, fn };
+      timers.push(timer);
+      return () => {
+        timers = timers.filter((t) => t !== timer);
+      };
+    },
     set(patch) {
       view = { ...view, ...patch };
       act(() => listeners.forEach((fn) => fn()));
     },
+    adopt({ prev, next, settled }) {
+      const event: AdoptEvent = {
+        prev: prev === undefined ? view.snapshot : prev,
+        next,
+        settled: settled ?? null,
+      };
+      act(() => {
+        // As the real store: the listeners see the view still at prev, then it emits.
+        adoptListeners.forEach((fn) => fn(event));
+        view = { ...view, snapshot: next };
+        listeners.forEach((fn) => fn());
+      });
+    },
     tick(ms) {
-      clock += ms;
-      act(() => tickers.forEach((fn) => fn()));
+      const until = clock + ms;
+      act(() => {
+        // A timer a firing timer sets, due by `until`, fires too.
+        for (;;) {
+          const due = timers
+            .filter((t) => t.at <= until)
+            .sort((a, b) => a.at - b.at || a.seq - b.seq)[0];
+          if (due === undefined) break;
+          timers = timers.filter((t) => t !== due);
+          clock = due.at;
+          due.fn();
+        }
+        clock = until;
+        tickers.forEach((fn) => fn());
+      });
     },
     get tickers() {
       return tickers.size;
@@ -188,18 +240,30 @@ export function fakeStore(snapshot: Snapshot | null, opts: { now?: number } = {}
   };
 }
 
-/** matchMedia for a viewport this wide: min-width / max-width queries, plus
- * `prefers-reduced-motion: reduce` when `reducedMotion`. resize() changes the width and fires
- * `change` on each list whose answer flipped. Undo with vi.unstubAllGlobals(). */
-export function stubWidth(initial: number, opts: { reducedMotion?: boolean } = {}) {
+/** matchMedia for a viewport this wide (and `height` tall, 900 by default): min-/max-width and
+ * min-/max-height queries, plus `prefers-reduced-motion: reduce` when `reducedMotion`. resize()
+ * changes the width (and the height, if given) and fires `change` on each list whose answer
+ * flipped. Undo with vi.unstubAllGlobals(). */
+export function stubWidth(
+  initial: number,
+  opts: { reducedMotion?: boolean; height?: number } = {},
+) {
   let width = initial;
+  let height = opts.height ?? 900;
   const lists: { q: string; matches: boolean; fns: Set<() => void> }[] = [];
   const evaluate = (q: string) => {
     if (q.includes("prefers-reduced-motion"))
       return /:\s*reduce\)/.test(q) === !!opts.reducedMotion;
     const min = /min-width:\s*(\d+)px/.exec(q);
     const max = /max-width:\s*(\d+)px/.exec(q);
-    return (min === null || width >= Number(min[1])) && (max === null || width <= Number(max[1]));
+    const minH = /min-height:\s*(\d+)px/.exec(q);
+    const maxH = /max-height:\s*(\d+)px/.exec(q);
+    return (
+      (min === null || width >= Number(min[1])) &&
+      (max === null || width <= Number(max[1])) &&
+      (minH === null || height >= Number(minH[1])) &&
+      (maxH === null || height <= Number(maxH[1]))
+    );
   };
   vi.stubGlobal("matchMedia", (q: string) => {
     const entry = { q, matches: evaluate(q), fns: new Set<() => void>() };
@@ -214,8 +278,9 @@ export function stubWidth(initial: number, opts: { reducedMotion?: boolean } = {
     } as unknown as MediaQueryList;
   });
   return {
-    resize(w: number) {
+    resize(w: number, h?: number) {
       width = w;
+      if (h !== undefined) height = h;
       act(() => {
         for (const l of lists) {
           const now = evaluate(l.q);

@@ -271,8 +271,14 @@ describe("the shell (U-2)", { timeout: 60_000 }, () => {
         { kind: "tier-up", text: "Tier 2 reached." },
       ],
     });
-    const shown = region.querySelectorAll("[data-notice]");
-    expect(shown).toHaveLength(3);
+    // Three notices in the region; two of them seen. The tier-up is said, hidden, outside the
+    // visible list (L-17): the banner is its picture.
+    expect(region.querySelectorAll("[data-notice]")).toHaveLength(3);
+    const shown = region.querySelectorAll(".notice-overlay > [data-notice]");
+    expect([...shown].map((n) => n.getAttribute("data-notice"))).toEqual(["rejected", "offline"]);
+    const tierUp = region.querySelector('[data-notice="tier-up"]')!;
+    expect(tierUp.classList.contains("visually-hidden")).toBe(true);
+    expect(tierUp.parentElement).toBe(region);
     const list = shown[0]!.parentElement!;
     expect(region.contains(list)).toBe(true);
     expect(list.classList.contains("notice-overlay")).toBe(true);

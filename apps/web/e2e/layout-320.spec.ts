@@ -40,6 +40,10 @@ test("every view fits 320 px", async ({ page }) => {
 
   await test.step("Factory", async () => {
     await expect(page.locator('#view-factory [role="option"]').first()).toBeVisible();
+    // U-9b: no TREND column on the phone (the drawer's meta line has the trend).
+    await expect(
+      page.locator('#view-factory [role="option"] [class*="_trend_"]').first(),
+    ).toBeHidden();
     await expectNoOverflow(page, "factory");
   });
 
@@ -168,6 +172,52 @@ test("every view fits 320 px", async ({ page }) => {
   });
 });
 
+// U-9a / L-10 / L-11: the phone's log. A buy puts a line in it; the ticker shows it, clear of the
+// floating TAP, and opens the modal log sheet, which fits 320 px and gives focus back on close.
+test("the log ticker and its sheet fit 320 px", async ({ page }) => {
+  const { root } = await startGuest(page);
+  const ticker = page.locator("[data-log-ticker]");
+
+  await test.step("a Miner bought from the drawer sheet puts a line in the log", async () => {
+    await expect(ticker).toHaveCount(0);
+    await page.locator('[role="option"][data-item="iron_ore"]').click();
+    const drawer = page.locator('[data-drawer="iron_ore"]');
+    await expect(drawer).toBeVisible();
+    const buy = drawer.locator('[data-mark-buy="1"][data-count="1"]');
+    await expect(buy).toHaveAttribute("aria-disabled", "false", { timeout: 60_000 });
+    await buy.click();
+    await expect(root).toHaveAttribute("data-state-version", "1");
+    await drawer.getByRole("button", { name: "Close" }).click();
+    await expect(drawer).toHaveCount(0);
+  });
+
+  await test.step("the ticker", async () => {
+    await expect(ticker).toBeVisible();
+    await expect(ticker).toHaveAccessibleName("Factory log, 1 entry");
+    await expect(ticker).toContainText(/bought 1 MINER/);
+    const t = await boxOf(ticker);
+    const tap = await boxOf(page.locator("[data-power][data-with-command]"));
+    const overlap =
+      tap.x < t.x + t.width &&
+      t.x < tap.x + tap.width &&
+      tap.y < t.y + t.height &&
+      t.y < tap.y + tap.height;
+    expect(overlap, `TAP ${JSON.stringify(tap)} vs ticker ${JSON.stringify(t)}`).toBe(false);
+    await expectNoOverflow(page, "the log ticker");
+  });
+
+  await test.step("the log sheet", async () => {
+    await ticker.click();
+    const sheet = page.locator('[data-log-sheet][aria-modal="true"]');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.locator("li")).toHaveCount(1);
+    await expectNoOverflow(page, "the log sheet");
+    await sheet.getByRole("button", { name: "Close" }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(ticker).toBeFocused();
+  });
+});
+
 test("About in Settings links the source at the built commit, and the source maps are served", async ({
   page,
   request,
@@ -193,4 +243,53 @@ test("About in Settings links the source at the built commit, and the source map
   const json = (await map.json()) as { sources?: unknown };
   expect(Array.isArray(json.sources)).toBe(true);
   expect((json.sources as unknown[]).length).toBeGreaterThan(0);
+});
+
+// U-2e / U-6c: the notices never lie over the floating TAP. The notices (35) are above the TAP
+// (20), so where they met the guest's save button covered the TAP's top and a thumb aimed at
+// TAP could hit save. The overlay stops short of the TAP's column instead. The save chip is
+// up for a guest from tier 1 on (S-12), so the API's answers are read one tier up: the chip
+// shows from the first frame. Each tab places the TAP differently.
+test("the notices clear the floating TAP at 390 and 320 px, on every tab", async ({ page }) => {
+  const tierUp = async (route: Route) => {
+    const res = await route.fetch();
+    if (!res.ok()) return route.fulfill({ response: res });
+    const body = (await res.json()) as {
+      state?: { tier: number };
+      world?: { state: { tier: number } };
+    };
+    const world = body.world ?? body;
+    if (world.state !== undefined) world.state.tier += 1;
+    return route.fulfill({ response: res, json: body });
+  };
+  for (const path of ["**/api/guests", "**/api/world", "**/api/actions"])
+    await page.route(path, tierUp);
+  await startGuest(page);
+  const panels = page.getByRole("tablist", { name: "Panels" });
+  const tap = page.locator("[data-power] button[data-tap]");
+  const notices = page.locator(".notice-overlay [data-notice]");
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 640 });
+    for (const name of ["factory", "power", "priority", "handbook"]) {
+      await panels.getByRole("tab", { name: new RegExp(`${name}$`) }).click();
+      await expect(tap).toBeVisible();
+      await expect(
+        page.locator('.notice-overlay [data-notice="save"]'),
+        `${width} ${name}`,
+      ).toBeVisible();
+      const t = await boxOf(tap);
+      for (const n of await notices.all()) {
+        const b = await boxOf(n);
+        const meet =
+          b.x < t.x + t.width &&
+          t.x < b.x + b.width &&
+          b.y < t.y + t.height &&
+          t.y < b.y + b.height;
+        expect(
+          meet,
+          `${width} px, ${name}: a notice over the TAP (${JSON.stringify({ b, t })})`,
+        ).toBe(false);
+      }
+    }
+  }
 });

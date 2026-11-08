@@ -19,6 +19,14 @@
   text-shadow: var(--glow-advice);
 }
 
+/* L-23: below desktop the gaps are 8 px, so at 600 px the command keeps its 20 characters
+   (L-1) and the run its whole label in the common case. */
+@media (max-width: 1000px) {
+  .bar {
+    gap: 8px;
+  }
+}
+
 .prompt {
   flex: none;
   color: var(--t1);
@@ -28,8 +36,10 @@
 
 .command {
   position: relative;
-  flex: 0 1 auto;
-  min-width: 0;
+  /* L-1: the command gives up its overflow first (a shrink weight far above the run's), but
+     never its 20 characters: past that the run label gives way, down to its key hint. */
+  flex: 0 1000 auto;
+  min-width: min(20ch, 100%);
   overflow: hidden;
   color: var(--advice);
   font-size: 14px;
@@ -58,6 +68,44 @@
   }
 }
 
+/* U-9e: the typed words. The plain voice remounts this span per command (keyed on the text),
+   so the fade replays: the crossfade. The shell voice types instead, and while it types the
+   cursor holds steady, as a terminal's does. */
+@media (prefers-reduced-motion: no-preference) {
+  .typed {
+    animation: fade-in 150ms ease-out;
+  }
+
+  .command:has(> [data-typing]) + .cursor {
+    animation: none;
+  }
+}
+
+/* While it types, the cursor follows the letters: the command keeps 20 characters (L-1), so the
+   bar's own cursor would stand at the 20th, apart from them. It keeps its place, hidden, so
+   nothing moves; the typed span's steady block stands in, 4 px off the letters as the bar's is
+   (its 14 px gap less its -10 px margin), its block margins keeping the line box (and the bar)
+   the height it was. */
+.command:has(> [data-typing]) + .cursor {
+  visibility: hidden;
+}
+
+.typed[data-typing]::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 20px;
+  margin: -3px 0 -3px 4px;
+  background: var(--advice);
+  vertical-align: middle;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .spacer {
   flex: 1;
 }
@@ -76,9 +124,15 @@
   cursor: pointer;
 }
 
-/* [ENTER] run: 40 px, --advice-fill. */
+/* [ENTER] run: 40 px, --advice-fill. It shrinks before the command does (L-1): its label
+   ellipsizes down to the key hint, and its aria-label always says the whole thing. */
 .run {
-  flex: none;
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  overflow: hidden;
   height: 40px;
   padding: 0 14px;
   border: 1px solid var(--advice-fill);
@@ -91,6 +145,20 @@
   text-shadow: none;
   white-space: nowrap;
   cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  /* The key hint "[ENTER]" and its 1ch margin, plus the padding and border. */
+  .run {
+    min-width: calc(8ch + 30px);
+  }
+}
+
+.runText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Off (busy or unaffordable): outlined, so the countdown stays readable. */
@@ -164,6 +232,7 @@
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
+  text-shadow: none;
 }
 
 /* Read, not seen: the command's words for a screen reader while the visible span types. */

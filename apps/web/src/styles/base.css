@@ -1,4 +1,5 @@
-/* Rows, not cards; hairlines; no shadows or gradients (W-17). */
+/* Rows, not cards; hairlines; no shadows or gradients (W-17), bar the glow and the scanlines,
+   which live in tokens (U-9c). */
 *,
 *::before,
 *::after {
@@ -44,6 +45,11 @@ button {
   height: 100dvh;
   padding: 16px 22px;
   overflow: hidden;
+  /* U-9c: the phosphor glow, inherited by all the text, and the scanlines as the shell's own
+     background, under the content, never an overlay over it (U-1f). Both none outside
+     terminal, under high contrast and with CRT off; the glow none under reduced motion. */
+  text-shadow: var(--glow-text);
+  background-image: var(--scanlines);
 }
 
 .app[data-layout="tablet"] {
@@ -129,9 +135,46 @@ button {
   white-space: nowrap;
 }
 
+/* The phone's readouts box is a column aligned to the end. The readout is stretched to it and
+   capped by it, so it never runs over the title. Inside, a row: the tier and the numbers keep
+   their width; the item name has none of its own (width 0), so the readout asks only for the
+   tier and the numbers, and the name grows into what the header has left, up to its own
+   length, ellipsized past that. So the name gives way first, then the title (Shell.module.css),
+   and the tier and the numbers never do. */
 .app[data-layout="phone"] .tier-readout {
+  align-self: stretch;
+  max-width: 100%;
   font-size: var(--fs-small);
   text-align: right;
+}
+
+.app[data-layout="phone"] .tier-readout [data-shown] {
+  display: flex;
+  justify-content: flex-end;
+  white-space: pre;
+}
+
+/* The phone shows one requirement: its name and number are items of the row, so the free space
+   is all at the left. A flex row drops the space text between them; the number's margin is it. */
+.app[data-layout="phone"] .tier-readout [data-requirement] {
+  display: contents;
+}
+
+.app[data-layout="phone"] .tier-readout .req-name {
+  flex: 1 1 0;
+  width: 0;
+  max-width: max-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app[data-layout="phone"] .tier-readout .req-lead,
+.app[data-layout="phone"] .tier-readout .num {
+  flex: none;
+}
+
+.app[data-layout="phone"] .tier-readout .num {
+  margin-left: 1ch;
 }
 
 .app-loading {
@@ -154,7 +197,8 @@ button {
 }
 
 /* The phone's drawer sheet (30, Drawer.module.css) covers the content row; a rejection toast
-   must show over it. Still under the NEXT_BUY sheet (40) and Settings (50), the modal ones. */
+   must show over it. Still under the log sheet (38), the NEXT_BUY sheet (40) and Settings (50),
+   the modal ones. */
 .app[data-layout="phone"] .notices {
   z-index: 35;
 }
@@ -167,6 +211,14 @@ button {
   padding: 0 6px 6px;
   overflow-y: auto;
   pointer-events: auto;
+}
+
+/* U-6c: on the phone the floating TAP (20) stands at the main box's bottom right, under the
+   notices (35). The overlay stops short of its column, as the log ticker does: the TAP's 14 px
+   inset, its 68 px and an 8 px gap, less the main box's 12 px, plus the overlay's own 6 px.
+   Never by raising the TAP, which would then cover a notice instead. */
+.app[data-layout="phone"]:has([data-tap]) .notice-overlay {
+  padding-right: 84px;
 }
 
 .notice-list:empty {
@@ -202,6 +254,8 @@ button {
   font-family: var(--font-ui);
   font-size: var(--fs-label);
   font-weight: 600;
+  /* A solid fill: no glow (U-9c, tokens.test 12a). */
+  text-shadow: none;
   cursor: pointer;
 }
 
@@ -209,6 +263,7 @@ button {
   border-color: var(--line);
   background: none;
   color: var(--t1);
+  text-shadow: inherit;
 }
 
 /* aria-disabled: off but still focusable (the drawer's spends keep focus while busy). */

@@ -1,5 +1,5 @@
 // V-12 / K-5: one inert pass for every modal (Settings, the help, the phone NEXT_BUY sheet,
-// the phone drawer sheet), and the Tab wrap they share. React 18 has no prop for inert, so
+// the log sheet, the phone drawer sheet), and the Tab wrap they share. React 18 has no prop for inert, so
 // it's set on the DOM.
 
 /** K-5: every modal's host, topmost first. Only one is ever open (each opener sits behind the
@@ -8,6 +8,7 @@ export const MODAL_HOSTS: readonly string[] = [
   "[data-settings-host]",
   "[data-help-host]",
   "[data-next-buy-host]",
+  "[data-log-host]",
   "[data-drawer-host]",
 ];
 

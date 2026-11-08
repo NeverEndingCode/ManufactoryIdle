@@ -2,13 +2,13 @@
 // fetch, with the server's clock following the client's FakeClientClock (P-8). Every wait is
 // on store state (idle()), never a sleep (P-9).
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { deserializeWorld, serializeWorld, type Action } from "@manufactory/engine";
 import { dockModel } from "../ui/dock-model.js";
 import { MIN_REPOLL_MS, RETRY_STEPS_MS } from "./constants.js";
 import { browserTokenStorage, memoryTokenStorage, type TokenStorage } from "./identity.js";
 import { isPlateaued } from "./interpolate.js";
-import { GameStore } from "./store.js";
+import { GameStore, type AdoptEvent } from "./store.js";
 import { makeRig, type TestRig } from "./test-rig.js";
 import type { ActionsRequest, FetchLike } from "./wire.js";
 
@@ -933,5 +933,153 @@ describe("GameStore taps, polling and tiers (Q-11, Q-13, Q-18)", () => {
     expect(store.getView().snapshot!.contentChecksum).toBe(repin.to);
     // The 3 are in the snapshot now and no longer pending: never counted twice.
     expect(stacks()).toBe(4);
+  });
+});
+
+// U-9f, L-2: the store reports each adoption, with the batch it settled. Numbered on from the
+// tests above; the plan's brief calls them 28 to 32.
+describe("GameStore adoption events (U-9f, L-2)", { timeout: 60_000 }, () => {
+  /** Every AdoptEvent from now on, with the view's snapshot at the moment it arrived. */
+  function record(store: GameStore) {
+    const events: (AdoptEvent & { seen: unknown })[] = [];
+    const off = store.onAdopt((e) => events.push({ ...e, seen: store.getView().snapshot }));
+    return { events, off };
+  }
+
+  // Catches: passing the id, not the Batch; reading outbox.inFlight after it moved on.
+  it("33. a buy reports its batch", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(60_000);
+    const before = store.getView().snapshot!;
+    const { events } = record(store);
+    const sending = store.send([BUY_CONSTRUCTOR], "drawer:iron_ore:buy");
+    const [batch] = store.getView().pending;
+    expect(batch!.label).toBe("drawer:iron_ore:buy");
+    expect((await sending).kind).toBe("adopt");
+    await store.idle();
+    expect(events).toHaveLength(1);
+    const [e] = events;
+    expect(e!.settled).not.toBeNull();
+    expect(e!.settled!.label).toBe("drawer:iron_ore:buy");
+    expect(e!.settled!.id).toBe(batch!.id);
+    expect(e!.settled!.actions).toEqual([BUY_CONSTRUCTOR]);
+    expect(e!.prev).toBe(before);
+    expect(e!.next.stateVersion).toBe(before.stateVersion + 1);
+    expect(e!.next).toBe(store.getView().snapshot);
+  });
+
+  // Catches: a GET reporting some batch (a stale #settlingId, or the outbox's head).
+  it("34. a poll reports null", async () => {
+    const { store, rig } = await setup();
+    const s = store.getView().snapshot!;
+    const { events } = record(store);
+    await rig.advance(s.schedule.nextBoundaryAtMs! - s.schedule.atMs + 300);
+    await store.idle();
+    expect(gets()).toHaveLength(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.settled).toBeNull();
+    expect(events[0]!.prev).toBe(s);
+  });
+
+  // Catches: calling the listeners before the isAdoptable check.
+  it("35. a stale response reports nothing", async () => {
+    const { store, rig } = await setup();
+    await rig.advance(10 * 60_000);
+    const { events } = record(store);
+    const release = rig.fetch.hold("GET", "/api/world");
+    store.onFocus();
+    expect(gets()).toHaveLength(1);
+    expect((await store.send([BUY_CONSTRUCTOR], "buy")).kind).toBe("adopt");
+    expect(events).toHaveLength(1);
+    release();
+    await store.idle();
+    expect(version(store)).toBe(1); // the GET was stale
+    expect(events).toHaveLength(1);
+  });
+
+  // Catches: emitting before the listeners; a throwing listener breaking adoption or the next
+  // listener; an unsubscribe that doesn't; later() off the store's clock.
+  it("36. the order, a throwing listener, unsubscribing, and later()", async () => {
+    const { store, rig } = await setup();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throwing = store.onAdopt(() => {
+      throw new Error("listener");
+    });
+    const { events, off } = record(store);
+    await rig.advance(MIN_REPOLL_MS);
+    store.onFocus();
+    await store.idle();
+    expect(events).toHaveLength(1);
+    const [e] = events;
+    expect(e!.seen).toBe(e!.prev); // the view hadn't emitted the new snapshot yet
+    expect(e!.seen).not.toBe(e!.next);
+    expect(error).toHaveBeenCalled();
+    expect(store.getView().status).toBe("ready");
+    expect(store.getView().snapshot).toBe(e!.next);
+
+    off();
+    throwing();
+    await rig.advance(MIN_REPOLL_MS);
+    store.onFocus();
+    await store.idle();
+    expect(gets()).toHaveLength(2);
+    expect(events).toHaveLength(1);
+    error.mockRestore();
+
+    const fired = vi.fn();
+    store.later(fired, 500);
+    await rig.advance(499);
+    expect(fired).not.toHaveBeenCalled();
+    await rig.advance(1);
+    expect(fired).toHaveBeenCalledTimes(1);
+    const cancelled = vi.fn();
+    const cancel = store.later(cancelled, 500);
+    cancel();
+    await rig.advance(1_000);
+    expect(cancelled).not.toHaveBeenCalled();
+    expect(fired).toHaveBeenCalledTimes(1);
+  });
+
+  // Catches: later() timers outliving stop() (no live-id set cleared there); a later() set
+  // while stopped firing anyway (fn not skipped on #stopped); a negative ms handed to the
+  // ClientClock unclamped (FakeStore clamps it, so the two disagreed).
+  it("38. stop() cancels later() timers, and a negative ms is 0", async () => {
+    const { store, rig } = await setup();
+    const before = rig.clock.pendingTimers;
+    const live = vi.fn();
+    store.later(live, 500);
+    store.later(live, 1_000);
+    expect(rig.clock.pendingTimers).toBe(before + 2);
+    store.stop();
+    const stoppedLater = vi.fn();
+    store.later(stoppedLater, 100);
+    await rig.advance(2_000);
+    expect(live).not.toHaveBeenCalled();
+    expect(stoppedLater).not.toHaveBeenCalled();
+
+    await store.start();
+    await store.idle();
+    const set = vi.spyOn(rig.clock, "setTimeout");
+    const early = vi.fn();
+    store.later(early, -250);
+    expect(set).toHaveBeenLastCalledWith(expect.any(Function), 0);
+    await rig.advance(0);
+    expect(early).toHaveBeenCalledTimes(1);
+    store.stop();
+  });
+
+  // Catches: a world change that keeps the old snapshot as prev (L-4); #arm() emitting the
+  // new snapshot before the listeners, when polling turns on.
+  it("37. a new factory gives prev: null", async () => {
+    const { store } = await setup();
+    const { events } = record(store);
+    await store.newFactory();
+    await store.idle();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.prev).toBeNull();
+    expect(events[0]!.seen).toBeNull();
+    expect(events[0]!.settled).toBeNull();
+    expect(events[0]!.next.stateVersion).toBe(0);
+    expect(store.getView().snapshot).toBe(events[0]!.next);
   });
 });

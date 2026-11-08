@@ -117,9 +117,20 @@ function verb(a: FrameAction, voice: Voice): string {
 
 const seconds = (inMs: number) => Math.max(1, Math.ceil(inMs / 1000));
 
+const two = (n: number) => String(n).padStart(2, "0");
+
+/** The visible wait, compact so a long one can't squeeze the command (L-1): "42s" up to 99 s,
+ * then "1m 05s", then over an hour "1h 02m". The spoken name keeps whole seconds (runName). */
+function waitText(n: number): string {
+  if (n <= 99) return `${n}s`;
+  if (n < 3600) return `${Math.floor(n / 60)}m ${two(n % 60)}s`;
+  return `${Math.floor(n / 3600)}h ${two(Math.floor((n % 3600) / 60))}m`;
+}
+
 /**
  * The run button's visible label, from the frame's own logic (U-4a): busy reads "running…",
- * unaffordable counts down on the 4 Hz tick ("affordable in 12s", "[ 12s ]" on the phone) or
+ * unaffordable counts down on the 4 Hz tick ("affordable in 12s", "[ 12s ]" on the phone,
+ * "1m 05s" past 99 s, "1h 02m" past an hour) or
  * reads "not affordable yet"; otherwise "run" on the bar, the verb elsewhere ("[ buy 4 ]" on
  * the phone, "buy 4" on the card, whose key hint is its own span).
  */
@@ -137,9 +148,9 @@ export function runLabel(
   if (busy) return shell ? "running…" : "Running…";
   if (!a.affordable) {
     if (a.inMs === null) return shell ? "not affordable yet" : "Not affordable yet";
-    const n = seconds(a.inMs);
-    if (kind === "split" || kind === "sheet") return `[ ${n}s ]`;
-    return shell ? `affordable in ${n}s` : `Affordable in ${n}s`;
+    const wait = waitText(seconds(a.inMs));
+    if (kind === "split" || kind === "sheet") return `[ ${wait} ]`;
+    return shell ? `affordable in ${wait}` : `Affordable in ${wait}`;
   }
   if (kind === "bar") return shell ? "run" : "Run";
   if (kind === "card") return verb(action, voice);

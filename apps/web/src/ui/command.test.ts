@@ -205,6 +205,28 @@ describe("runLabel, runName (U-4a, V-17)", () => {
     expect(runLabel(model(frameless), frameless, "shell", "split", AFFORDABLE, false)).toBe("—");
   });
 
+  // Catches (fix round 1, L-1): a seconds-only countdown that grows a character per digit
+  // ("affordable in 3725s") and squeezes the command; a compact form leaking into the name.
+  it("1. a long wait reads compactly: 1m 05s over 99 s, 1h 02m over an hour", () => {
+    const m = model(fresh);
+    const inS = (n: number) => ({ affordable: false, inMs: n * 1000 }) as const;
+    const cases: [number, string][] = [
+      [99, "99s"],
+      [100, "1m 40s"],
+      [65 + 60, "2m 05s"],
+      [3599, "59m 59s"],
+      [3600, "1h 00m"],
+      [3600 + 125, "1h 02m"],
+      [100 * 3600, "100h 00m"],
+    ];
+    for (const [n, wait] of cases) {
+      expect(runLabel(m, fresh, "shell", "bar", inS(n), false)).toBe(`affordable in ${wait}`);
+      expect(runLabel(m, fresh, "plain", "card", inS(n), false)).toBe(`Affordable in ${wait}`);
+      expect(runLabel(m, fresh, "shell", "split", inS(n), false)).toBe(`[ ${wait} ]`);
+    }
+    expect(runName(m, fresh, inS(125))).toBe("Buy 1 Constructor, affordable in 125 seconds");
+  });
+
   it("1. the name is the plain spend text, plus the wait when off", () => {
     expect(runName(model(fresh), fresh, AFFORDABLE)).toBe("Buy 1 Constructor");
     expect(runName(model(fresh), fresh, IN_12S)).toBe(

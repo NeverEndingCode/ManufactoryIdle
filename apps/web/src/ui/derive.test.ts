@@ -7,6 +7,7 @@ import {
   laneRows,
   laneStatus,
   laneTabs,
+  optionName,
   powerLaneId,
   satisfaction,
   stateClass,
@@ -417,5 +418,22 @@ describe("lane lights and tabs (U-3e, U-6a, V-16)", () => {
     const t8 = laneTabs(tier8, bottleneckRow(tier8), "desktop");
     expect(t8.every((t) => !t.locked)).toBe(true);
     expect(t8.filter((t) => t.bottleneck).map((t) => t.id)).toEqual(["power"]);
+  });
+});
+
+describe("optionName (U-7d, L-15)", () => {
+  // Catches: the trend word after ", bottleneck" (the e2e specs match the name's end), or a word
+  // spoken when there is none.
+  it("the trend word comes before bottleneck, and is absent with no word", () => {
+    const row = laneRows(fresh, "iron").find((r) => r.itemId === "iron_plate")!;
+    const plain = optionName(fresh, row, true);
+    expect(plain).toMatch(/satisfied, bottleneck$|idle, bottleneck$|paused, bottleneck$/);
+    expect(optionName(fresh, row, true, "rising")).toBe(
+      plain.replace(/, bottleneck$/, ", rising, bottleneck"),
+    );
+    expect(optionName(fresh, row, false, "falling")).toBe(
+      `${optionName(fresh, row, false)}, falling`,
+    );
+    expect(optionName(fresh, row, true, null)).toBe(plain);
   });
 });

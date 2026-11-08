@@ -73,6 +73,7 @@ export function PowerFooter(p: TapProps) {
       data-power
       data-stacks={m.stacks}
       data-holding={p.taps.holding ? "" : undefined}
+      data-taps-pending={p.taps.pending}
     >
       <span className={css.pwr}>PWR</span>
       <div className={css.grid}>

@@ -30,6 +30,22 @@ test("reduced motion runs no animation and keeps the bottleneck in words", async
   await expect(gutter).toBeVisible();
   await expect(gutter).toHaveText("!");
   expect(await running(page)).toEqual([]);
+  // U-8c, L-19: the advice doesn't type. Once the words are there for a reader, the visible
+  // span already reads the whole shell command: one read, no wait for typing.
+  const command = page.locator("[data-command]");
+  await expect(command.locator("[data-command-text]")).toHaveText(
+    "Buy 1 Constructor Mk.1 for Iron Plate",
+  );
+  expect(await command.locator("[data-typed]").textContent()).toBe(
+    "buy 1 constructor_mk1 --lane iron --for iron_plate",
+  ); // U-8c, U-9c: no glow under reduced motion (the user's call); the scanlines stay, being
+  // still.
+  const fx = await page.locator(".app").evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { shadow: cs.textShadow, image: cs.backgroundImage };
+  });
+  expect(fx.shadow).toBe("none");
+  expect(fx.image).toContain("repeating-linear-gradient");
 });
 
 // A fresh test is a new page in a new context, with no emulation.

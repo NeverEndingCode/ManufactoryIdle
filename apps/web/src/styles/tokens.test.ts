@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { THEMES } from "../ui/theme.js";
-import { block, declarations, resolve, themePrelude, themeTokens } from "./css-walk.js";
+import { block, declarations, resolve, themePrelude, themeTokens, type Decl } from "./css-walk.js";
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
 
@@ -410,7 +410,7 @@ describe("the CSS source", () => {
     );
     expect(rule.height).toBe("var(--row-h)");
     expect(rule.overflow).toBe("hidden");
-    const CELLS = ["row", "gutter", "name", "rate", "sat", "machines", "storage", "stock"];
+    const CELLS = ["row", "gutter", "name", "rate", "sat", "trend", "machines", "storage", "stock"];
     const reaches = (selector: string) =>
       [...selector.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].some((m) => CELLS.includes(m[1]!));
     const bad = row
@@ -450,6 +450,98 @@ describe("the CSS source", () => {
       if (d.value === "none") expect(d.stack, shown.join("; ")).toEqual([".key-hint"]);
       else expect(d.stack, shown.join("; ")).toEqual([FINE, ".key-hint"]);
     }
+  });
+
+  // U-9c / L-16. Catches: a filled button that inherits the .app glow, which smears the dark
+  // text on its bright fill (Delight's buttons set text-shadow: none).
+  it("12a. every --accent or --advice-fill fill sets text-shadow: none", () => {
+    const bad = (decls: readonly Decl[]) => {
+      const rules = new Map<string, Decl[]>();
+      for (const d of decls) {
+        const key = `${d.file}\u0000${d.stack.join(" > ")}`;
+        rules.set(key, [...(rules.get(key) ?? []), d]);
+      }
+      return [...rules.values()]
+        .filter((rule) =>
+          rule.some(
+            (d) =>
+              (d.property === "background" || d.property === "background-color") &&
+              /var\(\s*--(accent|advice-fill)\s*\)/.test(d.value),
+          ),
+        )
+        .filter((rule) => !rule.some((d) => d.property === "text-shadow" && d.value === "none"))
+        .map((rule) => `${rule[0]!.file}: ${rule[0]!.stack.join(" > ")}`);
+    };
+    // The self-check: a synthetic fill without it is caught, with it is not, and an outline
+    // button (no fill) needs nothing.
+    expect(bad(declarations("x.css", ".a { background: var(--accent); color: red }"))).toEqual([
+      "x.css: .a",
+    ]);
+    expect(
+      bad(declarations("x.css", ".a { background-color: var(--advice-fill); text-shadow: none }")),
+    ).toEqual([]);
+    expect(bad(declarations("x.css", ".a { border: 1px solid var(--accent) }"))).toEqual([]);
+    expect(bad(all)).toEqual([]);
+    // And there are fills to police.
+    expect(
+      all.filter((d) => d.property === "background" && d.value === "var(--accent)").length,
+    ).toBeGreaterThan(3);
+  });
+
+  // U-9c, U-8c / L-16. Catches: a glow under reduced motion, high contrast, forced colours or
+  // CRT off; scanlines dropped under reduced motion (they don't move, so they stay); or an off
+  // block before the phone block, whose --glow-title would win back.
+  it("12b. the off switches: reduce, more contrast, forced colours and CRT off", () => {
+    const GLOWS = ["--glow-text", "--glow-title", "--glow-advice", "--glow-banner", "--glow-tap"];
+    const off = (names: string[]) => Object.fromEntries(names.map((n) => [n, "none"]));
+    const at = (stack: string) =>
+      Object.fromEntries(
+        tokensCss.filter((d) => d.stack.join(" > ") === stack).map((d) => [d.property, d.value]),
+      );
+    const REDUCE = "@media (prefers-reduced-motion: reduce) > :root";
+    const CONTRAST = "@media (prefers-contrast: more) > :root";
+    const FORCED = "@media (forced-colors: active) > :root";
+    const CRT = ':root[data-crt="off"]';
+    expect(at(REDUCE)).toEqual(off(GLOWS));
+    expect(at(CONTRAST)).toEqual(off([...GLOWS, "--scanlines"]));
+    expect(at(FORCED)).toEqual(off([...GLOWS, "--scanlines"]));
+    expect(at(CRT)).toEqual(off([...GLOWS, "--scanlines"]));
+    // Source order: each after the phone block, so the phone's --glow-title can't win back.
+    const phone = tokensCss
+      .map((d) => d.stack.join(" > "))
+      .lastIndexOf("@media (max-width: 599px) > :root");
+    expect(phone).toBeGreaterThan(0);
+    for (const stack of [REDUCE, CONTRAST, FORCED, CRT])
+      expect(
+        tokensCss.findIndex((d) => d.stack.join(" > ") === stack),
+        stack,
+      ).toBeGreaterThan(phone);
+  });
+
+  // U-9c, U-1f. Catches: a glow or scanline that animates (a flicker), or scanlines moved to an
+  // overlay over the text, where they'd lower its contrast.
+  it("12c. the glow is static, and the scanlines are .app's background, under the content", () => {
+    const moving = all.filter(
+      (d) =>
+        ((d.property === "transition" || d.property === "transition-property") &&
+          /text-shadow|background-image|background(?![-\w])|all/.test(d.value)) ||
+        (d.stack.some((s) => s.startsWith("@keyframes")) &&
+          /^(text-shadow|background|background-image)$/.test(d.property)),
+    );
+    expect(moving.map((d) => `${d.file}: ${d.stack.join(" > ")} { ${d.property} }`)).toEqual([]);
+    const app = Object.fromEntries(
+      all
+        .filter((d) => d.file === "styles/base.css" && d.stack.join(" > ") === ".app")
+        .map((d) => [d.property, d.value]),
+    );
+    expect(app["text-shadow"]).toBe("var(--glow-text)");
+    expect(app["background-image"]).toBe("var(--scanlines)");
+    const scan = all.filter(
+      (d) => d.file !== "styles/tokens.css" && d.value.includes("--scanlines"),
+    );
+    expect(scan.map((d) => `${d.file}: ${d.stack.join(" > ")} { ${d.property} }`)).toEqual([
+      "styles/base.css: .app { background-image }",
+    ]);
   });
 
   // U-8d / K-16. Catches: a module min-height under 44 px, which beats the coarse rule's

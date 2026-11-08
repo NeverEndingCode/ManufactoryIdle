@@ -23,13 +23,17 @@
     />
     <!-- V-6: the stored theme before first paint, migrated as theme.ts's migrateTheme does
          (theme.test.ts runs this against its table). Locks aren't known yet: a locked theme
-         paints as terminal, and main.tsx applies the capability-aware result. -->
+         paints as terminal, and main.tsx applies the capability-aware result. L-16: the CRT
+         setting too, as theme.ts's applyCrt does: only "off" is off. -->
     <script>
       (function () {
         var t = null;
+        var c = null;
         try {
           t = localStorage.getItem("mi.theme");
+          c = localStorage.getItem("mi.crt");
         } catch (e) {}
+        if (c === "off") document.documentElement.setAttribute("data-crt", "off");
         if (t === "dark") t = "clean-dark";
         else if (t === "light") t = "clean-light";
         var free = ["terminal", "clean-dark", "clean-oled", "clean-light"];

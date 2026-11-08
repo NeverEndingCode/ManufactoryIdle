@@ -23,6 +23,20 @@
   font-weight: 400;
   line-height: 1;
   white-space: nowrap;
+  /* U-9c: the title's own glow (none outside terminal and with the off switches). */
+  text-shadow: var(--glow-title);
+}
+
+/* U-9d / L-18: the tier banner's slot, around the tier readout (the phone: the readouts box).
+   The banner is absolute inside it, so it never moves the header. It stretches to the header's
+   line, so the banner has the row's height, not the readout's; the readout stays centred. */
+.tierSlot {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  align-self: stretch;
+  align-items: center;
+  min-width: 0;
 }
 
 .spacer {
@@ -54,7 +68,7 @@
     row-gap: 8px;
   }
 
-  :global(.app:not([data-layout="phone"])) .header > :global(.tier-readout) {
+  :global(.app:not([data-layout="phone"])) .header > .tierSlot {
     flex: 1 1 0;
   }
 
@@ -128,6 +142,7 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
+  text-shadow: none;
 }
 
 /* The lane tabs (U-2b): 34 px, padding 0 14px; the active one --s-hi with an --accent border. */
@@ -212,10 +227,19 @@
   padding: 6px 10px;
 }
 
+/* The phone header's priority: the readout's tier and numbers never give way (the slot's
+   automatic minimum is their width: the item name asks for none, base.css); then the title,
+   which ellipsizes; the slot takes whatever is left, which the item name grows into. */
 .phoneHeader .title {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.phoneHeader .tierSlot {
+  flex: 1 1 auto;
+  min-width: auto;
 }
 
 .menu {
@@ -287,8 +311,7 @@
 /* U-2d: the header's right side, the tier readout over PWR (the load on the power tab). */
 .readouts {
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: flex-end;
-  min-width: 0;
 }

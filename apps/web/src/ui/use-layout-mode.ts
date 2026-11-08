@@ -32,3 +32,21 @@ function layoutMode(): LayoutMode {
 export function useLayoutMode(): LayoutMode {
   return useSyncExternalStore(subscribe, layoutMode, () => "desktop");
 }
+
+/** L-10: the factory log's box needs a viewport this tall; shorter ones get the ticker. */
+export const TALL_QUERY = "(min-height: 700px)";
+
+function subscribeTall(fn: () => void): () => void {
+  const l = query(TALL_QUERY);
+  l?.addEventListener?.("change", fn);
+  return () => l?.removeEventListener?.("change", fn);
+}
+
+/** Without matchMedia, tall. */
+function tall(): boolean {
+  return query(TALL_QUERY)?.matches ?? true;
+}
+
+export function useTallViewport(): boolean {
+  return useSyncExternalStore(subscribeTall, tall, () => true);
+}

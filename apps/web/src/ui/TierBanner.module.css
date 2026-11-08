@@ -1,0 +1,58 @@
+/* U-9d / L-18: the tier-up banner, laid over the tier readout (the phone: the readouts box) in
+   its [data-tier-slot], so the header and the rows never move. Filled with --bg so the readout
+   under it doesn't show through; one line, ellipsized. A click dismisses it, so it takes the
+   pointer, never the focus. */
+.banner {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--advice-hi);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--advice-hi);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.2;
+  text-shadow: var(--glow-banner);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The out-fade's end state; under reduced motion the banner unmounts at once instead. */
+.banner[data-out] {
+  opacity: 0;
+}
+
+/* U-8c: opacity in over 200 ms, out over 400 ms. Under reduced motion it simply appears and
+   goes. The entrance fills backwards only, so the out state's opacity isn't held at 1. */
+@media (prefers-reduced-motion: no-preference) {
+  .banner {
+    animation: bannerIn 200ms ease-out backwards;
+  }
+
+  .banner[data-out] {
+    animation: none;
+    transition: opacity 400ms ease-in;
+  }
+}
+
+@keyframes bannerIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}

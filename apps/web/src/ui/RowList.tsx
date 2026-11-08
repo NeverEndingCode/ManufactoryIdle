@@ -4,15 +4,18 @@
 // open the drawer, Enter runs the next buy; currentRow is the one rule both read (selection.ts).
 import { useCallback, useId, useMemo } from "react";
 import type { ItemId, LaneId } from "@manufactory/engine";
-import type { Snapshot } from "../sync/snapshot.js";
+import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
 import { laneRows, type BottleneckModel, type RowModel } from "./derive.js";
+import { useFeel } from "./feel.js";
 import { useNames } from "./names.js";
 import { useNotation } from "./notation.js";
 import { Row, rowId } from "./Row.js";
 import css from "./Row.module.css";
 import { currentRow } from "./selection.js";
+import { rowTrend, type RowTrend } from "./trend.js";
 import type { LayoutMode } from "./use-layout-mode.js";
+import { useTrend } from "./use-trend.js";
 
 export interface RowListProps {
   store: Pick<GameStore, "now">;
@@ -55,6 +58,20 @@ export function RowList({
   const now = useCallback(() => store.now(), [store]);
   const names = useNames(snapshot);
   const hint = useId();
+  // L-12: the lane's trends, once per book version (an adoption, or the server minute) and per
+  // snapshot, never at the 4 Hz tick.
+  const book = useFeel().trend;
+  const version = useTrend(book);
+  const ids = rows.map((r) => r.itemId).join(" ");
+  const trends = useMemo(() => {
+    const at = serverNow(snapshot, store.now());
+    return new Map<ItemId, RowTrend>(
+      ids.split(" ").map((id) => [id, rowTrend(book, snapshot, id, at)]),
+    );
+    // `version` is the book's change (the window reads the book), so it is a key the body
+    // doesn't name.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book, version, snapshot, ids, store]);
   const current = currentRow(
     rows.map((r) => r.itemId),
     selected,
@@ -74,6 +91,7 @@ export function RowList({
         <span className={css.name}>ITEM</span>
         <span className={css.rate}>RATE</span>
         <span className={css.sat}>SAT</span>
+        <span className={css.trend}>LAST 10 MIN</span>
         <span className={css.machines}>MACHINES</span>
         <span className={css.storage}>STORAGE</span>
         <span className={css.stock}>STOCK</span>
@@ -97,6 +115,7 @@ export function RowList({
             bottleneck={framed === row.itemId}
             selected={current === row.itemId}
             cells={mode === "phone" ? 16 : undefined}
+            trend={trends.get(row.itemId)!}
             onClick={open}
           />
         ))}

@@ -24,6 +24,7 @@ import type { Snapshot } from "../sync/snapshot.js";
 import { machineLabel } from "./names.js";
 import { currentNotation, fmt } from "./notation.js";
 import type { ThemeDef } from "./theme.js";
+import type { TrendWord } from "./trend.js";
 import type { LayoutMode } from "./use-layout-mode.js";
 
 export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
@@ -277,6 +278,13 @@ function shownAsRow(s: Snapshot, m: BottleneckModel): BottleneckModel {
   return isShownItem(s, m.itemId) ? m : { ...m, laneId: null, itemId: null, action: null };
 }
 
+/** What the bottleneck announcement and the factory log key on (L-7): the framed item, a
+ *  frameless one, or none. */
+export function bottleneckKey(b: BottleneckModel | null): string | null {
+  if (b === null) return null;
+  return b.itemId === null ? "\u0000frameless" : `item:${b.itemId}`;
+}
+
 /** P-2: the one framed row in the whole factory, from the display solve's bottleneck. */
 export function bottleneckRow(s: Snapshot): BottleneckModel | null {
   const m = bottleneckModel(s);
@@ -389,8 +397,14 @@ export function machinesText(s: Snapshot, itemId: ItemId, theme: ThemeDef): stri
 }
 
 /** U-7d: the option's one phrase, "Rotor, plus 0.4 per second, 11 percent full, 41 percent
- *  satisfied, bottleneck". Per snapshot: the fullness is at the schedule's atMs. */
-export function optionName(s: Snapshot, row: RowModel, bottleneck: boolean): string {
+ *  satisfied, rising, bottleneck". Per snapshot: the fullness is at the schedule's atMs. The
+ *  trend word (U-9b) comes before ", bottleneck", which stays last (L-15). */
+export function optionName(
+  s: Snapshot,
+  row: RowModel,
+  bottleneck: boolean,
+  word?: TrendWord | null,
+): string {
   const net = row.netPerSecond;
   const rate =
     net === 0
@@ -402,7 +416,8 @@ export function optionName(s: Snapshot, row: RowModel, bottleneck: boolean): str
     cls === "paused" || cls === "idle"
       ? cls
       : `${Math.round(row.satisfaction * 100)} percent satisfied`;
-  return `${row.name}, ${rate}, ${full} percent full, ${sat}${bottleneck ? ", bottleneck" : ""}`;
+  const trend = word ? `, ${word}` : "";
+  return `${row.name}, ${rate}, ${full} percent full, ${sat}${trend}${bottleneck ? ", bottleneck" : ""}`;
 }
 
 /** U-3e: a lane tab's light, the first match. */

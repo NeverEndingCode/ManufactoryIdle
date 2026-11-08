@@ -2,7 +2,7 @@
 // frame's SpendButton and ReserveButton, moved (V-23): spends are pessimistic (W-13), so the
 // button is busy (aria-disabled, still focusable) until the batch's response lands; the
 // reserve is a setting. Every one sends under BOTTLENECK_BUY_LABEL, so they're busy together.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import type { Batch } from "../sync/outbox.js";
 import { serverNow, type Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
@@ -20,14 +20,17 @@ import css from "./CommandBar.module.css";
 import { Guarded } from "./Guarded.js";
 import { affordability } from "./quote.js";
 import { useTheme, type Voice } from "./theme.js";
+import type { LayoutMode } from "./use-layout-mode.js";
 import { useTick } from "./use-tick.js";
+import { prefersReducedMotion } from "./use-tween.js";
+import { useTyped } from "./use-typed.js";
 
 export type { FrameSpend, RunKind } from "./command.js";
 
 export interface CommandProps {
   model: BottleneckModel | null;
   snapshot: Snapshot;
-  store: Pick<GameStore, "now" | "send">;
+  store: Pick<GameStore, "now" | "send" | "later">;
   pending: readonly Batch[];
 }
 
@@ -86,7 +89,7 @@ export function RunButton({
           {key}
         </span>
       )}
-      {runLabel(shown, snapshot, voice, kind, a, busy)}
+      <span className={css.runText}>{runLabel(shown, snapshot, voice, kind, a, busy)}</span>
     </Guarded>
   );
 }
@@ -145,7 +148,9 @@ export function ReserveRun({
           {key}
         </span>
       )}
-      {runLabel(model, snapshot, voice, kind, affordable, false)}
+      <span className={css.runText}>
+        {runLabel(model, snapshot, voice, kind, affordable, false)}
+      </span>
     </button>
   );
 }
@@ -184,22 +189,49 @@ export function Run(
   );
 }
 
-/** The command's words: typed out in UI-3 (U-9e), so the visible span is aria-hidden and a
- * visually hidden sibling holds the plain words (U-1h: never the shell's ids), read once when
- * they change (U-8a). */
+/** The command's words, typed out (U-9e, L-19): the visible span is aria-hidden and a visually
+ * hidden sibling holds the complete plain words from the first render (U-1h: never the shell's
+ * ids), so a reader hears them once (U-8a), never a character at a time. Only this span
+ * re-renders while it types. The shell voice types; the plain voice crossfades (the span is
+ * keyed on the text, so its opacity animation replays). Instant under reduced motion, in a
+ * hidden tab, and while a card, sheet, help or Settings is open. `finish` is handed up so the
+ * bar's click (the run, or Enter's click, K-4) completes the text. */
 function CommandWords({
   text,
   said,
+  voice,
+  instant,
+  clock,
+  finishRef,
   className,
 }: {
   text: string;
   said: string;
+  voice: Voice;
+  instant: boolean;
+  clock: Pick<GameStore, "later">;
+  finishRef: MutableRefObject<() => void>;
   className: string | undefined;
 }) {
+  const enabled =
+    voice === "shell" &&
+    !instant &&
+    !prefersReducedMotion() &&
+    document.visibilityState !== "hidden";
+  const { shown, done, finish } = useTyped(text, enabled, clock);
+  useLayoutEffect(() => {
+    finishRef.current = finish;
+  }, [finishRef, finish]);
   return (
     <span className={className}>
-      <span aria-hidden="true" data-typed>
-        {text}
+      <span
+        aria-hidden="true"
+        data-typed
+        data-typing={!done || undefined}
+        className={css.typed}
+        key={voice === "plain" ? text : undefined}
+      >
+        {shown}
       </span>
       <span className={css.visuallyHidden} data-command-text>
         {said}
@@ -208,20 +240,43 @@ function CommandWords({
   );
 }
 
+/** L-1: the shell prompt in full on the desktop only; below it the command needs the room. */
+function promptText(voice: Voice, mode: LayoutMode): string {
+  if (voice !== "shell") return "Next";
+  return mode === "desktop" ? "operator@manufactory:~$" : "$";
+}
+
 /** U-4a: the desktop (and tablet) bar, shown on every view so the advice runs anywhere. */
 export function CommandBar(
-  p: CommandProps & { onWhy(opener: HTMLElement): void; whyOpen: boolean },
+  p: CommandProps & {
+    onWhy(opener: HTMLElement): void;
+    whyOpen: boolean;
+    /** desktop or tablet: the prompt (L-1). */
+    mode: LayoutMode;
+    /** No typing: the card, a sheet, help or Settings is open (L-19). */
+    instant: boolean;
+  },
 ) {
   const { applied } = useTheme();
   const voice = applied.voice;
+  const finish = useRef<() => void>(() => {});
   return (
-    <section aria-label="Command line" className={css.bar} data-command>
-      <span className={css.prompt} aria-hidden="true">
-        {voice === "shell" ? "operator@manufactory:~$" : "Next"}
+    <section
+      aria-label="Command line"
+      className={css.bar}
+      data-command
+      onClickCapture={() => finish.current()}
+    >
+      <span className={css.prompt} aria-hidden="true" data-prompt>
+        {promptText(voice, p.mode)}
       </span>
       <CommandWords
         text={commandText(p.model, p.snapshot, voice)}
         said={commandText(p.model, p.snapshot, "plain")}
+        voice={voice}
+        instant={p.instant}
+        clock={p.store}
+        finishRef={finish}
         className={css.command}
       />
       <span className={css.cursor} aria-hidden="true" />

@@ -71,11 +71,14 @@ import {
   type Quote,
 } from "./quote.js";
 import { LiveStock } from "./Row.js";
+import { useFeel } from "./feel.js";
 import { Spoken } from "./Spoken.js";
 import { useTheme } from "./theme.js";
+import { rowTrend } from "./trend.js";
 import { usePendingMap, usePendingSetting } from "./use-pending.js";
 import { useSheetDrag } from "./use-sheet-drag.js";
 import { useTick } from "./use-tick.js";
+import { useTrend } from "./use-trend.js";
 
 export type DrawerVerb = "buy" | "dismantle" | "upgrade" | "storage" | "qs" | "recipe" | "assign";
 
@@ -127,6 +130,9 @@ export interface DrawerProps {
   /** The desktop NEXT_BUY card is open: its scope outranks the drawer's (U-7a), so the drawer's
    * keys are dead and their hints go (K-7), as Shell's lane hints do. */
   cardOpen?: boolean;
+  /** U-9b: the item's sparkline in the meta line, where the TREND column isn't (phone and
+   * tablet: App's `mode !== "desktop"`). */
+  trendInMeta?: boolean;
 }
 
 /** U-5c: the sections behind MORE; MACHINES is the body when none is open. */
@@ -202,6 +208,7 @@ export function Drawer({
   claimFocus,
   onLeaveFocused,
   cardOpen = false,
+  trendInMeta = false,
 }: DrawerProps) {
   // The store's snapshot object as is: drawerModel and preview memoise on its identity.
   const [notation] = useNotation();
@@ -355,7 +362,7 @@ export function Drawer({
           </button>
         )}
         {model.kind === "item" ? (
-          <Meta snapshot={snapshot} itemId={model.itemId} now={ctx.now} />
+          <Meta snapshot={snapshot} itemId={model.itemId} now={ctx.now} trend={trendInMeta} />
         ) : (
           <GeneratorMeta snapshot={snapshot} model={model} />
         )}
@@ -406,15 +413,18 @@ export function Drawer({
 // ---- shared pieces ---------------------------------------------------------------------------
 
 /** U-3c / V-18: "IRON lane · +0.4/s · 214/2.0k · QS 40.0k · BOUND 12", QS and BOUND only when
- * non-zero; what left the row. The stock is live at the 4 Hz tick, as in the row. */
+ * non-zero; what left the row. The stock is live at the 4 Hz tick, as in the row. With `trend`
+ * (U-9b) it ends "· trend ▁▂▂▃▃▅": the cells hidden, the word read in their place. */
 function Meta({
   snapshot,
   itemId,
   now,
+  trend,
 }: {
   snapshot: Snapshot;
   itemId: ItemId;
   now: () => number;
+  trend: boolean;
 }) {
   const theme = useTheme().applied;
   const [notation] = useNotation();
@@ -432,7 +442,34 @@ function Meta({
       {`/${fmt(liquidCap(snapshot.content, snapshot.state, itemId), notation)}`}
       {qs !== undefined && !qs.eq(DECIMAL_ZERO) && ` · QS ${fmt(qs, notation)}`}
       {bound !== undefined && !bound.eq(DECIMAL_ZERO) && ` · BOUND ${fmt(bound, notation)}`}
+      {trend && <MetaTrend snapshot={snapshot} itemId={itemId} now={now} />}
     </p>
+  );
+}
+
+/** The meta line's sparkline, re-drawn per book version and snapshot (L-12), never per tick. */
+function MetaTrend({
+  snapshot,
+  itemId,
+  now,
+}: {
+  snapshot: Snapshot;
+  itemId: ItemId;
+  now: () => number;
+}) {
+  const book = useFeel().trend;
+  const version = useTrend(book);
+  const t = useMemo(
+    () => rowTrend(book, snapshot, itemId, serverNow(snapshot, now())),
+    // `version` is the book's change (the window reads the book).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [book, version, snapshot, itemId, now],
+  );
+  return (
+    <>
+      <span aria-hidden="true">{` · trend ${t.cells}`}</span>
+      {t.word !== null && <span className="visually-hidden">{`, trend ${t.word}`}</span>}
+    </>
   );
 }
 
