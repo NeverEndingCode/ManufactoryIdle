@@ -306,7 +306,7 @@ function TierSlot({ p, s, children }: { p: ShellProps; s: Snapshot; children: Re
   return (
     <div className={css.tierSlot} data-tier-slot>
       {children}
-      <TierBanner view={p.view} snapshot={s} store={p.store} />
+      <TierBanner view={p.view} snapshot={s} store={p.store} phone={p.mode === "phone"} />
     </div>
   );
 }

@@ -67,8 +67,7 @@ export function TierReadout({ snapshot: s, now, phone = false }: TierReadoutProp
           <Fragment key={r.itemId}>
             {i > 0 && " · "}
             <span data-requirement={r.itemId}>
-              {`${r.label} `}
-              <span className="num">{r.progress}</span>
+              <span className="req-name">{r.label}</span> <span className="num">{r.progress}</span>
             </span>
           </Fragment>
         ))}

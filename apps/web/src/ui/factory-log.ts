@@ -224,7 +224,11 @@ export function createFactoryLog(d: { now(): number; wallNow?: () => number }): 
   let entries: readonly LogEntry[] = [];
   let version = 0;
   let seq = 0;
-  /** When each key last logged: the 60 s window, and storage full's 10 min one. */
+  /** When each key last logged: the 60 s window, and storage full's 10 min one. Never pruned,
+   *  and needn't be: they're bounded by the content, not by time. Purchases never enter them;
+   *  lastFull holds at most one full:<item> per item, and lastSaid one tier:<n> per tier plus
+   *  the bottleneck:<to-key> keys (one per item, the frameless one and "none"). Both are
+   *  cleared with the log on a new session or world. */
   const lastSaid = new Map<string, number>();
   const lastFull = new Map<string, number>();
   const listeners = new Set<() => void>();

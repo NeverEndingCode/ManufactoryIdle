@@ -61,7 +61,17 @@ traces back to and what it is used in, computed from the live recipes, plus a gl
 Settings holds the number notation, the theme, the account and About: the game is free
 software under the GPL-3.0, with links to the source at the exact commit the build was made
 from and to the license (they were in the footer before); production source maps are
-published.
+published. The factory log reports what happened (purchases, storage filling up, the
+bottleneck moving, tier-ups) in a `tail -f` box under the rows on a desktop, and as a ticker
+over the command line on a phone that opens the full log as a sheet. Each row's LAST 10 MIN
+column is a ten-minute sparkline of its net rate, a cell a minute, kept in memory only, so it
+starts empty after a reload. The terminal theme has a phosphor glow and scanlines, which
+Settings → Glow and scanlines turns off; they are terminal only, the glow is off under reduced
+motion, and both are off under high contrast. Reaching a tier shows an 8-second banner over
+the tier readout (naming what it unlocked, wider than a phone). The advice types itself out on
+the command line; this is cosmetic, because the run button works from the first character and
+Enter completes the text. Welcome back, sound, haptics, the command palette and the flow tree
+are deferred.
 
 **Deploying.** [`infra/README.md`](infra/README.md#deploying-example) has the example: a
 Caddyfile serving `apps/web/dist` on one origin with `/api` and `/auth` forwarded to the

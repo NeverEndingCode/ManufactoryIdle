@@ -81,6 +81,25 @@
   }
 }
 
+/* While it types, the cursor follows the letters: the command keeps 20 characters (L-1), so the
+   bar's own cursor would stand at the 20th, apart from them. It keeps its place, hidden, so
+   nothing moves; the typed span's steady block stands in, 4 px off the letters as the bar's is
+   (its 14 px gap less its -10 px margin), its block margins keeping the line box (and the bar)
+   the height it was. */
+.command:has(> [data-typing]) + .cursor {
+  visibility: hidden;
+}
+
+.typed[data-typing]::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 20px;
+  margin: -3px 0 -3px 4px;
+  background: var(--advice);
+  vertical-align: middle;
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;

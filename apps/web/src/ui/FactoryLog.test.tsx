@@ -300,6 +300,28 @@ describe("the factory log on screen (U-9a, L-9..L-12)", { timeout: 60_000 }, () 
     expect(document.activeElement).toBe(ticker());
   });
 
+  // The stack. A short sheet's head (its title and x) sits where the phone notices are, and the
+  // guest's "keep this factory" notice stays up: under that notice (35), the sheet's title and
+  // close button were covered. Nothing in the sheet can be rejected, so no toast needs to show
+  // over it. Catches: the sheet back under the notices, over a modal above it, or under the TAP.
+  it("7c. the sheet is over the phone notices and the TAP, under the other modals", () => {
+    const z = (file: string, selector: string) => {
+      const path = fileURLToPath(new URL(file, import.meta.url));
+      const decl = declarations(file, readFileSync(path, "utf8")).find(
+        (x) => x.stack.at(-1) === selector && x.property === "z-index",
+      );
+      expect(decl, `${file} ${selector}`).toBeDefined();
+      return Number(decl!.value);
+    };
+    const sheet = z("./FactoryLog.module.css", ".backdrop");
+    expect(sheet).toBeGreaterThan(z("../styles/base.css", '.app[data-layout="phone"] .notices'));
+    expect(sheet).toBeGreaterThan(z("./Power.module.css", ".floating"));
+    expect(sheet).toBeGreaterThan(z("./Drawer.module.css", ".backdrop"));
+    expect(sheet).toBeLessThan(z("./NextBuy.module.css", ".backdrop"));
+    expect(sheet).toBeLessThan(z("./Settings.module.css", ".backdrop"));
+    expect(sheet).toBeLessThan(z("./Help.module.css", ".backdrop"));
+  });
+
   it("7b. the ticker is on the factory tab only", () => {
     stubWidth(390);
     const store = fakeStore(fresh);

@@ -110,12 +110,14 @@
   color: var(--t2);
 }
 
-/* L-11: the sheet's backdrop, as the drawer sheet's: over the TAP (20) and the bottom tabs, under
-   the phone notices (35), the NEXT_BUY sheet (40) and Settings (50). The background is inert. */
+/* L-11: the sheet's backdrop: over the TAP (20), the bottom tabs and the phone notices (35),
+   under the NEXT_BUY sheet (40) and Settings (50). Unlike the drawer sheet (30), nothing in it
+   can be rejected, so no toast must show over it; and a short sheet's head sits where the
+   notices are, which covered its title and x. The background is inert. */
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 30;
+  z-index: 38;
   display: flex;
   align-items: flex-end;
   background: var(--scrim);

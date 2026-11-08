@@ -2,6 +2,8 @@
 // U-6: the power panel (generator +1, load, FUEL, BIGGEST USERS, the kick line), the PWR footer
 // and the floating TAP, and where each shows. PowerDock.test.tsx's hold tests (1, 2) moved here
 // and run on both TAP buttons; its readout tests (3 to 5) became 4, 5 and 9.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { liquidCap, type WorldState } from "@manufactory/engine";
 import type { ReactNode } from "react";
@@ -10,6 +12,7 @@ import { TAP_LABEL } from "../sync/constants.js";
 import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore, StoreView } from "../sync/store.js";
+import { declarations } from "../styles/css-walk.js";
 import { App } from "./App.js";
 import { bottleneckRow, laneItemIds, powerLaneId } from "./derive.js";
 import {
@@ -309,6 +312,35 @@ describe("PowerPanel, PowerFooter and FloatingTap (U-6)", { timeout: 60_000 }, (
     expect(time.getAttribute("aria-hidden")).toBe("true");
     expect(time.querySelector<HTMLElement>("[data-fill]")!.style.transform).toBe("scaleX(0.7)");
     expect(button().closest("[data-power]")!.hasAttribute("data-holding")).toBe(true);
+  });
+
+  // U-8c's TAP row: a scaleX transition with motion, stepped at 4 Hz without. Catches: a bar set
+  // once per snapshot (it would sit still under reduced motion, where nothing glides it), or its
+  // transition outside prefers-reduced-motion: no-preference.
+  it("5d. the time-left bar steps at the 4 Hz tick; its transition is motion-only", () => {
+    const store = fakeStore(fresh);
+    const taps = { pending: 7, lastTapAt: store.now() - 9_000, holding: true };
+    const { button } = tapButton("floating", fresh, store, taps);
+    const scale = () => {
+      const t = button().querySelector<HTMLElement>("[data-time-left] [data-fill]")!.style;
+      return Number(/^scaleX\((.+)\)$/.exec(t.transform)![1]);
+    };
+    const duration = fresh.content.bundle.tap.durationSeconds * 1000;
+    expect(scale()).toBeCloseTo((duration - 9_000) / duration, 6);
+    for (let i = 1; i <= 4; i += 1) {
+      store.tick(250);
+      expect(scale(), `tick ${i}`).toBeCloseTo((duration - 9_000 - 250 * i) / duration, 6);
+    }
+    // A variable, so Vite leaves the URL alone (it rewrites new URL("./literal", import.meta.url)).
+    const file = "./Power.module.css";
+    const path = fileURLToPath(new URL(file, import.meta.url));
+    const fill = declarations(file, readFileSync(path, "utf8")).filter((d) =>
+      d.stack.some((s) => s.includes(".timeFill")),
+    );
+    const moving = fill.filter((d) => d.property.startsWith("transition"));
+    expect(moving.map((d) => d.value)).toEqual(["transform 250ms linear"]);
+    for (const d of moving)
+      expect(d.stack[0]).toBe("@media (prefers-reduced-motion: no-preference)");
   });
 
   // Catches: the footer hiding the taps it has counted but not sent, which tap-hold.spec waits

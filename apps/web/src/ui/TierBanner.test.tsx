@@ -22,6 +22,7 @@ import {
   type Slice,
 } from "./test-fixtures.js";
 import { setTheme } from "./theme.js";
+import { BANNER_MS } from "./TierBanner.js";
 import { tierUpSaid, unlockedAt, unlockSummary } from "./unlocks.js";
 
 let slice: Slice;
@@ -84,6 +85,22 @@ describe("the tier-up banner (U-9d, L-17, L-18)", { timeout: 60_000 }, () => {
     expect(banner()!.textContent).toBe(`Tier 2 reached · ${plain} unlocked`);
   });
 
+  // Catches: the phone's narrow slot ellipsizing the tier away (`*** TIER 2 RE…`, `Tier 2 reach…`
+  // at 390 px): there the tier leads and the unlocks are left to the announcement and the log.
+  it("6b. on the phone the tier comes first, with no unlock summary", () => {
+    const screen = stubWidth(390);
+    const store = fakeStore(tier1);
+    mount(store);
+    tierUp(store);
+    expect(banner()!.textContent).toBe("TIER 2 REACHED");
+    act(() => void setTheme("clean-dark"));
+    expect(banner()!.textContent).toBe("Tier 2 reached");
+    // Back to the desktop: the full line.
+    act(() => void setTheme("terminal"));
+    screen.resize(1280);
+    expect(banner()!.textContent).toMatch(/^\*\*\* TIER 2 REACHED · .+ unlocked \*\*\*$/);
+  });
+
   // Catches: a banner that never ends, ends early, forgets to dismiss the notice, or fades
   // under reduced motion.
   it("7. it shows for 8 s, then dismisses the notice and fades out over 400 ms", () => {
@@ -141,6 +158,83 @@ describe("the tier-up banner (U-9d, L-17, L-18)", { timeout: 60_000 }, () => {
     view.unmount();
     store.tick(10_000);
     expect(store.dismiss).not.toHaveBeenCalled();
+  });
+
+  // Catches: a resize across layouts (the banner remounts in the phone's tier slot) restarting
+  // the 8 s, so the notice is dismissed at 12 s, or a second banner.
+  it("7d. a resize 1280→390 at 4 s keeps the banner, and the notice goes at 8 s, not 12 s", () => {
+    const screen = stubWidth(1280);
+    const store = fakeStore(tier1);
+    mount(store);
+    tierUp(store);
+    store.tick(4_000);
+    screen.resize(390);
+    expect(banner()).not.toBeNull();
+    expect(banner()!.textContent).toBe("TIER 2 REACHED");
+    expect(banner()!.hasAttribute("data-out")).toBe(false);
+    expect(document.querySelectorAll("[data-tier-banner]")).toHaveLength(1);
+    expect(banner()!.closest("header")!.querySelector(".tier-readout")).not.toBeNull();
+    store.tick(3_999);
+    expect(store.dismiss).not.toHaveBeenCalled();
+    store.tick(1);
+    expect(store.dismiss).toHaveBeenCalledTimes(1);
+    store.tick(400);
+    expect(banner()).toBeNull();
+    store.tick(8_000);
+    expect(store.dismiss).toHaveBeenCalledTimes(1);
+  });
+
+  // Catches: a second tier-up while the first shows starting a second banner or a second
+  // hidden span, keeping the first one's text, or ending on the first one's clock.
+  it("7e. a second tier-up at 5 s updates the text in place, and ends 8 s after it", () => {
+    stubWidth(1280);
+    const store = fakeStore(tier1);
+    mount(store);
+    tierUp(store);
+    const first = banner()!;
+    expect(first.textContent).toMatch(/^\*\*\* TIER 2 REACHED/);
+    store.tick(5_000);
+    const tier3 = snapshotOf(slice, { ...freshState(slice), tier: 3 }, { stateVersion: 2 });
+    store.adopt({ next: tier3 });
+    store.set({ notices: [{ kind: "tier-up", text: "Tier 3 reached." }] });
+    expect(banner()).toBe(first);
+    expect(first.textContent).toMatch(/^\*\*\* TIER 3 REACHED/);
+    expect(region().querySelectorAll('[data-notice="tier-up"]')).toHaveLength(1);
+    expect(region().querySelector('[data-notice="tier-up"]')!.textContent).toMatch(/^Tier 3/);
+    // The first one's 8 s (at 8 s) passes without a dismiss.
+    store.tick(7_999);
+    expect(banner()).not.toBeNull();
+    expect(store.dismiss).not.toHaveBeenCalled();
+    store.tick(1);
+    expect(store.dismiss).toHaveBeenCalledTimes(1);
+    store.tick(400);
+    expect(banner()).toBeNull();
+  });
+
+  // Catches: the older banner's end dismissing by kind, so a newer tier-up the store has
+  // already raised (before the banner re-rendered and cancelled the old timer) is dropped.
+  it("7f. an old banner's end doesn't dismiss a newer tier-up notice", () => {
+    stubWidth(1280);
+    const store = fakeStore(tier1);
+    mount(store);
+    // Due at the same moment as the banner's 8 s and fired first: the store raises a newer
+    // tier-up, and the banner's timer fires before React re-renders (one act).
+    store.later(() => {
+      store.adopt({
+        next: snapshotOf(slice, { ...freshState(slice), tier: 3 }, { stateVersion: 2 }),
+      });
+      store.set({ notices: [{ kind: "tier-up", text: "Tier 3 reached." }] });
+    }, BANNER_MS);
+    tierUp(store);
+    store.tick(BANNER_MS);
+    expect(store.dismiss).not.toHaveBeenCalled();
+    expect(banner()).not.toBeNull();
+    expect(banner()!.textContent).toMatch(/^\*\*\* TIER 3 REACHED/);
+    // The newer one runs its own 8 s.
+    store.tick(BANNER_MS - 1);
+    expect(store.dismiss).not.toHaveBeenCalled();
+    store.tick(1);
+    expect(store.dismiss).toHaveBeenCalledTimes(1);
   });
 
   // Catches: a focusable banner, one that takes focus, or a mousedown that moves focus off the

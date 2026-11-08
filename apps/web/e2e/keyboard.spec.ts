@@ -46,7 +46,20 @@ test.describe("the keyboard", () => {
           },
           true,
         );
+        // The bar's typed text once a run's click has rendered: a microtask queued from a
+        // window listener, which runs after React's root listener (and its flush) (L-19).
+        const t = window as unknown as { typedAfterRun: string[] };
+        t.typedAfterRun = [];
+        window.addEventListener("click", (e) => {
+          if ((e.target as Element | null)?.closest("[data-run]") == null) return;
+          queueMicrotask(() =>
+            t.typedAfterRun.push(
+              document.querySelector("[data-command] [data-typed]")?.textContent ?? "",
+            ),
+          );
+        });
       });
+      const shell = (await page.locator("[data-command] [data-typed]").textContent()) ?? "";
       await page.keyboard.press("Enter");
       await expect(root).toHaveAttribute("data-state-version", "1");
       const buys = posts.filter((p) => p.body.actions[0]?.type !== "TAP");
@@ -55,6 +68,12 @@ test.describe("the keyboard", () => {
         () => (window as unknown as { runClicks: string[] }).runClicks,
       );
       expect(clicks, "Enter on the focused primary is its native click alone").toEqual(["card"]);
+      // L-19: the press leaves the shell command whole (finish), the one it ran.
+      const typed = await page.evaluate(
+        () => (window as unknown as { typedAfterRun: string[] }).typedAfterRun,
+      );
+      expect(typed, "the typed text right after the press").toEqual([shell]);
+      expect(shell).toMatch(/^buy \d+ [a-z0-9_]+ --lane [a-z]+/);
       await page.keyboard.press("Escape");
       await expect(card).toHaveCount(0);
       await expect(rows).toBeFocused();

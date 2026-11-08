@@ -2,6 +2,8 @@
 // U-4a / U-4b: the command line. The run button is the frame's logic moved (V-23): the same
 // batch under the same label, busy and the countdown carried over, and the reserve never busy
 // (W-13). A frameless bottleneck is the comment line, and it's announced (V-14).
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Solution } from "@manufactory/engine";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -9,6 +11,7 @@ import type { Outcome } from "../sync/errors.js";
 import type { Batch } from "../sync/outbox.js";
 import type { Snapshot } from "../sync/snapshot.js";
 import type { GameStore } from "../sync/store.js";
+import { declarations } from "../styles/css-walk.js";
 import { App } from "./App.js";
 import { bottleneckRow } from "./derive.js";
 import {
@@ -378,5 +381,29 @@ describe("the command bar types (U-9e, L-1, L-19)", { timeout: 60_000 }, () => {
       expect(later, theme).not.toHaveBeenCalled();
       cleanup();
     }
+  });
+
+  // jsdom lays nothing out, so this pins the CSS. The command keeps 20 characters (L-1), so
+  // while the first of them type, the bar's cursor stood at the 20th, apart from the letters.
+  // While it types, the bar's cursor keeps its place (hidden, never removed: nothing moves) and
+  // a steady one follows the typed letters. Catches: the cursor left at the 20th character, or
+  // a typing cursor that blinks or shows when nothing types.
+  it("13. while it types, the cursor follows the letters", () => {
+    // A variable, so Vite leaves the URL alone (it rewrites new URL("./literal", import.meta.url)).
+    const file = "./CommandBar.module.css";
+    const text = readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
+    const rule = (sel: string) =>
+      Object.fromEntries(
+        declarations(file, text)
+          .filter((d) => d.stack.at(-1) === sel)
+          .map((d) => [d.property, d.value]),
+      );
+    expect(rule(".command:has(> [data-typing]) + .cursor").visibility).toBe("hidden");
+    const follow = rule(".typed[data-typing]::after");
+    expect(follow.content).toBe('""');
+    expect(follow.display).toBe("inline-block");
+    expect(follow.width).toBe("10px");
+    expect(follow.background).toBe("var(--advice)");
+    expect(follow.animation).toBeUndefined();
   });
 });
