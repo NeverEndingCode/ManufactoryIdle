@@ -1,7 +1,7 @@
 // UI-1 (U-1a, U-1i, V-6): the theme picker on desktop. A free theme applies and survives a
 // reload; the stored theme is on <html> before the first frame (no flash); a locked theme can't
 // be chosen, and a stored locked theme paints as terminal without losing the stored choice.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { startGuest } from "./helpers.js";
 
 const THEME_KEY = "mi.theme";
@@ -54,6 +54,65 @@ test("a stored locked theme paints as terminal and stays stored", async ({ page 
   await startGuest(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "terminal");
   expect(await page.evaluate((key) => localStorage.getItem(key), THEME_KEY)).toBe("cosy");
+});
+
+// U-9c, U-1i / L-16: the glow and the scanlines, on .app. Terminal has both; Clean has neither;
+// unticking "Glow and scanlines" turns both off, and the setting is on <html> before the first
+// frame after a reload; high contrast turns both off.
+const appEffects = (page: Page) =>
+  page.locator(".app").evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { shadow: cs.textShadow, image: cs.backgroundImage };
+  });
+
+test("the glow and scanlines: terminal only, off with CRT off and after a reload", async ({
+  page,
+}) => {
+  const { root } = await startGuest(page);
+  const html = page.locator("html");
+  let fx = await appEffects(page);
+  expect(fx.shadow).not.toBe("none");
+  expect(fx.image).toContain("repeating-linear-gradient");
+
+  await page.locator("[data-open-settings]").click();
+  const sheet = page.getByRole("dialog", { name: "Settings" });
+  const crt = sheet.getByRole("checkbox", { name: "Glow and scanlines" });
+  await expect(crt).toBeChecked();
+  await sheet.getByLabel("Clean (Dark)").check();
+  await expect(html).toHaveAttribute("data-theme", "clean-dark");
+  await expect(crt).toBeDisabled();
+  fx = await appEffects(page);
+  expect(fx).toEqual({ shadow: "none", image: "none" });
+
+  await sheet.getByLabel("Retro terminal").check();
+  await expect(html).toHaveAttribute("data-theme", "terminal");
+  await expect(crt).toBeEnabled();
+  await crt.uncheck();
+  await expect(html).toHaveAttribute("data-crt", "off");
+  fx = await appEffects(page);
+  expect(fx).toEqual({ shadow: "none", image: "none" });
+
+  // After a reload: off at the first frame (the inline script), and still off.
+  await page.addInitScript(() => {
+    requestAnimationFrame(() => {
+      (window as unknown as { firstFrameCrt?: string }).firstFrameCrt =
+        document.documentElement.dataset.crt ?? "(unset)";
+    });
+  });
+  await page.reload();
+  await expect(root).toHaveAttribute("data-sync", "ready");
+  expect(
+    await page.evaluate(() => (window as unknown as { firstFrameCrt?: string }).firstFrameCrt),
+  ).toBe("off");
+  fx = await appEffects(page);
+  expect(fx).toEqual({ shadow: "none", image: "none" });
+});
+
+test("high contrast turns the glow and the scanlines off (U-9c)", async ({ page }) => {
+  await page.emulateMedia({ contrast: "more" });
+  await startGuest(page);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "terminal");
+  expect(await appEffects(page)).toEqual({ shadow: "none", image: "none" });
 });
 
 // L-1: the command is what the player reads, and the prompt is decoration. At every width the

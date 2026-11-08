@@ -741,9 +741,12 @@ describe("announcements (S-15, W-20)", { timeout: 60_000 }, () => {
     // Offline.
     store.set({ status: "offline" });
     expect(theOneRegion().querySelector('[data-notice="offline"]')).not.toBeNull();
-    // A tier-up toast.
+    // A tier-up: no toast now, but still said inside the one region, hidden (L-17); the banner
+    // outside it is aria-hidden and no region.
     store.set({ status: "ready", notices: [{ kind: "tier-up", text: "Tier 2 reached." }] });
-    expect(theOneRegion().querySelector('[data-notice="tier-up"]')).not.toBeNull();
+    const tierUp = theOneRegion().querySelector('[data-notice="tier-up"]')!;
+    expect(tierUp.classList.contains("visually-hidden")).toBe(true);
+    expect(document.querySelector("[data-tier-banner]")!.getAttribute("aria-hidden")).toBe("true");
     // A rejection.
     store.set({ notices: [{ kind: "rejected", text: "Not enough iron plate." }] });
     expect(theOneRegion().querySelector('[data-notice="rejected"]')).not.toBeNull();

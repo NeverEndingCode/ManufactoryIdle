@@ -1,4 +1,5 @@
-/* Rows, not cards; hairlines; no shadows or gradients (W-17). */
+/* Rows, not cards; hairlines; no shadows or gradients (W-17), bar the glow and the scanlines,
+   which live in tokens (U-9c). */
 *,
 *::before,
 *::after {
@@ -44,6 +45,11 @@ button {
   height: 100dvh;
   padding: 16px 22px;
   overflow: hidden;
+  /* U-9c: the phosphor glow, inherited by all the text, and the scanlines as the shell's own
+     background, under the content, never an overlay over it (U-1f). Both none outside
+     terminal, under high contrast and with CRT off; the glow none under reduced motion. */
+  text-shadow: var(--glow-text);
+  background-image: var(--scanlines);
 }
 
 .app[data-layout="tablet"] {
@@ -202,6 +208,8 @@ button {
   font-family: var(--font-ui);
   font-size: var(--fs-label);
   font-weight: 600;
+  /* A solid fill: no glow (U-9c, tokens.test 12a). */
+  text-shadow: none;
   cursor: pointer;
 }
 
@@ -209,6 +217,7 @@ button {
   border-color: var(--line);
   background: none;
   color: var(--t1);
+  text-shadow: inherit;
 }
 
 /* aria-disabled: off but still focusable (the drawer's spends keep focus while busy). */

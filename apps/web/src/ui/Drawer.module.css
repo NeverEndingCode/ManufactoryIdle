@@ -213,6 +213,7 @@
 
 .toneA {
   background: var(--accent);
+  text-shadow: none;
 }
 
 .toneB {
@@ -349,6 +350,7 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
+  text-shadow: none;
 }
 
 .markBtn[aria-disabled="true"] {
@@ -402,6 +404,7 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
+  text-shadow: none;
 }
 
 /* U-5b: the sheet's 44 × 44 x. */

@@ -31,7 +31,8 @@ export type BuyMachine = Extract<Action, { type: "BUY_MACHINE" }>;
 
 /** The frame's one button (P-3, Q-5): the sim `bottleneck` policy's four actions. */
 export type FrameAction =
-  BuyMachine | Extract<Action, { type: "BUY_STORAGE" | "BUY_QS" | "SET_RESERVE" }>;
+  | BuyMachine
+  | Extract<Action, { type: "BUY_STORAGE" | "BUY_QS" | "SET_RESERVE" }>;
 
 /** "+0.333/s": a net rate, signed when positive. */
 export function rateText(net: number): string {
@@ -233,9 +234,7 @@ function recipeRow(
     : `Limiting ${targetName(s, limitingTarget)}. ${more}`;
   // A generator's primary output is the power pseudo-item, which has no row: frame its
   // scarcest stock input (Q-5).
-  const itemId = generator
-    ? scarcestInput(s, [...recipe.inputPerSecond.keys()])
-    : recipe.primaryOutput;
+  const itemId = generator ? scarcestInput(s, [...recipe.inputPerSecond.keys()]) : recipe.primaryOutput;
   return {
     laneId: itemId === null ? null : (s.content.items.get(itemId)?.lane ?? null),
     itemId,

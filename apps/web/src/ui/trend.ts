@@ -151,7 +151,9 @@ export function createTrendBook(d: {
 
     subscribe(fn) {
       listeners.add(fn);
-      if (cancel === null) arm();
+      // Always: arm() cancels the live timer first, and after store.stop() (which drops the
+      // timer and leaves `cancel` stale) a new subscriber re-arms.
+      arm();
       return () => {
         listeners.delete(fn);
         if (listeners.size === 0) disarm();

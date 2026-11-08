@@ -13,7 +13,7 @@ import { App } from "./ui/App.js";
 import { capabilities } from "./ui/capabilities.js";
 import { feelOf } from "./ui/feel.js";
 import { parseRoute, replaceRoute } from "./ui/route.js";
-import { applyTheme, storedTheme } from "./ui/theme.js";
+import { applyCrt, applyTheme, storedTheme } from "./ui/theme.js";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
@@ -79,6 +79,7 @@ if (document.visibilityState === "hidden") syncVisibility();
 // U-1i / V-7: index.html's inline script already set the migrated theme before first paint;
 // this applies the capability-aware one and the theme-color meta, before the first render.
 applyTheme(storedTheme(), capabilities(store.getView()));
+applyCrt();
 
 void store.start();
 

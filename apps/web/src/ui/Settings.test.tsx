@@ -8,7 +8,7 @@ import type { BeginResult, GameStore } from "../sync/store.js";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App.js";
 import { setNotation } from "./notation.js";
-import { setTheme, THEME_KEY, THEMES } from "./theme.js";
+import { CRT_KEY, setCrt, setTheme, THEME_KEY, THEMES } from "./theme.js";
 import {
   fakeStore,
   fixtureState,
@@ -33,6 +33,7 @@ afterEach(() => {
   act(() => {
     setNotation("hybrid");
     setTheme("terminal");
+    setCrt(true);
   });
   localStorage.clear();
   history.replaceState(null, "", "/");
@@ -185,6 +186,39 @@ describe("Settings (S-11)", { timeout: 60_000 }, () => {
     const free = within(group).getByRole("radio", { name: "Clean (OLED Dark)" });
     expect(free.hasAttribute("aria-disabled")).toBe(false);
     expect(free.closest("[data-theme-option]")!.querySelector("[data-locked]")).toBeNull();
+  });
+
+  // U-1i, L-16. Catches: the checkbox off by default, not stored, not applied to <html>, or
+  // left enabled outside terminal (where there's no glow to turn off) without saying why.
+  it("3c. Glow and scanlines: checked by default, toggles data-crt, disabled outside terminal", () => {
+    mount(fakeStore(fresh));
+    const dialog = openSettings();
+    const html = document.documentElement;
+    const crt = within(dialog).getByRole("checkbox", { name: "Glow and scanlines" });
+    expect(crt).toHaveProperty("checked", true);
+    expect(crt).toHaveProperty("disabled", false);
+    expect(html.hasAttribute("data-crt")).toBe(false);
+    const note = document.getElementById(crt.getAttribute("aria-describedby")!)!;
+    expect(note.textContent).toBe("Retro terminal only");
+    // Below the theme list.
+    const group = within(dialog).getByRole("group", { name: "Theme" });
+    expect(group.compareDocumentPosition(crt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(crt);
+    expect(crt).toHaveProperty("checked", false);
+    expect(html.getAttribute("data-crt")).toBe("off");
+    expect(localStorage.getItem(CRT_KEY)).toBe("off");
+    fireEvent.click(crt);
+    expect(crt).toHaveProperty("checked", true);
+    expect(html.hasAttribute("data-crt")).toBe(false);
+    expect(localStorage.getItem(CRT_KEY)).toBeNull();
+
+    fireEvent.click(within(group).getByRole("radio", { name: "Clean (Dark)" }));
+    const off = within(dialog).getByRole("checkbox", { name: "Glow and scanlines" });
+    expect(off).toHaveProperty("disabled", true);
+    expect(document.getElementById(off.getAttribute("aria-describedby")!)!.textContent).toBe(
+      "Retro terminal only",
+    );
   });
 
   it("4. accounts off: the Account section says so and has no buttons", () => {

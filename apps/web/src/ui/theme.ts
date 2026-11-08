@@ -214,3 +214,54 @@ export function useTheme(): { stored: ThemeId; applied: ThemeDef; set(id: ThemeI
   const { stored, caps } = useSyncExternalStore(subscribe, current, current);
   return { stored, applied: themeDef(resolveTheme(stored, caps)), set: setTheme };
 }
+
+// U-1i, U-9c / L-16: "Glow and scanlines", per device. Stored as mi.crt: "off", or absent for on
+// (the default). Off is data-crt="off" on <html>, which tokens.css turns into no glow and no
+// scanlines. index.html's inline script applies it before first paint, as it does the theme.
+export const CRT_KEY = "mi.crt";
+
+/** Only "off" is off: absent, junk and anything else are on. */
+export function crtFrom(raw: string | null): boolean {
+  return raw !== "off";
+}
+
+function storedCrt(): boolean {
+  try {
+    return crtFrom(localStorage.getItem(CRT_KEY));
+  } catch {
+    return true;
+  }
+}
+
+let crt = storedCrt();
+
+/** The setting as this tab holds it (storage read once, then kept in memory). */
+export function crtOn(): boolean {
+  return crt;
+}
+
+/** data-crt="off" when off; no attribute when on. */
+export function applyCrt(root: HTMLElement = document.documentElement, on: boolean = crt): void {
+  if (on) root.removeAttribute("data-crt");
+  else root.setAttribute("data-crt", "off");
+}
+
+/** Stores (or, for on, removes) mi.crt and applies it; storage errors keep it in memory. */
+export function setCrt(on: boolean): void {
+  try {
+    if (on) localStorage.removeItem(CRT_KEY);
+    else localStorage.setItem(CRT_KEY, "off");
+  } catch {
+    /* kept in memory for this tab */
+  }
+  crt = on;
+  applyCrt();
+  for (const fn of [...listeners]) fn();
+}
+
+const currentCrt = () => crt;
+
+export function useCrt(): { on: boolean; set(on: boolean): void } {
+  const on = useSyncExternalStore(subscribe, currentCrt, currentCrt);
+  return { on, set: setCrt };
+}

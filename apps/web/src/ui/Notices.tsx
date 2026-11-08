@@ -4,18 +4,21 @@
 // U-2e: the visible list is an overlay at the foot of the main box, so a notice never moves a
 // row; the region element itself is unchanged and permanent. A frameless bottleneck is no
 // longer a line here (U-3e): it's the command line's comment, and announced (V-14).
+// U-9d / L-17: the tier-up is no toast. It's said once, hidden, inside the region, naming the
+// unlocks in content names (tierUpSaid); the tier banner is its picture, and its 8 s (or a
+// click) dismisses the notice, which removes the span (a removal isn't announced).
 import type { CSSProperties, ReactNode } from "react";
 import { isPlateaued } from "../sync/interpolate.js";
 import type { GameStore, Notice, StoreView } from "../sync/store.js";
 import { useAnnouncement } from "./announce.js";
 import { plateauText } from "./derive.js";
+import { tierUpSaid } from "./unlocks.js";
 import { useTick } from "./use-tick.js";
 
 /** Toasts: the only notices a player dismisses. Banners clear when their cause does. */
 const TOASTS: ReadonlySet<Notice["kind"]> = new Set([
   "rejected",
   "client-bug",
-  "tier-up",
   "signed-in",
   "sign-in-failed",
 ]);
@@ -43,7 +46,8 @@ export interface NoticesProps {
 
 export function Notices({ store, view, lead = null }: NoticesProps) {
   const said = useAnnouncement();
-  const shown: Shown[] = [...view.notices];
+  const tierUp = view.notices.find((n) => n.kind === "tier-up");
+  const shown: Shown[] = view.notices.filter((n) => n.kind !== "tier-up");
   const s = view.snapshot;
   if (s !== null && isPlateaued(s) && !shown.some((n) => n.kind === "plateau"))
     shown.push({ kind: "plateau", text: plateauText(s)! });
@@ -78,6 +82,11 @@ export function Notices({ store, view, lead = null }: NoticesProps) {
           </div>
         ))}
       </div>
+      {tierUp !== undefined && (
+        <span className="visually-hidden" data-notice="tier-up">
+          {s === null ? tierUp.text : tierUpSaid(s, s.state.tier)}
+        </span>
+      )}
       {said.text !== "" && (
         // Keyed by seq: a new node per announcement, so the same words twice are read twice.
         <span key={said.seq} data-announce style={VISUALLY_HIDDEN}>

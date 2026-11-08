@@ -3,7 +3,8 @@
 //   shell: [TIER 3] next: ROTOR 214/500 · MODULAR_FRAME 38/120
 //   plain: Tier 3 · next: Rotor 214/500 · Modular Frame 38/120
 // The phone shows one requirement, the furthest from done: [TIER 3] ROTOR 214/500. Ticking
-// numbers, never a live region; the tier-up toast is the announcement.
+// numbers, never a live region; the tier-up notice is the announcement (U-8a: Notices says it,
+// hidden, naming the unlocks), and the tier banner, over this readout, is its picture (U-9d).
 import { nextMilestoneCost, type Dec, type ItemId } from "@manufactory/engine";
 import { Fragment, type ReactNode } from "react";
 import { shownStock } from "../sync/interpolate.js";

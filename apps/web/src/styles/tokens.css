@@ -94,6 +94,52 @@
   }
 }
 
+/* U-9c, U-8c / L-16: the glow's off switches, after the phone block so its --glow-title can't
+   win back. Static either way: nothing animates text-shadow or the scanlines (tokens.test 12c).
+   Reduced motion drops the glow (the user's call) and keeps the scanlines, a still texture. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --glow-text: none;
+    --glow-title: none;
+    --glow-advice: none;
+    --glow-banner: none;
+    --glow-tap: none;
+  }
+}
+
+/* High contrast, and the OS's forced colours: no glow and no scanlines. */
+@media (prefers-contrast: more) {
+  :root {
+    --glow-text: none;
+    --glow-title: none;
+    --glow-advice: none;
+    --glow-banner: none;
+    --glow-tap: none;
+    --scanlines: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :root {
+    --glow-text: none;
+    --glow-title: none;
+    --glow-advice: none;
+    --glow-banner: none;
+    --glow-tap: none;
+    --scanlines: none;
+  }
+}
+
+/* The CRT setting off (U-1i: mi.crt, applied by theme.ts and index.html's inline script). */
+:root[data-crt="off"] {
+  --glow-text: none;
+  --glow-title: none;
+  --glow-advice: none;
+  --glow-banner: none;
+  --glow-tap: none;
+  --scanlines: none;
+}
+
 /* U-1d: Clean, from Minimal. Bold values in the spec are the AA adjustments. */
 :root[data-theme="clean-dark"] {
   color-scheme: dark;

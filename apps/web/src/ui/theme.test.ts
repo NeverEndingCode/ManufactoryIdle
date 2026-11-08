@@ -7,10 +7,15 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Capability } from "./capabilities.js";
 import {
+  applyCrt,
   applyTheme,
+  CRT_KEY,
+  crtFrom,
+  crtOn,
   DEFAULT_THEME,
   migrateTheme,
   resolveTheme,
+  setCrt,
   setTheme,
   storedTheme,
   syncCapabilities,
@@ -45,8 +50,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   syncCapabilities(new Set());
   setTheme("terminal");
+  setCrt(true);
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
+  document.documentElement.removeAttribute("data-crt");
   document.head.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.remove());
 });
 
@@ -169,6 +176,63 @@ describe("applyTheme (U-1i, V-6)", () => {
   });
 });
 
+// U-1i, U-9c / L-16: "Glow and scanlines", stored as mi.crt ("off" or absent), on by default,
+// applied as data-crt="off" on <html> (tokens.css keys the off block on it).
+describe("the CRT setting (L-16)", () => {
+  const html = document.documentElement;
+
+  // Catches: a default of off, or any stored value but "off" read as off.
+  it('6. mi.crt absent is on; only "off" is off', () => {
+    expect(CRT_KEY).toBe("mi.crt");
+    expect(crtOn()).toBe(true);
+    for (const [raw, on] of [
+      [null, true],
+      ["off", false],
+      ["on", true],
+      ["junk", true],
+      ["", true],
+    ] as const)
+      expect(crtFrom(raw), String(raw)).toBe(on);
+  });
+
+  // Catches: the setting not stored, not applied, or "on" stored as a value instead of removed.
+  it("6b. setCrt(false) stores off and sets data-crt; setCrt(true) removes both", () => {
+    setCrt(false);
+    expect(localStorage.getItem(CRT_KEY)).toBe("off");
+    expect(html.getAttribute("data-crt")).toBe("off");
+    expect(crtOn()).toBe(false);
+    setCrt(true);
+    expect(localStorage.getItem(CRT_KEY)).toBeNull();
+    expect(html.hasAttribute("data-crt")).toBe(false);
+    expect(crtOn()).toBe(true);
+  });
+
+  // Catches: a storage error thrown into the app (private mode, a full quota).
+  it("6c. a throwing localStorage keeps the setting in memory", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    expect(() => setCrt(false)).not.toThrow();
+    expect(html.getAttribute("data-crt")).toBe("off");
+    expect(() => setCrt(true)).not.toThrow();
+    expect(html.hasAttribute("data-crt")).toBe(false);
+  });
+
+  it("6d. applyCrt sets or clears the attribute on the root it's given", () => {
+    const root = document.createElement("html");
+    applyCrt(root, false);
+    expect(root.getAttribute("data-crt")).toBe("off");
+    applyCrt(root, true);
+    expect(root.hasAttribute("data-crt")).toBe(false);
+  });
+});
+
 describe("the inline pre-paint script (V-6)", () => {
   const html = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "../../index.html"),
@@ -196,6 +260,21 @@ describe("the inline pre-paint script (V-6)", () => {
     }
   });
 
+  // Catches: the script and applyCrt disagreeing, so the first paint glows and then doesn't.
+  it("5d. it sets data-crt as applyCrt does, for off, junk and absent", () => {
+    const run = new Function("localStorage", "document", inline[0]!);
+    for (const raw of ["off", "junk", null]) {
+      const got = new Map<string, string>();
+      const storage = { getItem: (k: string) => (k === CRT_KEY ? raw : null) };
+      run(storage, {
+        documentElement: { setAttribute: (k: string, v: string) => got.set(k, v) },
+      });
+      const want = document.createElement("html");
+      applyCrt(want, crtFrom(raw));
+      expect(got.get("data-crt") ?? null, String(raw)).toBe(want.getAttribute("data-crt"));
+    }
+  });
+
   it("5c. it survives a throwing localStorage", () => {
     const run = new Function("localStorage", "document", inline[0]!);
     const attrs = new Map<string, string>();
@@ -206,5 +285,6 @@ describe("the inline pre-paint script (V-6)", () => {
     };
     run(storage, { documentElement: { setAttribute: (k: string, v: string) => attrs.set(k, v) } });
     expect(attrs.get("data-theme")).toBe("terminal");
+    expect(attrs.has("data-crt")).toBe(false);
   });
 });

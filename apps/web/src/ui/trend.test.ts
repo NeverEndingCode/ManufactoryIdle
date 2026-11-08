@@ -58,6 +58,10 @@ function fakeTimers() {
       }
       clock = until;
     },
+    /** As store.stop(): every live timer dropped, its cancel left stale. */
+    stop() {
+      queue = [];
+    },
     get queue() {
       return queue.map((t) => t.at);
     },
@@ -232,6 +236,26 @@ describe("the trend book (U-9b, L-13)", () => {
     expect(t2.queue).toEqual([45 * S]);
     off();
     expect(t2.queue).toEqual([]);
+  });
+
+  // Catches: subscribe arming only when the book holds no cancel. store.stop() drops the timer
+  // and leaves the book's cancel stale, so a subscriber arriving after it never re-armed.
+  it("11b. a subscriber after store.stop() re-arms the minute timer, and only one", () => {
+    const { t, b } = book();
+    b.record(ev(null, snap(T0 + 15 * S, { x: 1 }, { receivedAt: 0 })));
+    const off1 = b.subscribe(() => {});
+    expect(t.queue).toEqual([45 * S]);
+    t.stop();
+    expect(t.queue).toEqual([]);
+    const off2 = b.subscribe(() => {});
+    expect(t.queue).toEqual([45 * S]);
+    // Re-aimed, not doubled: arm() cancels the live timer first.
+    const off3 = b.subscribe(() => {});
+    expect(t.queue).toEqual([45 * S]);
+    off1();
+    off2();
+    off3();
+    expect(t.queue).toEqual([]);
   });
 });
 

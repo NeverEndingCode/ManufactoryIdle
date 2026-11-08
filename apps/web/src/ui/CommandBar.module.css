@@ -213,6 +213,7 @@
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
+  text-shadow: none;
 }
 
 /* Read, not seen: the command's words for a screen reader while the visible span types. */
