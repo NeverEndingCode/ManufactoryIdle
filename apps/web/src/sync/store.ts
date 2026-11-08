@@ -380,7 +380,9 @@ export class GameStore {
   }
 
   /** A one-shot timer on the ClientClock; the returned function cancels it. A negative `ms`
-   * is 0. stop() cancels every live one, and none fires while stopped. */
+   * is 0. stop() cancels every live one, and none fires while stopped. start() doesn't re-arm
+   * the cancelled ones: a consumer re-arms on its next input (a new text, notice or adoption).
+   * Production never calls stop(); the tests do. */
   later(fn: () => void, ms: number): () => void {
     const id = this.#clock.setTimeout(
       () => {

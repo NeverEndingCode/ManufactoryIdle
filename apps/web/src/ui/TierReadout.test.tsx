@@ -146,20 +146,67 @@ describe("TierReadout (Q-13, V-24)", () => {
       );
     expect(rule('.app[data-layout="phone"] .tier-readout')["max-width"]).toBe("100%");
     // Only the name gives way: the tier and the numbers always show (expectNoOverflow at 320).
-    const row = rule(
-      '.app[data-layout="phone"] .tier-readout [data-shown], .app[data-layout="phone"] .tier-readout [data-requirement]',
+    // The name asks for no width of its own (width 0), grows into what's left up to its length.
+    expect(rule('.app[data-layout="phone"] .tier-readout [data-shown]').display).toBe("flex");
+    expect(rule('.app[data-layout="phone"] .tier-readout [data-requirement]').display).toBe(
+      "contents",
     );
-    expect(row.display).toBe("flex");
-    expect(row["min-width"]).toBe("0");
     const name = rule('.app[data-layout="phone"] .tier-readout .req-name');
+    expect(name.width).toBe("0");
+    expect(name.flex).toBe("1 1 0");
+    expect(name["max-width"]).toBe("max-content");
     expect(name.overflow).toBe("hidden");
     expect(name["text-overflow"]).toBe("ellipsis");
-    expect(rule('.app[data-layout="phone"] .tier-readout .num').flex).toBe("none");
+    expect(
+      rule(
+        '.app[data-layout="phone"] .tier-readout .req-lead, .app[data-layout="phone"] .tier-readout .num',
+      ).flex,
+    ).toBe("none");
     const req = readout().querySelector("[data-requirement]");
     expect(req?.querySelector(".req-name")).not.toBeNull();
     const base = rule(".tier-readout");
     expect(base.overflow).toBe("hidden");
     expect(base["text-overflow"]).toBe("ellipsis");
     expect(base["white-space"]).toBe("nowrap");
+  });
+
+  // The phone header's priority (jsdom lays nothing out, so the CSS is pinned): the readout's
+  // tier and numbers never give way (the slot's automatic minimum, the name asking for none);
+  // then the title, which ellipsizes rather than being cut mid-letter; the slot takes the rest,
+  // which the name grows into. Catches: the title clipped with no ellipsis, or sharing the
+  // shrink evenly with the readout (MANUFACTO beside an item name cut to "I…").
+  it("8f. the phone header: tier and numbers first, then the title, then the name", () => {
+    const store = fakeStore(tier8);
+    withTicks(store, <TierReadout snapshot={tier8} now={store.now} phone />);
+    const rules = (file: string) => {
+      const text = readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
+      return (sel: string) =>
+        Object.fromEntries(
+          declarations(file, text)
+            .filter((d) => d.stack.join(" > ") === sel)
+            .map((d) => [d.property, d.value]),
+        );
+    };
+    // Variables, so Vite leaves the URLs alone.
+    const shellCss = "./Shell.module.css";
+    const baseCss = "../styles/base.css";
+    const title = rules(shellCss)(".phoneHeader .title");
+    expect(title.overflow).toBe("hidden");
+    expect(title["text-overflow"]).toBe("ellipsis");
+    expect(title["min-width"]).toBe("0");
+    const slot = rules(shellCss)(".phoneHeader .tierSlot");
+    expect(slot.flex).toBe("1 1 auto");
+    expect(slot["min-width"]).toBe("auto");
+    const box = rules(shellCss)(".readouts");
+    expect(box.flex).toBe("1 1 auto");
+    expect(box["min-width"]).toBeUndefined();
+    expect(rules(baseCss)('.app[data-layout="phone"] .tier-readout')["align-self"]).toBe("stretch");
+    expect(
+      rules(baseCss)(
+        '.app[data-layout="phone"] .tier-readout .req-lead, .app[data-layout="phone"] .tier-readout .num',
+      ).flex,
+    ).toBe("none");
+    const lead = readout().querySelector("[data-shown] > .req-lead");
+    expect(lead?.textContent).toBe("[TIER 8] ");
   });
 });

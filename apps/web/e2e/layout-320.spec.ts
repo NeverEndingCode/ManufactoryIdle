@@ -244,3 +244,52 @@ test("About in Settings links the source at the built commit, and the source map
   expect(Array.isArray(json.sources)).toBe(true);
   expect((json.sources as unknown[]).length).toBeGreaterThan(0);
 });
+
+// U-2e / U-6c: the notices never lie over the floating TAP. The notices (35) are above the TAP
+// (20), so where they met the guest's save button covered the TAP's top and a thumb aimed at
+// TAP could hit save. The overlay stops short of the TAP's column instead. The save chip is
+// up for a guest from tier 1 on (S-12), so the API's answers are read one tier up: the chip
+// shows from the first frame. Each tab places the TAP differently.
+test("the notices clear the floating TAP at 390 and 320 px, on every tab", async ({ page }) => {
+  const tierUp = async (route: Route) => {
+    const res = await route.fetch();
+    if (!res.ok()) return route.fulfill({ response: res });
+    const body = (await res.json()) as {
+      state?: { tier: number };
+      world?: { state: { tier: number } };
+    };
+    const world = body.world ?? body;
+    if (world.state !== undefined) world.state.tier += 1;
+    return route.fulfill({ response: res, json: body });
+  };
+  for (const path of ["**/api/guests", "**/api/world", "**/api/actions"])
+    await page.route(path, tierUp);
+  await startGuest(page);
+  const panels = page.getByRole("tablist", { name: "Panels" });
+  const tap = page.locator("[data-power] button[data-tap]");
+  const notices = page.locator(".notice-overlay [data-notice]");
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 640 });
+    for (const name of ["factory", "power", "priority", "handbook"]) {
+      await panels.getByRole("tab", { name: new RegExp(`${name}$`) }).click();
+      await expect(tap).toBeVisible();
+      await expect(
+        page.locator('.notice-overlay [data-notice="save"]'),
+        `${width} ${name}`,
+      ).toBeVisible();
+      const t = await boxOf(tap);
+      for (const n of await notices.all()) {
+        const b = await boxOf(n);
+        const meet =
+          b.x < t.x + t.width &&
+          t.x < b.x + b.width &&
+          b.y < t.y + t.height &&
+          t.y < b.y + b.height;
+        expect(
+          meet,
+          `${width} px, ${name}: a notice over the TAP (${JSON.stringify({ b, t })})`,
+        ).toBe(false);
+      }
+    }
+  }
+});

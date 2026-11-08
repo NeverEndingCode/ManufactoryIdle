@@ -62,7 +62,7 @@ export function TierReadout({ snapshot: s, now, phone = false }: TierReadoutProp
   return (
     <div className="tier-readout" data-tier={tier}>
       <Said text={text} said={said}>
-        {lead}
+        <span className="req-lead">{lead}</span>
         {reqs.map((r, i) => (
           <Fragment key={r.itemId}>
             {i > 0 && " · "}

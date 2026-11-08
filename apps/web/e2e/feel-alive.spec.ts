@@ -182,19 +182,23 @@ test.describe("feel alive", () => {
 
       // A reload types the same advice again, from its first render. From the document's start
       // the page records every text [data-command-text] holds, the typed text when Enter goes
-      // down, and the typed text once the run's click has rendered (a microtask after React's
-      // own, from a window listener that runs after the root's).
+      // down, the typed text once the run's click has rendered (a microtask after React's
+      // own, from a window listener that runs after the root's), and whether it ever typed.
       await page.addInitScript(() => {
         const w = window as unknown as {
           saidSeen: string[];
           atEnter: { typing: boolean; typed: string }[];
           afterRun: string[];
+          sawTyping: boolean;
         };
         w.saidSeen = [];
+        w.sawTyping = false;
         w.atEnter = [];
         w.afterRun = [];
         const typedNow = () => document.querySelector("[data-command] [data-typed]");
         new MutationObserver(() => {
+          if (document.querySelector("[data-command] [data-typed][data-typing]") !== null)
+            w.sawTyping = true;
           const el = document.querySelector("[data-command-text]");
           if (el === null) return;
           const text = el.textContent ?? "";
@@ -220,14 +224,17 @@ test.describe("feel alive", () => {
       const sent = buys().length;
       const before = await version();
       // From the commit, not the load event: the typing starts with the first snapshot's
-      // render and lasts at most 600 ms. One DOM wait for both: the words typing and the run
-      // live (affordable, so a buy that isn't busy). Then Enter at once.
+      // render and lasts at most 600 ms. The wait is for the run to be live (affordable, not
+      // busy), checked in the page every frame, so the press lands while the words type on a
+      // desktop. A slow runner may only get there after the 600 ms: the wait doesn't depend on
+      // the typing, so it never times out for it, the path taken is annotated below, and the
+      // POST and full-text checks run either way.
       await page.reload({ waitUntil: "commit" });
-      await expect(
-        page.locator(
-          '[data-command]:has([data-typed][data-typing]):has([data-run][aria-disabled="false"])',
-        ),
-      ).toBeAttached();
+      await page.waitForFunction(
+        () => document.querySelector('[data-command] [data-run][aria-disabled="false"]') !== null,
+        null,
+        { polling: "raf", timeout: 60_000 },
+      );
       await page.keyboard.press("Enter");
       await expect.poll(version).toBeGreaterThan(before);
       expect(buys().length - sent, "one POST for one Enter").toBe(1);
@@ -237,17 +244,29 @@ test.describe("feel alive", () => {
           saidSeen: string[];
           atEnter: { typing: boolean; typed: string }[];
           afterRun: string[];
+          sawTyping: boolean;
         };
-        return { saidSeen: r.saidSeen, atEnter: r.atEnter, afterRun: r.afterRun };
+        return {
+          saidSeen: r.saidSeen,
+          atEnter: r.atEnter,
+          afterRun: r.afterRun,
+          sawTyping: r.sawTyping,
+        };
       });
       expect(w.atEnter).toHaveLength(1);
       const at = w.atEnter[0]!;
+      const path = at.typing
+        ? "mid-typing"
+        : w.sawTyping
+          ? "after the typing (a slow runner)"
+          : "the typing never seen";
       test.info().annotations.push({
         type: "Enter while typing",
-        description: `typing at Enter: ${at.typing}; typed then: "${at.typed}" of "${full}"`,
+        description: `path: ${path}; typed at Enter: "${at.typed}" of "${full}"`,
       });
-      // The press lands within the 600 ms of typing on a desktop; a slow runner may land it
-      // after, which still checks the POST and the full text, and is recorded above.
+      // The page typed after the reload (the init script saw [data-typing]) in every path but
+      // the last, which would mean typing is off: that fails here.
+      expect(w.sawTyping, "the advice typed after the reload").toBe(true);
       if (at.typing) expect(full.startsWith(at.typed) && at.typed.length < full.length).toBe(true);
       // Right after the run's click, the typed text is the whole command (finish).
       const plainNow = w.saidSeen.at(0);

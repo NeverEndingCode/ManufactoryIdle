@@ -71,7 +71,8 @@ motion, and both are off under high contrast. Reaching a tier shows an 8-second 
 the tier readout (naming what it unlocked, wider than a phone). The advice types itself out on
 the command line; this is cosmetic, because the run button works from the first character and
 Enter completes the text. Welcome back, sound, haptics, the command palette and the flow tree
-are deferred.
+are deferred. The e2e's frame-timing check fails on a long task over 50 ms locally, but over
+500 ms in CI (its runners are 10–20× slower), so CI catches only gross regressions.
 
 **Deploying.** [`infra/README.md`](infra/README.md#deploying-example) has the example: a
 Caddyfile serving `apps/web/dist` on one origin with `/api` and `/auth` forwarded to the
